@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct LumixProbeApp: App {
+struct GM1SyncApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()

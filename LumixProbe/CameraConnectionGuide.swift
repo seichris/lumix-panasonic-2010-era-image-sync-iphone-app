@@ -8,7 +8,7 @@ struct CameraConnectionGuide: View {
         Section("Connect the camera") {
             connectionStep(
                 number: 1,
-                title: "Enable the GM1S Wi-Fi",
+                title: "Enable the camera Wi-Fi",
                 detail: "On the camera choose Wi-Fi → New Connection → Remote Shooting & View. Leave its QR code on screen."
             )
 

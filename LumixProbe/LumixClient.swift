@@ -80,7 +80,7 @@ actor LumixClient {
 
     /// Known request shape used by older Lumix remote-control clients.
     /// The GM1S response/approval behavior is intentionally left visible to the probe UI.
-    func requestAccess(clientName: String = "LumixProbe") async throws -> LumixHTTPResponse {
+    func requestAccess(clientName: String = "GM1Sync") async throws -> LumixHTTPResponse {
         try await cameraGET([
             "mode": "accctrl",
             "type": "req_acc",
@@ -257,7 +257,7 @@ private enum LegacyLumixMediaDownloader {
         guard connectResult == 0 else { throw POSIXDownloadError("connect", errno) }
 
         let path = url.path.isEmpty ? "/" : url.path
-        let request = "GET \(path) HTTP/1.0\r\nHost: \(host):\(port)\r\nAccept: */*\r\nUser-Agent: LumixProbe/1.0\r\n\r\n"
+        let request = "GET \(path) HTTP/1.0\r\nHost: \(host):\(port)\r\nAccept: */*\r\nUser-Agent: GM1Sync/1.0\r\n\r\n"
         try sendAll(Data(request.utf8), to: fileDescriptor)
 
         var received = Data()

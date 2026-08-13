@@ -16,7 +16,7 @@ struct QRCodeScannerSheet: View {
                     }
                     .ignoresSafeArea(edges: .bottom)
                     .overlay(alignment: .bottom) {
-                        Text("Point the iPhone at the QR code shown on the GM1S.")
+                        Text("Point the iPhone at the QR code shown on the camera.")
                             .font(.callout.weight(.medium))
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 18)
@@ -32,7 +32,7 @@ struct QRCodeScannerSheet: View {
                     )
                 }
             }
-            .navigationTitle("Scan GM1S Wi-Fi")
+            .navigationTitle("Scan camera Wi-Fi")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

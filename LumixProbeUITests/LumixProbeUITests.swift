@@ -12,8 +12,8 @@ final class LumixProbeUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(
-            app.staticTexts["Connected to GM1S"].waitForExistence(timeout: 12),
-            "The GM1S must be reachable in Remote Shooting & View mode."
+            app.staticTexts["Connected to camera"].waitForExistence(timeout: 12),
+            "The camera must be reachable in Remote Shooting & View mode."
         )
         XCTAssertFalse(app.buttons["Scan camera QR code"].exists)
 
@@ -38,7 +38,7 @@ final class LumixProbeUITests: XCTestCase {
         tap("Probe getstate")
         waitForResult("getstate complete", timeout: 12)
 
-        XCTAssertTrue(app.staticTexts["Connected to GM1S"].exists)
+        XCTAssertTrue(app.staticTexts["Connected to camera"].exists)
     }
 
     func testDisconnectedGuideAndQRCodeScanner() throws {
@@ -54,10 +54,10 @@ final class LumixProbeUITests: XCTestCase {
         app.swipeDown()
         app.swipeDown()
 
-        XCTAssertTrue(app.staticTexts["Enable the GM1S Wi-Fi"].waitForExistence(timeout: 12))
+        XCTAssertTrue(app.staticTexts["Enable the camera Wi-Fi"].waitForExistence(timeout: 12))
         XCTAssertTrue(app.staticTexts["Join from this iPhone"].exists)
         XCTAssertTrue(app.buttons["Scan camera QR code"].exists)
-        XCTAssertFalse(app.staticTexts["Connected to GM1S"].exists)
+        XCTAssertFalse(app.staticTexts["Connected to camera"].exists)
 
         addUIInterruptionMonitor(withDescription: "Camera permission") { alert in
             let allow = alert.buttons["Allow"]
@@ -69,8 +69,8 @@ final class LumixProbeUITests: XCTestCase {
         app.buttons["Scan camera QR code"].tap()
         app.tap()
 
-        XCTAssertTrue(app.navigationBars["Scan GM1S Wi-Fi"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Point the iPhone at the QR code shown on the GM1S."].exists)
+        XCTAssertTrue(app.navigationBars["Scan camera Wi-Fi"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Point the iPhone at the QR code shown on the camera."].exists)
         XCTAssertTrue(app.buttons["Cancel"].exists)
         app.buttons["Cancel"].tap()
     }
@@ -78,12 +78,75 @@ final class LumixProbeUITests: XCTestCase {
     func testConnectedCameraFinalStateOnly() throws {
         app.launch()
         XCTAssertTrue(
-            app.staticTexts["Connected to GM1S"].waitForExistence(timeout: 12),
-            "The GM1S must remain reachable after media transfer."
+            app.staticTexts["Connected to camera"].waitForExistence(timeout: 12),
+            "The camera must remain reachable after media transfer."
         )
         tap("Probe getstate")
         waitForResult("getstate complete", timeout: 12)
-        XCTAssertTrue(app.staticTexts["Connected to GM1S"].exists)
+        XCTAssertTrue(app.staticTexts["Connected to camera"].exists)
+    }
+
+    func testCompatibilityCatalogListsCandidateEras() throws {
+        app.launch()
+
+        let compatibilityLink = app.staticTexts["Potentially compatible cameras"]
+        XCTAssertTrue(compatibilityLink.waitForExistence(timeout: 8))
+        compatibilityLink.tap()
+
+        XCTAssertTrue(app.navigationBars["Camera candidates"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Panasonic DMC-GM1"].exists)
+        XCTAssertTrue(app.staticTexts["Panasonic DMC-GM1S"].exists)
+        XCTAssertTrue(app.staticTexts["Panasonic DMC-GM5"].exists)
+        XCTAssertTrue(app.staticTexts["Introduced c. 2013"].exists)
+    }
+
+    func testLocationLogCanStartAndStop() throws {
+        app.launch()
+
+        addUIInterruptionMonitor(withDescription: "Location permission") { alert in
+            for label in ["Allow While Using App", "Allow Once", "OK"] {
+                let button = alert.buttons[label]
+                if button.exists {
+                    button.tap()
+                    return true
+                }
+            }
+            return false
+        }
+
+        let startButton = app.buttons["start-location-log"]
+        scrollToElement(startButton)
+        XCTAssertTrue(startButton.isHittable)
+        startButton.tap()
+        app.tap()
+
+        let stopButton = app.buttons["stop-location-log"]
+        XCTAssertTrue(stopButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Location log running"].exists)
+        stopButton.tap()
+
+        XCTAssertTrue(app.buttons["start-location-log"].waitForExistence(timeout: 5))
+    }
+
+    func testAlternativeDescriptionAndAppIconChoices() throws {
+        app.launch()
+
+        XCTAssertTrue(
+            app.staticTexts["An independent alternative to Panasonic Image App for compatible older cameras."]
+                .waitForExistence(timeout: 8)
+        )
+
+        let appIconLink = app.staticTexts["App icon"]
+        for _ in 0..<4 where !appIconLink.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(appIconLink.isHittable)
+        appIconLink.tap()
+
+        XCTAssertTrue(app.navigationBars["App Icon"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Lens"].exists)
+        XCTAssertTrue(app.staticTexts["Blue Camera"].exists)
+        XCTAssertTrue(app.staticTexts["Black Camera"].exists)
     }
 
     private func tap(_ label: String) {
@@ -103,6 +166,15 @@ final class LumixProbeUITests: XCTestCase {
             .completed,
             "Last result did not become: \(result)"
         )
+    }
+
+    private func scrollToElement(_ element: XCUIElement) {
+        var attempts = 0
+        while !element.isHittable, attempts < 8 {
+            app.swipeUp()
+            attempts += 1
+        }
+        XCTAssertTrue(element.exists)
     }
 
 }

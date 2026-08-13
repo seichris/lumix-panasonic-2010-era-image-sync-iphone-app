@@ -1,5 +1,5 @@
 import XCTest
-@testable import LumixProbe
+@testable import GM1Sync
 
 final class LumixWiFiCredentialsTests: XCTestCase {
     func testParsesStandardWPAWiFiPayload() throws {

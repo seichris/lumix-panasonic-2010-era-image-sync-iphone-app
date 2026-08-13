@@ -1,26 +1,42 @@
 import Foundation
 import Photos
 
+struct DownloadedPhoto: Equatable {
+    let fileURL: URL
+    let captureDate: Date?
+    let originalFilename: String
+}
+
 @MainActor
 final class ProbeViewModel: ObservableObject {
     @Published var host = "192.168.54.1"
-    @Published var log = "Join the GM1S Wi-Fi network, then probe the camera.\n"
+    @Published var log = "Join the camera's Wi-Fi network, then probe it.\n"
     @Published var isRunning = false
     @Published var resources: [LumixResource] = []
-    @Published var downloadedFile: URL?
+    @Published private(set) var downloadedPhoto: DownloadedPhoto?
+    @Published private(set) var isSavingPhoto = false
+    @Published var cameraClockOffsetMinutes: Double {
+        didSet { defaults.set(cameraClockOffsetMinutes, forKey: Self.cameraClockOffsetKey) }
+    }
     @Published private(set) var isCameraConnected = false
     @Published private(set) var connectionStatusMessage = "Checking for the camera…"
     @Published private(set) var lastResult = "Ready"
 
     private let logFileURL: URL
+    private let defaults: UserDefaults
     private let wifiConnector = LumixWiFiConnector()
+    let locationLogger: GeotagLocationLogger
     private var client: LumixClient { LumixClient(host: host.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    private static let cameraClockOffsetKey = "cameraClockOffsetMinutes"
 
-    init() {
+    init(defaults: UserDefaults = .standard, locationLogger: GeotagLocationLogger? = nil) {
+        self.defaults = defaults
+        self.locationLogger = locationLogger ?? GeotagLocationLogger()
+        cameraClockOffsetMinutes = defaults.object(forKey: Self.cameraClockOffsetKey) as? Double ?? 0
         logFileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("LumixProbe.log")
+            .appendingPathComponent("GM1Sync.log")
         persistLog()
-        print("[LumixProbe] Diagnostic session started")
+        print("[GM1Sync] Diagnostic session started")
     }
 
     func refreshConnectionStatus() async {
@@ -47,7 +63,7 @@ final class ProbeViewModel: ObservableObject {
                     guard response.text.contains("<result>ok</result>") else { continue }
                     isCameraConnected = true
                     connectionStatusMessage = "Camera connected"
-                    append("Joined Lumix Wi-Fi and reached the camera.")
+                    append("Joined camera Wi-Fi and reached the camera.")
                     return
                 } catch {
                     continue
@@ -143,29 +159,46 @@ final class ProbeViewModel: ObservableObject {
             guard let original = candidates.last else { throw LumixError.noOriginalJPEG }
             self.append("Downloading \(original.profileName ?? "original JPEG"): \(original.url.absoluteString)")
             let file = try await client.download(original)
-            await MainActor.run { self.downloadedFile = file }
+            let captureDate = PhotoCaptureDateReader.read(from: file)
+            self.downloadedPhoto = DownloadedPhoto(
+                fileURL: file,
+                captureDate: captureDate,
+                originalFilename: original.url.lastPathComponent.isEmpty
+                    ? "lumix-original.jpg"
+                    : original.url.lastPathComponent
+            )
             let attrs = try FileManager.default.attributesOfItem(atPath: file.path)
             self.append("Downloaded \(attrs[.size] ?? "?") bytes to \(file.lastPathComponent)")
+            if let captureDate {
+                self.append("EXIF capture time: \(captureDate.formatted(date: .numeric, time: .standard))")
+            } else {
+                self.append("No EXIF capture time was found; automatic geotag matching is unavailable.")
+            }
             self.lastResult = "Original JPEG downloaded"
         }
     }
 
     func saveDownloadedToPhotos() {
-        guard let file = downloadedFile else { append("No downloaded file yet."); return }
+        guard let photo = downloadedPhoto else { append("No downloaded file yet."); return }
+        guard !isSavingPhoto else { return }
+        let match = geotagMatch(for: photo)
+        isSavingPhoto = true
         Task {
+            defer { isSavingPhoto = false }
             do {
-                let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-                guard status == .authorized || status == .limited else {
-                    append("Photos permission denied: \(status.rawValue)")
-                    lastResult = "Save to Photos denied"
-                    return
+                try await PhotosOriginalImporter.save(
+                    fileURL: photo.fileURL,
+                    originalFilename: photo.originalFilename,
+                    captureDate: photo.captureDate,
+                    location: match?.location
+                )
+                if let match {
+                    append("Saved untouched original to Photos with location \(match.latitude), \(match.longitude).")
+                    lastResult = "Photo saved with location"
+                } else {
+                    append("Saved untouched original to Photos without a matched location.")
+                    lastResult = "Photo saved without location"
                 }
-                try await PHPhotoLibrary.shared().performChanges {
-                    let request = PHAssetCreationRequest.forAsset()
-                    request.addResource(with: .photo, fileURL: file, options: nil)
-                }
-                append("Saved untouched downloaded file to Photos.")
-                lastResult = "Photo saved"
             } catch {
                 append("Photos import ERROR: \(error.localizedDescription)")
                 lastResult = "Save to Photos failed"
@@ -173,10 +206,19 @@ final class ProbeViewModel: ObservableObject {
         }
     }
 
+    func geotagMatch(for photo: DownloadedPhoto) -> GeotagMatch? {
+        guard let captureDate = photo.captureDate else { return nil }
+        return LocationTrackMatcher.match(
+            captureDate: captureDate,
+            samples: locationLogger.samples,
+            cameraClockOffset: cameraClockOffsetMinutes * 60
+        )
+    }
+
     func clearLog() {
         log = ""
         persistLog()
-        print("[LumixProbe] Log cleared")
+        print("[GM1Sync] Log cleared")
     }
 
     private func run(_ operation: @escaping (LumixClient) async throws -> Void) {
@@ -249,7 +291,7 @@ final class ProbeViewModel: ObservableObject {
     private func setResources(_ value: [LumixResource]) { resources = value }
     private func append(_ text: String) {
         log += text + "\n"
-        print("[LumixProbe] \(text)")
+        print("[GM1Sync] \(text)")
         persistLog()
     }
 
@@ -257,7 +299,7 @@ final class ProbeViewModel: ObservableObject {
         do {
             try log.write(to: logFileURL, atomically: true, encoding: .utf8)
         } catch {
-            print("[LumixProbe] Could not persist diagnostic log: \(error.localizedDescription)")
+            print("[GM1Sync] Could not persist diagnostic log: \(error.localizedDescription)")
         }
     }
 }

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>LumixProbe</string>
+	<string>GM1 Sync</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -28,11 +28,17 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>LumixProbe scans the QR code shown by your Lumix camera to join its Wi-Fi network.</string>
+	<string>GM1 Sync scans the QR code shown by your camera to join its Wi-Fi network.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>LumixProbe connects directly to your Lumix camera over its local Wi-Fi network.</string>
+	<string>GM1 Sync connects directly to your camera over its local Wi-Fi network.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>GM1 Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>LumixProbe can save original photos downloaded from your Lumix camera to your photo library.</string>
+	<string>GM1 Sync can save original photos downloaded from your camera to your photo library.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
