@@ -1,6 +1,6 @@
 name: LumixProbe
 options:
-  bundleIdPrefix: com.seichris
+  bundleIdPrefix: com.web3
   deploymentTarget:
     iOS: "17.0"
 settings:
@@ -16,14 +16,52 @@ targets:
       path: LumixProbe/Info.plist
       properties:
         CFBundleDisplayName: LumixProbe
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
         UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSCameraUsageDescription: LumixProbe scans the QR code shown by your Lumix camera to join its Wi-Fi network.
         NSLocalNetworkUsageDescription: LumixProbe connects directly to your Lumix camera over its local Wi-Fi network.
         NSPhotoLibraryAddUsageDescription: LumixProbe can save original photos downloaded from your Lumix camera to your photo library.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+    entitlements:
+      path: LumixProbe/LumixProbe.entitlements
+      properties:
+        com.apple.developer.networking.HotspotConfiguration: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.seichris.LumixProbe
+        DEVELOPMENT_TEAM: 4H5PK8686H
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_BUNDLE_IDENTIFIER: com.web3.lumixprobe
         PRODUCT_NAME: LumixProbe
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
+  LumixProbeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: LumixProbeUITests
+    dependencies:
+      - target: LumixProbe
+    settings:
+      base:
+        DEVELOPMENT_TEAM: 4H5PK8686H
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.web3.lumixprobe.uitests
+        TARGETED_DEVICE_FAMILY: "1"
+  LumixProbeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: LumixProbeTests
+    dependencies:
+      - target: LumixProbe
+    settings:
+      base:
+        DEVELOPMENT_TEAM: 4H5PK8686H
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.web3.lumixprobe.tests
+        TARGETED_DEVICE_FAMILY: "1"
