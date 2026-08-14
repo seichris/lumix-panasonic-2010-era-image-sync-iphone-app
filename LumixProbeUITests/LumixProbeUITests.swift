@@ -100,6 +100,10 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Panasonic DMC-GM1S"].exists)
         app.navigationBars.buttons.firstMatch.tap()
 
+        let appVersion = app.staticTexts["app-version"]
+        scrollToElement(appVersion)
+        XCTAssertEqual(appVersion.label, "GM1 Sync · Version 1.0 (3)")
+
         let iconLink = app.buttons["app-icon-link"]
         scrollToElement(iconLink)
         iconLink.tap()

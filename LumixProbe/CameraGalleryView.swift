@@ -380,7 +380,7 @@ private struct CameraPhotoGridCell: View {
                 HStack {
                     if photo.kind == .video {
                         Image(systemName: "video.fill")
-                            .font(.caption)
+                            .font(.system(size: 24, weight: .semibold))
                             .padding(6)
                             .background(.regularMaterial, in: Capsule())
                     }

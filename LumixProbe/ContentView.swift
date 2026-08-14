@@ -193,6 +193,16 @@ private struct AppSettingsView: View {
                 }
                 .accessibilityIdentifier("camera-diagnostics-link")
             }
+
+            Section {
+                Text(appVersionText)
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .accessibilityIdentifier("app-version")
+            }
         }
         .navigationTitle("Settings")
         .alert("Clear location track?", isPresented: $isConfirmingTrackClear) {
@@ -207,6 +217,12 @@ private struct AppSettingsView: View {
         } message: {
             Text("GM1 Sync will remove the saved Wi-Fi password and its Auto-Join configuration. You will need to scan the camera QR code again.")
         }
+    }
+
+    private var appVersionText: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return "GM1 Sync · Version \(version) (\(build))"
     }
 }
 
