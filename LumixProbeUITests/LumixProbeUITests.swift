@@ -53,7 +53,9 @@ final class LumixProbeUITests: XCTestCase {
 
         XCTAssertTrue(app.scrollViews["camera-gallery"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["Scan camera QR code"].exists)
-        XCTAssertTrue(app.staticTexts["camera-gallery-count"].exists)
+        let mediaCount = app.staticTexts["camera-gallery-count"]
+        XCTAssertTrue(mediaCount.exists)
+        XCTAssertEqual(mediaCount.label, "25 images · 0 videos")
 
         let firstPhoto = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "open-camera-photo-")
@@ -76,9 +78,7 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.buttons["RAW"].exists)
 
         app.buttons["toggle-photo-selection"].tap()
-        app.buttons["Gallery actions"].tap()
-        app.buttons["Load all media"].tap()
-        XCTAssertTrue(app.staticTexts["all-camera-items-loaded"].waitForExistence(timeout: 8))
+        XCTAssertEqual(mediaCount.label, "25 images · 0 videos")
     }
 
     func testSettingsCompatibilityAndAppIcons() throws {

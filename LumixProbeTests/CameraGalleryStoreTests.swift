@@ -43,15 +43,30 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertEqual(progress.completed, 10)
         XCTAssertEqual(progress.saved, 9)
         XCTAssertEqual(progress.failed, 1)
+        XCTAssertEqual(progress.attempted, 10)
         XCTAssertFalse(store.isImporting)
         XCTAssertEqual(store.selectedPhotoIDs.count, 1)
 
         let imported = await importer.filenames
         XCTAssertEqual(imported.count, 10)
         let failedPhoto = try XCTUnwrap(store.photos.first { $0.itemID == "4" })
-        guard case .failed = store.importStates[failedPhoto.id] else {
+        guard case let .failed(failure) = store.importStates[failedPhoto.id] else {
             return XCTFail("Expected the configured item to report a failure")
         }
+        XCTAssertEqual(failure.filename, "photo-4.jpg")
+        XCTAssertEqual(failure.message, "Configured import failure")
+        XCTAssertEqual(store.failedPhotos.map(\.id), [failedPhoto.id])
+    }
+
+    func testCompleteMediaCountsSplitImagesAndVideos() async {
+        let client = MockGalleryClient(total: 5, videoIndexes: [1, 3])
+        let store = CameraGalleryStore(client: client, importer: RecordingImporter(), pageSize: 2)
+
+        await store.reloadAllMedia()
+
+        XCTAssertTrue(store.hasCompleteMediaCounts)
+        XCTAssertEqual(store.imageCount, 3)
+        XCTAssertEqual(store.videoCount, 2)
     }
 
     func testRefreshReplacesStaleStateAndSelection() async {
@@ -344,6 +359,7 @@ private actor MockGalleryClient: CameraGalleryClient {
     private let overlapsPages: Bool
     private let preparationDelay: Duration
     private let includesRAW: Bool
+    private let videoIndexes: Set<Int>
     private var delayedBrowseStart: Int?
     private var delayedBrowseDuration: Duration = .milliseconds(250)
     private(set) var browseRequests: [BrowseRequest] = []
@@ -353,12 +369,14 @@ private actor MockGalleryClient: CameraGalleryClient {
         total: Int,
         overlapsPages: Bool = false,
         preparationDelay: Duration = .zero,
-        includesRAW: Bool = false
+        includesRAW: Bool = false,
+        videoIndexes: Set<Int> = []
     ) {
         self.total = total
         self.overlapsPages = overlapsPages
         self.preparationDelay = preparationDelay
         self.includesRAW = includesRAW
+        self.videoIndexes = videoIndexes
     }
 
     func setTotal(_ total: Int) {
@@ -413,6 +431,15 @@ private actor MockGalleryClient: CameraGalleryClient {
 
     private func photo(_ index: Int) -> LumixPhoto {
         let itemID = String(index)
+        if videoIndexes.contains(index) {
+            let resource = LumixResource(
+                itemID: itemID,
+                title: "Video \(index)",
+                url: URL(string: "http://192.168.54.1:50001/video-\(index).MP4")!,
+                protocolInfo: "http-get:*:video/mp4;PANASONIC.COM_PN=CAM_MP4"
+            )
+            return LumixPhoto(itemID: itemID, title: "Video \(index)", resources: [resource])
+        }
         let resource = LumixResource(
             itemID: itemID,
             title: "Photo \(index)",

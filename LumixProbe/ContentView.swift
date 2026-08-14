@@ -57,7 +57,9 @@ struct ContentView: View {
                 Task {
                     if !model.isCameraConnected { await galleryStore.resetForReconnect() }
                     await model.refreshConnectionStatus(waitingForRememberedCamera: true)
-                    if model.isCameraConnected { await galleryStore.loadInitial() }
+                    if model.isCameraConnected, !galleryStore.isImporting {
+                        await galleryStore.reloadAllMedia()
+                    }
                 }
             }
             .sheet(item: $presentedSheet) { destination in

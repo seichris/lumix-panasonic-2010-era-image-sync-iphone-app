@@ -48,6 +48,7 @@ struct LumixResource: Identifiable, Hashable, Sendable {
     }
 
     var isOriginalJPEG: Bool {
+        guard !isLegacyAVCHDPlaceholder else { return false }
         if profileName == "CAM_ORG" || profileName == "CAM_RAW_JPG" { return true }
         return mimeType == "image/jpeg" && !isPreview
     }
@@ -57,8 +58,21 @@ struct LumixResource: Identifiable, Hashable, Sendable {
     }
 
     var isVideo: Bool {
+        if isLegacyAVCHDPlaceholder { return true }
         if mimeType?.hasPrefix("video/") == true { return true }
         return ["mp4", "mov", "m4v", "mts", "m2ts"].contains(url.pathExtension.lowercased())
+    }
+
+    /// Older Lumix cameras advertise AVCHD clips through a JPEG-shaped URL that
+    /// returns 404. The original stream inserts a hyphen before the four-digit
+    /// clip suffix and uses the MTS extension.
+    var downloadURL: URL {
+        guard let components = legacyAVCHDNameComponents else { return url }
+        var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let parent = (url.path as NSString).deletingLastPathComponent
+        let filename = "DO\(components.base)-\(components.suffix).MTS"
+        urlComponents?.path = parent == "/" ? "/\(filename)" : "\(parent)/\(filename)"
+        return urlComponents?.url ?? url
     }
 
     var isPreview: Bool {
@@ -69,6 +83,19 @@ struct LumixResource: Identifiable, Hashable, Sendable {
         let components = protocolInfo.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
         guard components.count == 3 else { return nil }
         return components[2].split(separator: ";", maxSplits: 1).first.map(String.init)?.lowercased()
+    }
+
+    private var isLegacyAVCHDPlaceholder: Bool {
+        legacyAVCHDNameComponents != nil
+    }
+
+    private var legacyAVCHDNameComponents: (base: String, suffix: String)? {
+        guard ["jpg", "jpeg", "mts"].contains(url.pathExtension.lowercased()) else { return nil }
+        let stem = url.deletingPathExtension().lastPathComponent
+        guard stem.count == 14, stem.uppercased().hasPrefix("DO") else { return nil }
+        let digits = String(stem.dropFirst(2))
+        guard digits.count == 12, digits.allSatisfy(\.isNumber) else { return nil }
+        return (String(digits.prefix(8)), String(digits.suffix(4)))
     }
 }
 
@@ -129,9 +156,20 @@ struct LumixPhoto: Identifiable, Hashable, Sendable {
     var importIdentity: String {
         let originals = resources
             .filter { $0.isOriginalJPEG || $0.isRAW || $0.isVideo }
-            .map(\.url.lastPathComponent)
+            .map(\.downloadURL.lastPathComponent)
             .sorted()
         return ([itemID ?? "", title] + originals).joined(separator: "|")
+    }
+
+    var displayFilename: String {
+        switch kind {
+        case .video:
+            return videoResource?.downloadURL.lastPathComponent.nonEmpty ?? title
+        case .photo:
+            return originalJPEGResource?.downloadURL.lastPathComponent.nonEmpty
+                ?? rawResource?.downloadURL.lastPathComponent.nonEmpty
+                ?? title
+        }
     }
 
     private func resource(preferredProfiles: [String]) -> LumixResource? {
@@ -142,7 +180,7 @@ struct LumixPhoto: Identifiable, Hashable, Sendable {
     }
 
     private static func videoPriority(_ resource: LumixResource) -> Int {
-        switch resource.url.pathExtension.lowercased() {
+        switch resource.downloadURL.pathExtension.lowercased() {
         case "mp4": 0
         case "mov", "m4v": 1
         case "mts", "m2ts": 2
@@ -338,8 +376,8 @@ actor LumixClient {
 
     func download(_ resource: LumixResource) async throws -> URL {
         try await LegacyLumixMediaDownloader.downloadFile(
-            from: resource.url,
-            validatesJPEG: resource.isOriginalJPEG
+            from: resource.downloadURL,
+            validatesJPEG: resource.isOriginalJPEG && !resource.isVideo
         )
     }
 
@@ -475,8 +513,9 @@ private enum LegacyLumixMediaDownloader {
         }
         try operation.checkCancellation()
 
-        let path = url.path.isEmpty ? "/" : url.path
-        let request = "GET \(path) HTTP/1.0\r\nHost: \(host):\(port)\r\nAccept: */*\r\nUser-Agent: GM1Sync/1.0\r\n\r\n"
+        var requestTarget = url.path.isEmpty ? "/" : url.path
+        if let query = url.query, !query.isEmpty { requestTarget += "?\(query)" }
+        let request = "GET \(requestTarget) HTTP/1.0\r\nHost: \(host):\(port)\r\nAccept: */*\r\nUser-Agent: GM1Sync/1.0\r\n\r\n"
         try sendAll(Data(request.utf8), to: fileDescriptor, operation: operation)
 
         guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
@@ -562,7 +601,9 @@ private enum LegacyLumixMediaDownloader {
                 }
 
                 expectedLength = lines.dropFirst().first { line in
-                    line.lowercased().hasPrefix("content-length:")
+                    let lowercased = line.lowercased()
+                    return lowercased.hasPrefix("content-length:")
+                        || lowercased.hasPrefix("x-file_size:")
                 }.flatMap { line in
                     Int(line.split(separator: ":", maxSplits: 1).last?.trimmingCharacters(in: .whitespaces) ?? "")
                 }

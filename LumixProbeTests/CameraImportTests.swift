@@ -79,6 +79,30 @@ final class CameraImportTests: XCTestCase {
         XCTAssertEqual(LumixPhoto.grouped(from: [resource]).first?.kind, .video)
     }
 
+    func testLegacyAVCHDPlaceholderResolvesToDownloadableMTS() throws {
+        let placeholder = resource(
+            filename: "DO193986570001.JPG",
+            profile: "CAM_AVCHD",
+            mimeType: "image/jpeg"
+        )
+        let video = LumixPhoto(itemID: "video-legacy", title: "Legacy AVCHD", resources: [placeholder])
+
+        XCTAssertTrue(placeholder.isVideo)
+        XCTAssertFalse(placeholder.isOriginalJPEG)
+        XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO19398657-0001.MTS")
+        XCTAssertEqual(video.kind, .video)
+        XCTAssertEqual(video.displayFilename, "DO19398657-0001.MTS")
+        XCTAssertEqual(try video.importPlan(photoMode: .jpeg).resources.first?.cameraResource, placeholder)
+    }
+
+    func testOrdinaryJPEGKeepsItsAdvertisedDownloadURL() {
+        let jpeg = resource(filename: "DO1280475.JPG", profile: "CAM_ORG", mimeType: "image/jpeg")
+
+        XCTAssertFalse(jpeg.isVideo)
+        XCTAssertTrue(jpeg.isOriginalJPEG)
+        XCTAssertEqual(jpeg.downloadURL, jpeg.url)
+    }
+
     private func resource(filename: String, profile: String, mimeType: String) -> LumixResource {
         LumixResource(
             itemID: "item",

@@ -1,6 +1,7 @@
 import CoreLocation
 import Foundation
 import Photos
+import UniformTypeIdentifiers
 
 enum CameraPhotoImportMode: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case jpeg
@@ -134,7 +135,10 @@ struct SystemCameraMediaImporter: CameraMediaImporting {
             for resource in media.resources {
                 let options = PHAssetResourceCreationOptions()
                 options.originalFilename = resource.originalFilename
-                options.shouldMoveFile = false
+                options.uniformTypeIdentifier = resource.role.uniformTypeIdentifier(
+                    for: resource.originalFilename
+                )
+                options.shouldMoveFile = resource.role == .video
                 request.addResource(
                     with: resource.role.photoKitType,
                     fileURL: resource.fileURL,
@@ -151,6 +155,22 @@ private extension CameraImportPlan.Resource.Role {
         case .photo: .photo
         case .alternatePhoto: .alternatePhoto
         case .video: .video
+        }
+    }
+
+    func uniformTypeIdentifier(for filename: String) -> String? {
+        guard self == .video else { return nil }
+        switch (filename as NSString).pathExtension.lowercased() {
+        case "mts", "m2ts":
+            return UTType.mpeg2TransportStream.identifier
+        case "mp4":
+            return UTType.mpeg4Movie.identifier
+        case "mov":
+            return UTType.quickTimeMovie.identifier
+        case "m4v":
+            return UTType(filenameExtension: "m4v")?.identifier
+        default:
+            return UTType(filenameExtension: (filename as NSString).pathExtension)?.identifier
         }
     }
 }

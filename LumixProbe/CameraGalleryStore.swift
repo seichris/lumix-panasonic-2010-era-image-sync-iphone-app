@@ -27,11 +27,16 @@ enum CameraPhotoImportState: Equatable {
     case downloading
     case saving
     case saved
-    case failed(String)
+    case failed(CameraImportFailure)
 
     var isWorking: Bool {
         self == .downloading || self == .saving
     }
+}
+
+struct CameraImportFailure: Equatable, Sendable {
+    let filename: String
+    let message: String
 }
 
 struct CameraBatchProgress: Equatable {
@@ -45,6 +50,8 @@ struct CameraBatchProgress: Equatable {
         guard total > 0 else { return 0 }
         return Double(completed) / Double(total)
     }
+
+    var attempted: Int { saved + failed }
 }
 
 @MainActor
@@ -138,6 +145,20 @@ final class CameraGalleryStore: ObservableObject {
     }
 
     var canLoadMore: Bool { nextPageRequest != nil }
+
+    var hasCompleteMediaCounts: Bool {
+        phase == .loaded && !canLoadMore && !isLoadingNextPage && paginationError == nil
+    }
+
+    var imageCount: Int { photos.lazy.filter { $0.kind == .photo }.count }
+    var videoCount: Int { photos.lazy.filter { $0.kind == .video }.count }
+
+    var failedPhotos: [LumixPhoto] {
+        photos.filter { photo in
+            guard case .failed = importStates[photo.id] else { return false }
+            return true
+        }
+    }
 
     var selectedPhotos: [LumixPhoto] {
         photos.filter { selectedPhotoIDs.contains($0.id) }
@@ -274,6 +295,12 @@ final class CameraGalleryStore: ObservableObject {
         }
     }
 
+    func reloadAllMedia() async {
+        await loadInitial()
+        guard phase == .loaded else { return }
+        await loadAllPages()
+    }
+
     func cancelLoading() {
         loadGeneration = UUID()
         initialLoadTask?.cancel()
@@ -329,6 +356,12 @@ final class CameraGalleryStore: ObservableObject {
         return try await mediaCache.data(for: resource.url) {
             try await client.downloadJPEGData(resource)
         }
+    }
+
+    func videoFileForPlayback(_ photo: LumixPhoto) async throws -> URL {
+        guard let resource = photo.videoResource else { throw LumixError.noVideo }
+        let client = self.client
+        return try await client.download(resource)
     }
 
     func toggleSelection(_ photo: LumixPhoto) {
@@ -433,6 +466,7 @@ final class CameraGalleryStore: ObservableObject {
             if Task.isCancelled { break }
             batchProgress?.currentTitle = photo.title
             var temporaryFiles: [URL] = []
+            var failingFilename = photo.displayFilename
 
             do {
                 let plan = try photo.importPlan(photoMode: photoMode)
@@ -440,12 +474,14 @@ final class CameraGalleryStore: ObservableObject {
                 var downloadedResources: [DownloadedCameraMedia.Resource] = []
 
                 for plannedResource in plan.resources {
+                    failingFilename = plannedResource.cameraResource.downloadURL.lastPathComponent.nonEmpty
+                        ?? photo.displayFilename
                     let fileURL = try await client.download(plannedResource.cameraResource)
                     temporaryFiles.append(fileURL)
                     downloadedResources.append(
                         DownloadedCameraMedia.Resource(
                             fileURL: fileURL,
-                            originalFilename: plannedResource.cameraResource.url.lastPathComponent.nonEmpty
+                            originalFilename: plannedResource.cameraResource.downloadURL.lastPathComponent.nonEmpty
                                 ?? "lumix-media",
                             role: plannedResource.role
                         )
@@ -462,6 +498,9 @@ final class CameraGalleryStore: ObservableObject {
                     resources: downloadedResources,
                     captureDate: captureDate
                 )
+                failingFilename = downloadedResources
+                    .map(\.originalFilename)
+                    .joined(separator: " + ")
                 let geotag = captureDate.flatMap {
                     LocationTrackMatcher.match(
                         captureDate: $0,
@@ -482,11 +521,15 @@ final class CameraGalleryStore: ObservableObject {
                         "to Photos as \(plan.variant.title)."
                 )
             } catch is CancellationError {
-                importStates[photo.id] = .failed("Import cancelled")
+                importStates[photo.id] = .failed(
+                    CameraImportFailure(filename: failingFilename, message: "Import cancelled")
+                )
                 for fileURL in temporaryFiles { try? FileManager.default.removeItem(at: fileURL) }
                 break
             } catch {
-                importStates[photo.id] = .failed(error.localizedDescription)
+                importStates[photo.id] = .failed(
+                    CameraImportFailure(filename: failingFilename, message: error.localizedDescription)
+                )
                 batchProgress?.failed += 1
                 print("[GM1Sync] Import failed for camera item \(photo.itemID ?? "unknown"): \(error.localizedDescription)")
             }

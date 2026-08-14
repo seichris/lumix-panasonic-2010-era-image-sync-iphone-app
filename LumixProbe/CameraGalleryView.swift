@@ -1,3 +1,5 @@
+import AVFoundation
+import AVKit
 import SwiftUI
 import UIKit
 
@@ -7,6 +9,7 @@ struct CameraGalleryView: View {
     @State private var isSelecting = false
     @State private var importMode: CameraPhotoImportMode = .jpeg
     @State private var showNoNewMediaAlert = false
+    @State private var showFailedOnly = false
 
     private let columns = [
         GridItem(.flexible(), spacing: 3),
@@ -35,7 +38,7 @@ struct CameraGalleryView: View {
                 } description: {
                     Text(message)
                 } actions: {
-                    Button("Retry") { Task { await store.loadInitial() } }
+                    Button("Retry") { Task { await store.reloadAllMedia() } }
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("retry-camera-gallery")
                 }
@@ -51,7 +54,11 @@ struct CameraGalleryView: View {
             if isSelecting || store.isImporting { importBar }
         }
         .task {
-            if store.phase == .idle { await store.loadInitial() }
+            if store.phase == .idle {
+                await store.reloadAllMedia()
+            } else if store.canLoadMore {
+                await store.loadAllPages()
+            }
         }
         .onDisappear { store.cancelLoading() }
         .onChange(of: store.selectedPhotoIDs) { _, _ in
@@ -59,6 +66,9 @@ struct CameraGalleryView: View {
             if !modes.isEmpty, !modes.contains(importMode) {
                 importMode = modes.first ?? .jpeg
             }
+        }
+        .onChange(of: store.failedPhotos.count) { _, failedCount in
+            if failedCount == 0 { showFailedOnly = false }
         }
         .navigationDestination(for: LumixPhoto.self) { photo in
             CameraPhotoDetailView(photo: photo, store: store, model: model)
@@ -76,12 +86,8 @@ struct CameraGalleryView: View {
                 gallerySummary
 
                 LazyVGrid(columns: columns, spacing: 3) {
-                    ForEach(store.photos) { photo in
+                    ForEach(visibleMedia) { photo in
                         galleryCell(photo)
-                            .onAppear {
-                                guard photo.id == store.photos.suffix(5).first?.id else { return }
-                                Task { await store.loadNextPage() }
-                            }
                     }
                 }
 
@@ -89,7 +95,7 @@ struct CameraGalleryView: View {
             }
             .padding(.bottom, 12)
         }
-        .refreshable { await store.loadInitial() }
+        .refreshable { await store.reloadAllMedia() }
         .accessibilityIdentifier("camera-gallery")
     }
 
@@ -100,7 +106,7 @@ struct CameraGalleryView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.green)
                 Spacer()
-                Text("\(store.photos.count) of \(store.totalCount)")
+                Text(mediaCountText)
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("camera-gallery-count")
@@ -109,16 +115,46 @@ struct CameraGalleryView: View {
             if let progress = store.batchProgress, progress.completed > 0 || store.isImporting {
                 VStack(alignment: .leading, spacing: 5) {
                     ProgressView(value: progress.fractionCompleted)
-                    HStack {
+                    HStack(alignment: .firstTextBaseline) {
                         Text(store.isImporting ? "Importing \(progress.currentTitle ?? "item")" : "Import complete")
                         Spacer()
-                        Text("\(progress.saved) saved · \(progress.failed) failed")
-                            .monospacedDigit()
+                        HStack(spacing: 0) {
+                            Text("\(progress.attempted) attempted · \(progress.saved) saved · ")
+                            if progress.failed > 0 {
+                                Button("\(progress.failed) failed") {
+                                    showFailedOnly = true
+                                    isSelecting = false
+                                    store.clearSelection()
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.red)
+                                .accessibilityHint("Shows only the files that failed to import")
+                                .accessibilityIdentifier("show-failed-imports")
+                            } else {
+                                Text("0 failed")
+                            }
+                        }
+                        .monospacedDigit()
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
                 .accessibilityIdentifier("batch-import-progress")
+            }
+
+            if showFailedOnly {
+                HStack {
+                    Label(
+                        "Showing \(store.failedPhotos.count) failed \(store.failedPhotos.count == 1 ? "import" : "imports")",
+                        systemImage: "xmark.circle.fill"
+                    )
+                    .foregroundStyle(.red)
+                    Spacer()
+                    Button("Show all") { showFailedOnly = false }
+                        .accessibilityIdentifier("show-all-camera-media")
+                }
+                .font(.caption.weight(.semibold))
+                .accessibilityIdentifier("failed-import-filter")
             }
 
             if !store.importHistory.isEmpty {
@@ -130,6 +166,20 @@ struct CameraGalleryView: View {
         }
         .padding(.horizontal)
         .padding(.top, 10)
+    }
+
+    private var visibleMedia: [LumixPhoto] {
+        showFailedOnly ? store.failedPhotos : store.photos
+    }
+
+    private var mediaCountText: String {
+        if store.hasCompleteMediaCounts {
+            return "\(store.imageCount) images · \(store.videoCount) videos"
+        }
+        if store.paginationError != nil {
+            return "Media count unavailable"
+        }
+        return "Scanning \(store.totalCount) camera items…"
     }
 
     @ViewBuilder
@@ -180,12 +230,6 @@ struct CameraGalleryView: View {
             Button("Load older media") { Task { await store.loadNextPage() } }
                 .buttonStyle(.bordered)
                 .padding()
-        } else {
-            Text("All \(store.photos.count) camera items loaded")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding()
-                .accessibilityIdentifier("all-camera-items-loaded")
         }
     }
 
@@ -303,6 +347,23 @@ private struct CameraPhotoGridCell: View {
             .aspectRatio(4 / 3, contentMode: .fit)
             .clipped()
 
+            if case let .failed(failure) = importState {
+                Color.red.opacity(0.2)
+                Rectangle()
+                    .stroke(Color.red, lineWidth: 3)
+                VStack {
+                    Spacer()
+                    Text(failure.filename)
+                        .font(.caption2.weight(.bold))
+                        .lineLimit(2)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.red.opacity(0.9))
+                }
+            }
+
             VStack {
                 HStack {
                     Spacer()
@@ -351,9 +412,9 @@ private struct CameraPhotoGridCell: View {
         case .saved:
             EmptyView()
         case .failed:
-            Image(systemName: "exclamationmark.circle.fill")
+            Image(systemName: "xmark.circle.fill")
                 .font(.title2)
-                .foregroundStyle(.orange)
+                .foregroundStyle(.red)
                 .background(.white, in: Circle())
         }
     }
@@ -363,7 +424,7 @@ private struct CameraPhotoGridCell: View {
         case .downloading: return "Downloading"
         case .saving: return "Saving"
         case .saved: return historyAccessibilityValue
-        case .failed: return "Import failed"
+        case let .failed(failure): return "Import failed: \(failure.filename)"
         case nil: return historyAccessibilityValue
         }
     }
@@ -389,16 +450,21 @@ private struct CameraPhotoDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                CameraMediaImage(
-                    resource: photo.previewResource,
-                    placeholderSystemImage: photo.kind == .video ? "video" : "photo"
-                ) { resource in
-                    try await store.mediaData(for: resource)
+                if photo.kind == .video {
+                    CameraVideoPreview(photo: photo, store: store)
+                } else {
+                    CameraMediaImage(
+                        resource: photo.previewResource,
+                        placeholderSystemImage: "photo",
+                        contentMode: .fit
+                    ) { resource in
+                        try await store.mediaData(for: resource)
+                    }
+                    .aspectRatio(4 / 3, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.secondary.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
-                .aspectRatio(4 / 3, contentMode: .fit)
-                .frame(maxWidth: .infinity)
-                .background(Color.secondary.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 14))
 
                 VStack(alignment: .leading, spacing: 7) {
                     Text(photo.title).font(.title3.bold())
@@ -407,7 +473,9 @@ private struct CameraPhotoDetailView: View {
                     }
                     if photo.kind == .video {
                         LabeledContent("Original video") {
-                            Text(photo.videoResource?.url.pathExtension.uppercased() ?? "Unavailable")
+                            Text(photo.videoResource?.downloadURL.lastPathComponent ?? "Unavailable")
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                         }
                     } else {
                         LabeledContent("Original JPEG") {
@@ -505,15 +573,148 @@ private struct CameraPhotoDetailView: View {
         case .saved:
             Label("Imported to Photos", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-        case let .failed(message):
+        case let .failed(failure):
             VStack(alignment: .leading, spacing: 4) {
                 Label("Import failed", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Text(message).font(.caption).foregroundStyle(.secondary)
+                    .foregroundStyle(.red)
+                Text(failure.filename)
+                    .font(.caption.weight(.semibold))
+                Text(failure.message).font(.caption).foregroundStyle(.secondary)
             }
         case nil:
             EmptyView()
         }
+    }
+}
+
+private struct CameraVideoPreview: View {
+    let photo: LumixPhoto
+    @ObservedObject var store: CameraGalleryStore
+    @State private var playbackRequest = 0
+    @State private var isLoading = false
+    @State private var player: AVPlayer?
+    @State private var temporaryFileURL: URL?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        ZStack {
+            Color.black
+
+            if let player {
+                VideoPlayer(player: player)
+            } else {
+                CameraMediaImage(
+                    resource: photo.previewResource,
+                    placeholderSystemImage: "video",
+                    contentMode: .fit
+                ) { resource in
+                    try await store.mediaData(for: resource)
+                }
+
+                if isLoading {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .tint(.white)
+                        Text("Downloading video…")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(12)
+                    .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
+                } else {
+                    Button {
+                        playbackRequest += 1
+                    } label: {
+                        Label(
+                            errorMessage == nil ? "Play video" : "Try playback again",
+                            systemImage: "play.circle.fill"
+                        )
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.black.opacity(0.7), in: Capsule())
+                    }
+                    .accessibilityIdentifier("play-camera-video")
+                }
+            }
+        }
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(alignment: .bottom) {
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .padding(8)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.red.opacity(0.9))
+            }
+        }
+        .task(id: playbackRequest) {
+            guard playbackRequest > 0 else { return }
+            await loadAndPlay()
+        }
+        .onDisappear { cleanUpPlayback() }
+    }
+
+    @MainActor
+    private func loadAndPlay() async {
+        player?.pause()
+        player = nil
+        errorMessage = nil
+        isLoading = true
+        removeTemporaryFile()
+
+        do {
+            let fileURL = try await store.videoFileForPlayback(photo)
+            temporaryFileURL = fileURL
+            try Task.checkCancellation()
+
+            let asset = AVURLAsset(url: fileURL)
+            guard try await asset.load(.isPlayable) else {
+                throw CameraVideoPlaybackError.unsupportedFormat
+            }
+            try Task.checkCancellation()
+
+            let newPlayer = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+            player = newPlayer
+            isLoading = false
+            newPlayer.play()
+        } catch is CancellationError {
+            isLoading = false
+            removeTemporaryFile()
+        } catch {
+            isLoading = false
+            errorMessage = error.localizedDescription
+            removeTemporaryFile()
+        }
+    }
+
+    @MainActor
+    private func cleanUpPlayback() {
+        player?.pause()
+        player = nil
+        isLoading = false
+        removeTemporaryFile()
+    }
+
+    @MainActor
+    private func removeTemporaryFile() {
+        if let temporaryFileURL {
+            try? FileManager.default.removeItem(at: temporaryFileURL)
+            self.temporaryFileURL = nil
+        }
+    }
+}
+
+private enum CameraVideoPlaybackError: LocalizedError {
+    case unsupportedFormat
+
+    var errorDescription: String? {
+        "This camera video format cannot be played by this iPhone."
     }
 }
 
@@ -527,6 +728,7 @@ private struct CameraMediaImage: View {
 
     let resource: LumixResource?
     var placeholderSystemImage = "photo"
+    var contentMode: ContentMode = .fill
     let load: (LumixResource) async throws -> Data
     @State private var phase: Phase = .idle
 
@@ -538,7 +740,7 @@ private struct CameraMediaImage: View {
             case let .image(image):
                 Image(uiImage: image)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: contentMode)
             case .failed:
                 Image(systemName: placeholderSystemImage)
                     .font(.title2)
