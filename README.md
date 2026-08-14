@@ -83,7 +83,7 @@ Matches more than 15 minutes from a usable track point are rejected. Apple Photo
 
 ## QR handling
 
-The scanner supports standard `WIFI:` QR payloads and URL payloads containing an SSID and password. Unsupported older Panasonic payloads are reported with a short SHA-256-derived reference and byte length; the payload and password are never logged. The app immediately offers manual SSID/password entry as a fallback.
+The scanner supports standard `WIFI:` QR payloads and URL payloads containing an SSID and password. Unsupported older Panasonic payloads are reported with a short, per-install keyed reference and byte length; the payload and password are never logged, and the reference cannot be used to test password guesses without the private on-device key. The app immediately offers manual SSID/password entry as a fallback.
 
 The proprietary QR printed by the physical GM1S still needs one recorded scan before the project can claim native support for that exact payload format.
 

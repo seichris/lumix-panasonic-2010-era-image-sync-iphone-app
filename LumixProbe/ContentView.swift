@@ -3,14 +3,26 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var model = ProbeViewModel()
+    @StateObject private var model: ProbeViewModel
     @StateObject private var galleryStore = CameraGalleryStore()
     @State private var presentedSheet: ConnectionSheet?
 
     init() {
+        let model = ProbeViewModel()
         let usesFixture = ProcessInfo.processInfo.arguments.contains("-UITestConnectedGallery")
-        let client: any CameraGalleryClient = usesFixture ? DemoCameraGalleryClient() : LumixClient()
-        _galleryStore = StateObject(wrappedValue: CameraGalleryStore(client: client))
+        _model = StateObject(wrappedValue: model)
+        if usesFixture {
+            let client = DemoCameraGalleryClient()
+            _galleryStore = StateObject(
+                wrappedValue: CameraGalleryStore(clientProvider: { client })
+            )
+        } else {
+            _galleryStore = StateObject(
+                wrappedValue: CameraGalleryStore(clientProvider: {
+                    LumixClient(host: model.host.trimmingCharacters(in: .whitespacesAndNewlines))
+                })
+            )
+        }
     }
 
     var body: some View {
@@ -33,9 +45,14 @@ struct ContentView: View {
                 }
             }
             .task { await model.refreshConnectionStatus() }
+            .onChange(of: model.isCameraConnected) { _, isConnected in
+                guard !isConnected else { return }
+                Task { await galleryStore.resetForReconnect() }
+            }
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active else { return }
                 Task {
+                    if !model.isCameraConnected { await galleryStore.resetForReconnect() }
                     await model.refreshConnectionStatus()
                     if model.isCameraConnected { await galleryStore.loadInitial() }
                 }
@@ -44,11 +61,17 @@ struct ContentView: View {
                 switch destination {
                 case .qrScanner:
                     QRCodeScannerSheet { payload in
-                        Task { await model.joinCameraWiFi(qrPayload: payload) }
+                        Task {
+                            await galleryStore.resetForReconnect()
+                            await model.joinCameraWiFi(qrPayload: payload)
+                        }
                     }
                 case .manualJoin:
                     ManualWiFiJoinSheet { ssid, password, isWEP in
-                        Task { await model.joinCameraWiFi(ssid: ssid, password: password, isWEP: isWEP) }
+                        Task {
+                            await galleryStore.resetForReconnect()
+                            await model.joinCameraWiFi(ssid: ssid, password: password, isWEP: isWEP)
+                        }
                     }
                 }
             }
@@ -75,7 +98,10 @@ struct ContentView: View {
                     .textInputAutocapitalization(.never)
                     .keyboardType(.numbersAndPunctuation)
                 Button("Check connection") {
-                    Task { await model.refreshConnectionStatus() }
+                    Task {
+                        await galleryStore.resetForReconnect()
+                        await model.refreshConnectionStatus()
+                    }
                 }
                 .accessibilityIdentifier("check-camera-connection")
                 Text("The GM1S normally uses 192.168.54.1 in Image App Direct mode.")

@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import NetworkExtension
+import Security
 
 struct LumixWiFiConnector {
     func join(using qrPayload: String) async throws -> String {
@@ -181,9 +182,63 @@ enum LumixWiFiError: LocalizedError {
 }
 
 enum LumixQRCodeFingerprint {
+    private static let key = SymmetricKey(data: loadOrCreateKey())
+
     static func reference(for payload: String) -> String {
-        let digest = SHA256.hash(data: Data(payload.utf8))
+        reference(for: payload, key: key)
+    }
+
+    static func reference(for payload: String, key: SymmetricKey) -> String {
+        let digest = HMAC<SHA256>.authenticationCode(for: Data(payload.utf8), using: key)
         let prefix = digest.prefix(5).map { String(format: "%02X", $0) }.joined()
         return "\(prefix)-\(payload.utf8.count)"
+    }
+
+    private static func loadOrCreateKey() -> Data {
+        let service = "com.web3.gm1sync.qr-fingerprint"
+        let account = "local-reference-key-v1"
+        let lookup: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var existing: CFTypeRef?
+        if SecItemCopyMatching(lookup as CFDictionary, &existing) == errSecSuccess,
+           let data = existing as? Data,
+           data.count == 32 {
+            return data
+        }
+
+        var keyData = Data(count: 32)
+        let randomStatus = keyData.withUnsafeMutableBytes { bytes in
+            guard let address = bytes.baseAddress else { return errSecParam }
+            return SecRandomCopyBytes(kSecRandomDefault, bytes.count, address)
+        }
+        if randomStatus != errSecSuccess {
+            keyData = Data(SHA256.hash(data: Data(UUID().uuidString.utf8)))
+        }
+
+        let addition: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecValueData as String: keyData
+        ]
+        let addStatus = SecItemAdd(addition as CFDictionary, nil)
+
+        if addStatus == errSecDuplicateItem {
+            existing = nil
+            if SecItemCopyMatching(lookup as CFDictionary, &existing) == errSecSuccess,
+               let data = existing as? Data,
+               data.count == 32 {
+                return data
+            }
+        }
+
+        return keyData
     }
 }

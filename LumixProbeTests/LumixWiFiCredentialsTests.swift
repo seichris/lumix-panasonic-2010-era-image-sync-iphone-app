@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 @testable import GM1Sync
 
@@ -56,6 +57,20 @@ final class LumixWiFiCredentialsTests: XCTestCase {
         XCTAssertEqual(first, second)
         XCTAssertFalse(first.contains("GM1S"))
         XCTAssertFalse(first.contains("do-not-show"))
+    }
+
+    func testUnsupportedPayloadReferenceDependsOnThePrivateInstallationKey() {
+        let payload = "PANASONIC:SSID=GM1S;PASSWORD=12345678"
+        let firstKey = SymmetricKey(data: Data(repeating: 0x11, count: 32))
+        let secondKey = SymmetricKey(data: Data(repeating: 0x22, count: 32))
+
+        let first = LumixQRCodeFingerprint.reference(for: payload, key: firstKey)
+        let repeated = LumixQRCodeFingerprint.reference(for: payload, key: firstKey)
+        let second = LumixQRCodeFingerprint.reference(for: payload, key: secondKey)
+
+        XCTAssertEqual(first, repeated)
+        XCTAssertNotEqual(first, second)
+        XCTAssertFalse(first.contains("12345678"))
     }
 
     func testRejectsMalformedWiFiPayloadWithoutExposingPassword() {

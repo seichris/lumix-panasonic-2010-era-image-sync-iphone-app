@@ -64,7 +64,7 @@ Turn the proven Lumix GM1S connection and transfer diagnostics into the app's pr
 
 - Continue accepting standards-compliant `WIFI:` QR codes and supported URL payloads.
 - Never log or display a scanned Wi-Fi password after parsing.
-- When an older Panasonic QR payload cannot be decoded, preserve a redacted payload fingerprint for diagnostics and immediately offer manual SSID/password entry plus the iOS Wi-Fi Settings shortcut.
+- When an older Panasonic QR payload cannot be decoded, preserve a per-install keyed, redacted payload reference for diagnostics and immediately offer manual SSID/password entry plus the iOS Wi-Fi Settings shortcut.
 - Treat scanning the physical GM1S QR as a hardware acceptance gate; do not claim proprietary payload support without that test.
 
 ## Implementation phases

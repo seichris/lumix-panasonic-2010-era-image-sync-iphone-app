@@ -324,12 +324,22 @@ actor LumixClient {
 /// and matches the plain request accepted by the camera's legacy media server.
 private enum LegacyLumixMediaDownloader {
     static func downloadJPEG(from url: URL) async throws -> Data {
-        try await Task.detached(priority: .userInitiated) {
-            try downloadJPEGBlocking(from: url)
-        }.value
+        let operation = LegacyLumixDownloadOperation()
+        let task = Task.detached(priority: .userInitiated) {
+            try downloadJPEGBlocking(from: url, operation: operation)
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+            operation.cancel()
+        }
     }
 
-    private static func downloadJPEGBlocking(from url: URL) throws -> Data {
+    private static func downloadJPEGBlocking(
+        from url: URL,
+        operation: LegacyLumixDownloadOperation
+    ) throws -> Data {
         guard url.scheme == "http",
               let host = url.host,
               let port = url.port,
@@ -340,6 +350,9 @@ private enum LegacyLumixMediaDownloader {
         let fileDescriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard fileDescriptor >= 0 else { throw POSIXDownloadError("socket", errno) }
         defer { Darwin.close(fileDescriptor) }
+        try operation.register(fileDescriptor)
+        defer { operation.unregister(fileDescriptor) }
+        try operation.checkCancellation()
 
         var noSignal = Int32(1)
         setsockopt(fileDescriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout.size(ofValue: noSignal)))
@@ -359,11 +372,15 @@ private enum LegacyLumixMediaDownloader {
                 Darwin.connect(fileDescriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
-        guard connectResult == 0 else { throw POSIXDownloadError("connect", errno) }
+        guard connectResult == 0 else {
+            try operation.checkCancellation()
+            throw POSIXDownloadError("connect", errno)
+        }
+        try operation.checkCancellation()
 
         let path = url.path.isEmpty ? "/" : url.path
         let request = "GET \(path) HTTP/1.0\r\nHost: \(host):\(port)\r\nAccept: */*\r\nUser-Agent: GM1Sync/1.0\r\n\r\n"
-        try sendAll(Data(request.utf8), to: fileDescriptor)
+        try sendAll(Data(request.utf8), to: fileDescriptor, operation: operation)
 
         var received = Data()
         var body = Data()
@@ -373,10 +390,15 @@ private enum LegacyLumixMediaDownloader {
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
 
         while true {
+            try operation.checkCancellation()
             let count = Darwin.recv(fileDescriptor, &buffer, buffer.count, 0)
-            if count == 0 { break }
+            if count == 0 {
+                try operation.checkCancellation()
+                break
+            }
             if count < 0 {
                 if errno == EINTR { continue }
+                try operation.checkCancellation()
                 throw POSIXDownloadError("receive", errno)
             }
 
@@ -429,16 +451,23 @@ private enum LegacyLumixMediaDownloader {
         return body
     }
 
-    private static func sendAll(_ data: Data, to fileDescriptor: Int32) throws {
+    private static func sendAll(
+        _ data: Data,
+        to fileDescriptor: Int32,
+        operation: LegacyLumixDownloadOperation
+    ) throws {
         try data.withUnsafeBytes { rawBuffer in
             guard let base = rawBuffer.baseAddress else { return }
             var sent = 0
             while sent < rawBuffer.count {
+                try operation.checkCancellation()
                 let count = Darwin.send(fileDescriptor, base.advanced(by: sent), rawBuffer.count - sent, 0)
                 if count < 0 {
                     if errno == EINTR { continue }
+                    try operation.checkCancellation()
                     throw POSIXDownloadError("send", errno)
                 }
+                guard count > 0 else { throw POSIXDownloadError("send", EPIPE) }
                 sent += count
             }
         }
@@ -456,6 +485,41 @@ private enum LegacyLumixMediaDownloader {
             if detector.consume(byte) { return true }
         }
         return false
+    }
+}
+
+private final class LegacyLumixDownloadOperation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fileDescriptor: Int32 = -1
+    private var isCancelled = false
+
+    func register(_ fileDescriptor: Int32) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isCancelled else { throw CancellationError() }
+        self.fileDescriptor = fileDescriptor
+    }
+
+    func unregister(_ fileDescriptor: Int32) {
+        lock.lock()
+        defer { lock.unlock() }
+        if self.fileDescriptor == fileDescriptor { self.fileDescriptor = -1 }
+    }
+
+    func cancel() {
+        lock.lock()
+        isCancelled = true
+        if fileDescriptor >= 0 {
+            Darwin.shutdown(fileDescriptor, SHUT_RDWR)
+        }
+        lock.unlock()
+    }
+
+    func checkCancellation() throws {
+        lock.lock()
+        let cancelled = isCancelled
+        lock.unlock()
+        if cancelled || Task.isCancelled { throw CancellationError() }
     }
 }
 
