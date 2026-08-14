@@ -2,6 +2,8 @@ import SwiftUI
 
 struct CameraConnectionGuide: View {
     let statusMessage: String
+    let rememberedCameraSSID: String?
+    let reconnect: () -> Void
     let scanQRCode: () -> Void
     let joinManually: () -> Void
 
@@ -16,15 +18,35 @@ struct CameraConnectionGuide: View {
             connectionStep(
                 number: 2,
                 title: "Join from this iPhone",
-                detail: "Scan the camera QR code below, or manually join the SSID shown by the camera in iPhone Settings."
+                detail: connectionDetail
             )
 
-            Button(action: scanQRCode) {
-                Label("Scan camera QR code", systemImage: "qrcode.viewfinder")
-                    .frame(maxWidth: .infinity)
+            if let rememberedCameraSSID {
+                Button(action: reconnect) {
+                    Label("Reconnect to \(rememberedCameraSSID)", systemImage: "wifi")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("reconnect-remembered-camera")
+
+                Text("This camera is remembered securely. iPhone can also Auto-Join it whenever its Wi-Fi is available.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Button(action: scanQRCode) {
+                    Label("Scan another camera QR code", systemImage: "qrcode.viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("scan-camera-qr-code")
+            } else {
+                Button(action: scanQRCode) {
+                    Label("Scan camera QR code", systemImage: "qrcode.viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("scan-camera-qr-code")
             }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("scan-camera-qr-code")
 
             Button("Enter network details", action: joinManually)
                 .accessibilityIdentifier("join-camera-wifi-manually")
@@ -32,6 +54,14 @@ struct CameraConnectionGuide: View {
             Label(statusMessage, systemImage: "wifi.exclamationmark")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var connectionDetail: String {
+        if let rememberedCameraSSID {
+            "Turn on the camera Wi-Fi. iPhone should Auto-Join \(rememberedCameraSSID); if it does not, reconnect below."
+        } else {
+            "Scan the camera QR code below, or manually join the SSID shown by the camera in iPhone Settings."
         }
     }
 
@@ -58,6 +88,8 @@ struct CameraConnectionGuide: View {
     List {
         CameraConnectionGuide(
             statusMessage: "Join the Wi-Fi network shown by the camera.",
+            rememberedCameraSSID: "GM1S-90C7E0",
+            reconnect: {},
             scanQRCode: {},
             joinManually: {}
         )

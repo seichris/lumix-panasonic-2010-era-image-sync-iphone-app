@@ -13,7 +13,7 @@ struct LumixWiFiConnector {
         try await join(using: LumixWiFiCredentials(ssid: ssid, password: password, isWEP: isWEP))
     }
 
-    private func join(using credentials: LumixWiFiCredentials) async throws -> String {
+    func join(using credentials: LumixWiFiCredentials) async throws -> String {
         let configuration: NEHotspotConfiguration
 
         if let password = credentials.password, !password.isEmpty {
@@ -26,7 +26,8 @@ struct LumixWiFiConnector {
             configuration = NEHotspotConfiguration(ssid: credentials.ssid)
         }
 
-        configuration.joinOnce = true
+        // Keep the camera network available to iOS Auto-Join after the first approved join.
+        configuration.joinOnce = false
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             NEHotspotConfigurationManager.shared.apply(configuration) { error in
@@ -45,6 +46,10 @@ struct LumixWiFiConnector {
         }
 
         return credentials.ssid
+    }
+
+    func removeConfiguration(forSSID ssid: String) {
+        NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
     }
 }
 
@@ -69,6 +74,11 @@ struct LumixWiFiCredentials {
 
         if let queryBased = Self.parseURLQueryPayload(qrPayload) {
             self = queryBased
+            return
+        }
+
+        if let panasonic = Self.parsePanasonicPayload(qrPayload) {
+            self = panasonic
             return
         }
 
@@ -107,6 +117,51 @@ struct LumixWiFiCredentials {
         guard let ssid, !ssid.isEmpty else { return nil }
         let password = values["password"] ?? values["passphrase"] ?? values["pwd"] ?? values["key"]
         return try? Self(ssid: ssid, password: password, isWEP: values["type"]?.uppercased() == "WEP")
+    }
+
+    private static func parsePanasonicPayload(_ payload: String) -> Self? {
+        if let compact = parseCompactPanasonicPayload(payload) {
+            return compact
+        }
+
+        let normalized = payload
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let separatorIndex = lines.firstIndex(where: \.isEmpty), separatorIndex > 0 else { return nil }
+
+        let headers = fields(in: lines[..<separatorIndex])
+        guard headers["MDL"] != nil || headers["CRYPT"] != nil else { return nil }
+        guard (headers["CRYPT"] ?? "PLANE").caseInsensitiveCompare("PLANE") == .orderedSame else {
+            return nil
+        }
+
+        let body = fields(in: lines[lines.index(after: separatorIndex)...])
+        guard let ssid = body["SSID"], !ssid.isEmpty else { return nil }
+        let password = body["PW"] ?? body["PASS"]
+        return try? Self(ssid: ssid, password: password, isWEP: false)
+    }
+
+    private static func parseCompactPanasonicPayload(_ payload: String) -> Self? {
+        let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("PASS:"),
+              let separatorRange = trimmed.range(of: " SSID:") else { return nil }
+
+        let passwordStart = trimmed.index(trimmed.startIndex, offsetBy: "PASS:".count)
+        let password = String(trimmed[passwordStart..<separatorRange.lowerBound])
+        let ssid = String(trimmed[separatorRange.upperBound...])
+        guard !ssid.isEmpty else { return nil }
+        return try? Self(ssid: ssid, password: password, isWEP: false)
+    }
+
+    private static func fields<S: Sequence>(in lines: S) -> [String: String] where S.Element == String {
+        lines.reduce(into: [String: String]()) { result, line in
+            guard let separator = line.firstIndex(of: ":") else { return }
+            let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            let valueStart = line.index(after: separator)
+            let value = line[valueStart...].drop(while: { $0 == " " })
+            result[key] = String(value)
+        }
     }
 
     private static func splitUnescaped(_ value: String, separator: Character) -> [String] {

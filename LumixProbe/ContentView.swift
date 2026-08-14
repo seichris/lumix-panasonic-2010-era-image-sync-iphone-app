@@ -44,7 +44,7 @@ struct ContentView: View {
                     .accessibilityIdentifier("app-settings-link")
                 }
             }
-            .task { await model.refreshConnectionStatus() }
+            .task { await model.refreshConnectionStatus(waitingForRememberedCamera: true) }
             .onChange(of: model.isCameraConnected) { _, isConnected in
                 guard !isConnected else { return }
                 Task { await galleryStore.resetForReconnect() }
@@ -53,7 +53,7 @@ struct ContentView: View {
                 guard phase == .active else { return }
                 Task {
                     if !model.isCameraConnected { await galleryStore.resetForReconnect() }
-                    await model.refreshConnectionStatus()
+                    await model.refreshConnectionStatus(waitingForRememberedCamera: true)
                     if model.isCameraConnected { await galleryStore.loadInitial() }
                 }
             }
@@ -89,6 +89,13 @@ struct ContentView: View {
 
             CameraConnectionGuide(
                 statusMessage: model.connectionStatusMessage,
+                rememberedCameraSSID: model.rememberedCameraNetwork?.ssid,
+                reconnect: {
+                    Task {
+                        await galleryStore.resetForReconnect()
+                        await model.reconnectToRememberedCamera()
+                    }
+                },
                 scanQRCode: { presentedSheet = .qrScanner },
                 joinManually: { presentedSheet = .manualJoin }
             )
@@ -122,6 +129,7 @@ struct ContentView: View {
 private struct AppSettingsView: View {
     @ObservedObject var model: ProbeViewModel
     @State private var isConfirmingTrackClear = false
+    @State private var isConfirmingCameraForget = false
 
     var body: some View {
         List {
@@ -134,6 +142,14 @@ private struct AppSettingsView: View {
                 Text("Use one camera mode: Remote Shooting & View → Direct → Image App. Browsing and original downloads do not require a second Wi-Fi destination.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if let rememberedCameraSSID = model.rememberedCameraNetwork?.ssid {
+                    LabeledContent("Remembered camera", value: rememberedCameraSSID)
+                    Button("Forget \(rememberedCameraSSID)", role: .destructive) {
+                        isConfirmingCameraForget = true
+                    }
+                    .accessibilityIdentifier("forget-remembered-camera")
+                }
             }
 
             GeotaggingControls(
@@ -179,6 +195,12 @@ private struct AppSettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Saved location samples will be removed from this iPhone. Downloaded camera originals are not affected.")
+        }
+        .alert("Forget remembered camera?", isPresented: $isConfirmingCameraForget) {
+            Button("Forget", role: .destructive) { model.forgetRememberedCamera() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("GM1 Sync will remove the saved Wi-Fi password and its Auto-Join configuration. You will need to scan the camera QR code again.")
         }
     }
 }

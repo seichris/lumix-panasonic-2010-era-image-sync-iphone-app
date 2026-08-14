@@ -143,8 +143,8 @@ actor LumixClient {
         self.session = URLSession(configuration: config)
     }
 
-    func getState() async throws -> LumixHTTPResponse {
-        try await cameraGET(["mode": "getstate"])
+    func getState(timeoutInterval: TimeInterval? = nil) async throws -> LumixHTTPResponse {
+        try await cameraGET(["mode": "getstate"], timeoutInterval: timeoutInterval)
     }
 
     /// Known request shape used by older Lumix remote-control clients.
@@ -278,14 +278,21 @@ actor LumixClient {
         }
     }
 
-    private func cameraGET(_ query: [String: String]) async throws -> LumixHTTPResponse {
+    private func cameraGET(
+        _ query: [String: String],
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> LumixHTTPResponse {
         var components = URLComponents()
         components.scheme = "http"
         components.host = host
         components.path = "/cam.cgi"
         components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
         guard let url = components.url else { throw LumixError.invalidURL }
-        return try await send(URLRequest(url: url))
+        var request = URLRequest(url: url)
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
+        return try await send(request)
     }
 
     private func send(_ request: URLRequest) async throws -> LumixHTTPResponse {

@@ -6,6 +6,16 @@ final class LumixProbeUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
+        app.launchArguments = ["-UITestNoRememberedCamera"]
+    }
+
+    func testRememberedCameraReconnectAppearsAlongsideQRCodeScanner() throws {
+        app.launchArguments = ["-UITestRememberedCamera"]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["Reconnect to GM1S-90C7E0"].waitForExistence(timeout: 12))
+        XCTAssertTrue(app.buttons["Scan another camera QR code"].exists)
+        XCTAssertTrue(app.staticTexts["This camera is remembered securely. iPhone can also Auto-Join it whenever its Wi-Fi is available."].exists)
     }
 
     func testDisconnectedGuideQRCodeScannerAndManualFallback() throws {
