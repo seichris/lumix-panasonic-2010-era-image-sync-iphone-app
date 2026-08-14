@@ -16,8 +16,9 @@ targets:
       path: LumixProbe/Info.plist
       properties:
         CFBundleDisplayName: GM1 Sync
-        CFBundleShortVersionString: "0.2"
-        CFBundleVersion: "2"
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "3"
+        ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
