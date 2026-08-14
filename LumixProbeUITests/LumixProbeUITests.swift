@@ -52,7 +52,7 @@ final class LumixProbeUITests: XCTestCase {
         firstPhoto.tap()
 
         XCTAssertTrue(app.buttons["save-camera-photo"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["GM1S 0025"].exists)
+        XCTAssertTrue(app.staticTexts["Demo scene 0025"].exists)
         app.navigationBars.buttons.firstMatch.tap()
 
         app.buttons["toggle-photo-selection"].tap()
@@ -117,21 +117,21 @@ final class LumixProbeUITests: XCTestCase {
         app.launch()
         app.buttons["app-settings-link"].tap()
 
-        addUIInterruptionMonitor(withDescription: "Location permission") { alert in
-            for label in ["Allow While Using App", "Allow Once", "OK"] {
-                let button = alert.buttons[label]
-                if button.exists {
-                    button.tap()
-                    return true
-                }
-            }
-            return false
-        }
-
         let startButton = app.buttons["start-location-log"]
         scrollToElement(startButton)
         startButton.tap()
-        app.tap()
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let permissionAlert = springboard.alerts.firstMatch
+        if permissionAlert.waitForExistence(timeout: 2) {
+            for label in ["Allow While Using App", "Allow Once", "OK"] {
+                let button = permissionAlert.buttons[label]
+                if button.exists {
+                    button.tap()
+                    break
+                }
+            }
+        }
 
         let stopButton = app.buttons["stop-location-log"]
         XCTAssertTrue(stopButton.waitForExistence(timeout: 8))

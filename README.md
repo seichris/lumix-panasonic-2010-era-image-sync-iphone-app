@@ -2,6 +2,8 @@
 
 GM1 Sync is an independent iPhone app for browsing, transferring, and geotagging photos from older Panasonic Wi-Fi cameras. The Panasonic DMC-GM1S is the primary validated camera; the GM1, GM5, and other Image App-era models remain candidates until tested on hardware. See [COMPATIBILITY.md](COMPATIBILITY.md).
 
+For user help, see [SUPPORT.md](SUPPORT.md). GM1 Sync's data practices are documented in [PRIVACY.md](PRIVACY.md).
+
 ## The one camera mode to use
 
 On the GM1S choose:
