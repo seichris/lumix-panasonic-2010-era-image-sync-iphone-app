@@ -20,6 +20,8 @@ targets:
         CFBundleVersion: "3"
         ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
+        UIRequiredDeviceCapabilities:
+          - arm64
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
