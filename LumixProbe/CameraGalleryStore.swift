@@ -1,0 +1,611 @@
+import Foundation
+
+struct DownloadedPhoto: Equatable, Sendable {
+    let fileURL: URL
+    let captureDate: Date?
+    let originalFilename: String
+}
+
+protocol CameraGalleryClient: Sendable {
+    func prepareForBrowsing() async throws -> Int
+    func browsePhotos(start: Int, count: Int) async throws -> LumixPhotoPage
+    func downloadJPEGData(_ resource: LumixResource) async throws -> Data
+    func download(_ resource: LumixResource) async throws -> URL
+}
+
+extension LumixClient: CameraGalleryClient {}
+
+protocol CameraPhotoImporting: Sendable {
+    func save(_ photo: DownloadedPhoto, geotag: GeotagMatch?) async throws
+}
+
+struct SystemCameraPhotoImporter: CameraPhotoImporting {
+    func save(_ photo: DownloadedPhoto, geotag: GeotagMatch?) async throws {
+        try await PhotosOriginalImporter.save(
+            fileURL: photo.fileURL,
+            originalFilename: photo.originalFilename,
+            captureDate: photo.captureDate,
+            location: geotag?.location
+        )
+    }
+}
+
+enum CameraGalleryPhase: Equatable {
+    case idle
+    case loading
+    case loaded
+    case empty
+    case failed(String)
+}
+
+enum CameraPhotoImportState: Equatable {
+    case downloading
+    case saving
+    case saved
+    case failed(String)
+
+    var isWorking: Bool {
+        self == .downloading || self == .saving
+    }
+}
+
+struct CameraBatchProgress: Equatable {
+    let total: Int
+    var completed: Int
+    var saved: Int
+    var failed: Int
+    var currentTitle: String?
+
+    var fractionCompleted: Double {
+        guard total > 0 else { return 0 }
+        return Double(completed) / Double(total)
+    }
+}
+
+@MainActor
+final class CameraGalleryStore: ObservableObject {
+    @Published private(set) var phase: CameraGalleryPhase = .idle
+    @Published private(set) var photos: [LumixPhoto] = []
+    @Published private(set) var totalCount = 0
+    @Published private(set) var isLoadingNextPage = false
+    @Published private(set) var paginationError: String?
+    @Published var selectedPhotoIDs: Set<LumixPhoto.ID> = []
+    @Published private(set) var importStates: [LumixPhoto.ID: CameraPhotoImportState] = [:]
+    @Published private(set) var batchProgress: CameraBatchProgress?
+    @Published private(set) var isImporting = false
+
+    private struct PageRequest: Equatable {
+        let start: Int
+        let count: Int
+    }
+
+    private let clientProvider: @MainActor () -> any CameraGalleryClient
+    private var client: any CameraGalleryClient
+    private let importer: any CameraPhotoImporting
+    private let mediaCache: LumixMediaCache
+    private let pageSize: Int
+    private var nextPageRequest: PageRequest?
+    private var loadGeneration = UUID()
+    private var initialLoadTask: Task<Void, Never>?
+    private var initialLoadTaskID: UUID?
+    private var paginationTask: Task<Void, Never>?
+    private var paginationTaskID: UUID?
+    private var importTask: Task<Void, Never>?
+    private var importTaskID: UUID?
+    private var sessionResetTask: Task<Void, Never>?
+    private var sessionResetTaskID: UUID?
+
+    init(
+        client: any CameraGalleryClient = LumixClient(),
+        importer: any CameraPhotoImporting = SystemCameraPhotoImporter(),
+        pageSize: Int = 20,
+        mediaCacheByteLimit: Int = 24 * 1024 * 1024
+    ) {
+        clientProvider = { client }
+        self.client = client
+        self.importer = importer
+        self.pageSize = max(1, pageSize)
+        mediaCache = LumixMediaCache(byteLimit: mediaCacheByteLimit)
+    }
+
+    init(
+        clientProvider: @escaping @MainActor () -> any CameraGalleryClient,
+        importer: any CameraPhotoImporting = SystemCameraPhotoImporter(),
+        pageSize: Int = 20,
+        mediaCacheByteLimit: Int = 24 * 1024 * 1024
+    ) {
+        self.clientProvider = clientProvider
+        client = clientProvider()
+        self.importer = importer
+        self.pageSize = max(1, pageSize)
+        mediaCache = LumixMediaCache(byteLimit: mediaCacheByteLimit)
+    }
+
+    init(
+        previewPhase: CameraGalleryPhase,
+        photos: [LumixPhoto] = [],
+        totalCount: Int = 0
+    ) {
+        let previewClient = DemoCameraGalleryClient(total: max(totalCount, photos.count))
+        clientProvider = { previewClient }
+        client = previewClient
+        importer = SystemCameraPhotoImporter()
+        pageSize = 20
+        mediaCache = LumixMediaCache(byteLimit: 1 * 1024 * 1024)
+        phase = previewPhase
+        self.photos = photos
+        self.totalCount = max(totalCount, photos.count)
+    }
+
+    var canLoadMore: Bool { nextPageRequest != nil }
+
+    var selectedPhotos: [LumixPhoto] {
+        photos.filter { selectedPhotoIDs.contains($0.id) }
+    }
+
+    func loadInitial() async {
+        if let sessionResetTask { await sessionResetTask.value }
+        let generation = UUID()
+        let taskID = UUID()
+        loadGeneration = generation
+        initialLoadTask?.cancel()
+        paginationTask?.cancel()
+        paginationTask = nil
+        paginationTaskID = nil
+        client = clientProvider()
+        phase = .loading
+        isLoadingNextPage = false
+        paginationError = nil
+        nextPageRequest = nil
+        photos = []
+        totalCount = 0
+        selectedPhotoIDs = []
+        let client = self.client
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let reportedTotal = try await client.prepareForBrowsing()
+                try Task.checkCancellation()
+                guard loadGeneration == generation else { return }
+
+                guard reportedTotal > 0 else {
+                    phase = .empty
+                    return
+                }
+
+                let count = min(pageSize, reportedTotal)
+                let start = max(0, reportedTotal - count)
+                let page = try await client.browsePhotos(start: start, count: count)
+                try Task.checkCancellation()
+                guard loadGeneration == generation else { return }
+
+                totalCount = max(reportedTotal, page.totalMatches)
+                merge(page.photos.reversed())
+                nextPageRequest = previousPage(before: start)
+                phase = photos.isEmpty && nextPageRequest == nil ? .empty : .loaded
+                print("[GM1Sync] Gallery loaded \(photos.count) of \(totalCount) camera items.")
+            } catch is CancellationError {
+                if loadGeneration == generation { phase = .idle }
+            } catch {
+                guard loadGeneration == generation else { return }
+                phase = .failed(error.localizedDescription)
+                print("[GM1Sync] Gallery load failed: \(error.localizedDescription)")
+            }
+        }
+        initialLoadTaskID = taskID
+        initialLoadTask = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        if initialLoadTaskID == taskID {
+            initialLoadTask = nil
+            initialLoadTaskID = nil
+        }
+    }
+
+    func loadNextPage() async {
+        if let paginationTask {
+            let taskID = paginationTaskID
+            await paginationTask.value
+            if paginationTaskID == taskID {
+                self.paginationTask = nil
+                paginationTaskID = nil
+            }
+            return
+        }
+        guard let request = nextPageRequest else { return }
+        let generation = loadGeneration
+        let taskID = UUID()
+        let client = self.client
+        isLoadingNextPage = true
+        paginationError = nil
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if loadGeneration == generation { isLoadingNextPage = false }
+            }
+
+            do {
+                let page = try await client.browsePhotos(start: request.start, count: request.count)
+                try Task.checkCancellation()
+                guard loadGeneration == generation else { return }
+                totalCount = max(totalCount, page.totalMatches)
+                merge(page.photos.reversed())
+                nextPageRequest = previousPage(before: request.start)
+                phase = photos.isEmpty && nextPageRequest == nil ? .empty : .loaded
+                print("[GM1Sync] Gallery pagination loaded \(photos.count) of \(totalCount) camera items.")
+            } catch is CancellationError {
+                return
+            } catch {
+                guard loadGeneration == generation else { return }
+                paginationError = error.localizedDescription
+                print("[GM1Sync] Gallery pagination failed: \(error.localizedDescription)")
+            }
+        }
+        paginationTaskID = taskID
+        paginationTask = task
+        await task.value
+        if paginationTaskID == taskID {
+            paginationTask = nil
+            paginationTaskID = nil
+        }
+    }
+
+    func loadAllPages() async {
+        while nextPageRequest != nil, !Task.isCancelled {
+            let requestBeforeLoad = nextPageRequest
+            await loadNextPage()
+            if paginationError != nil || nextPageRequest == requestBeforeLoad { return }
+        }
+    }
+
+    func cancelLoading() {
+        loadGeneration = UUID()
+        initialLoadTask?.cancel()
+        initialLoadTask = nil
+        initialLoadTaskID = nil
+        paginationTask?.cancel()
+        paginationTask = nil
+        paginationTaskID = nil
+        isLoadingNextPage = false
+        if phase == .loading { phase = .idle }
+    }
+
+    func resetForReconnect() async {
+        if let sessionResetTask {
+            await sessionResetTask.value
+            return
+        }
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await performReconnectReset()
+        }
+        sessionResetTaskID = taskID
+        sessionResetTask = task
+        await task.value
+        if sessionResetTaskID == taskID {
+            sessionResetTask = nil
+            sessionResetTaskID = nil
+        }
+    }
+
+    private func performReconnectReset() async {
+        cancelLoading()
+        let activeImport = importTask
+        importTask?.cancel()
+        await activeImport?.value
+        importTask = nil
+        importTaskID = nil
+        isImporting = false
+        phase = .idle
+        photos = []
+        totalCount = 0
+        nextPageRequest = nil
+        paginationError = nil
+        selectedPhotoIDs = []
+        importStates = [:]
+        batchProgress = nil
+        await mediaCache.removeAll()
+    }
+
+    func mediaData(for resource: LumixResource) async throws -> Data {
+        let client = self.client
+        return try await mediaCache.data(for: resource.url) {
+            try await client.downloadJPEGData(resource)
+        }
+    }
+
+    func toggleSelection(_ photo: LumixPhoto) {
+        if selectedPhotoIDs.contains(photo.id) {
+            selectedPhotoIDs.remove(photo.id)
+        } else {
+            selectedPhotoIDs.insert(photo.id)
+        }
+    }
+
+    func selectNewest(_ count: Int) {
+        selectedPhotoIDs = Set(photos.prefix(max(0, count)).map(\.id))
+    }
+
+    func clearSelection() {
+        selectedPhotoIDs = []
+    }
+
+    func importSelected(samples: [LocationSample], cameraClockOffset: TimeInterval) async {
+        await importPhotos(selectedPhotos, samples: samples, cameraClockOffset: cameraClockOffset)
+    }
+
+    func importPhoto(_ photo: LumixPhoto, samples: [LocationSample], cameraClockOffset: TimeInterval) async {
+        await importPhotos([photo], samples: samples, cameraClockOffset: cameraClockOffset)
+    }
+
+    private func importPhotos(
+        _ photosToImport: [LumixPhoto],
+        samples: [LocationSample],
+        cameraClockOffset: TimeInterval
+    ) async {
+        guard !isImporting, !photosToImport.isEmpty else { return }
+        let taskID = UUID()
+        let client = self.client
+        isImporting = true
+        batchProgress = CameraBatchProgress(
+            total: photosToImport.count,
+            completed: 0,
+            saved: 0,
+            failed: 0,
+            currentTitle: nil
+        )
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await performImport(
+                photosToImport,
+                samples: samples,
+                cameraClockOffset: cameraClockOffset,
+                client: client
+            )
+        }
+        importTaskID = taskID
+        importTask = task
+        await task.value
+        if importTaskID == taskID {
+            importTask = nil
+            importTaskID = nil
+            isImporting = false
+            batchProgress?.currentTitle = nil
+        }
+    }
+
+    private func performImport(
+        _ photosToImport: [LumixPhoto],
+        samples: [LocationSample],
+        cameraClockOffset: TimeInterval,
+        client: any CameraGalleryClient
+    ) async {
+        for photo in photosToImport {
+            if Task.isCancelled { break }
+            batchProgress?.currentTitle = photo.title
+            var temporaryFile: URL?
+
+            do {
+                guard let resource = photo.originalJPEGResource else { throw LumixError.noOriginalJPEG }
+                importStates[photo.id] = .downloading
+                let fileURL = try await client.download(resource)
+                temporaryFile = fileURL
+                try Task.checkCancellation()
+                let downloadedPhoto = DownloadedPhoto(
+                    fileURL: fileURL,
+                    captureDate: PhotoCaptureDateReader.read(from: fileURL),
+                    originalFilename: resource.url.lastPathComponent.nonEmpty ?? "lumix-original.jpg"
+                )
+                let geotag = downloadedPhoto.captureDate.flatMap {
+                    LocationTrackMatcher.match(
+                        captureDate: $0,
+                        samples: samples,
+                        cameraClockOffset: cameraClockOffset
+                    )
+                }
+
+                importStates[photo.id] = .saving
+                try await importer.save(downloadedPhoto, geotag: geotag)
+                try Task.checkCancellation()
+                importStates[photo.id] = .saved
+                batchProgress?.saved += 1
+                selectedPhotoIDs.remove(photo.id)
+                print("[GM1Sync] Imported camera item \(photo.itemID ?? "unknown") to Photos.")
+            } catch is CancellationError {
+                importStates[photo.id] = .failed("Import cancelled")
+                if let temporaryFile { try? FileManager.default.removeItem(at: temporaryFile) }
+                break
+            } catch {
+                importStates[photo.id] = .failed(error.localizedDescription)
+                batchProgress?.failed += 1
+                print("[GM1Sync] Import failed for camera item \(photo.itemID ?? "unknown"): \(error.localizedDescription)")
+            }
+
+            if let temporaryFile { try? FileManager.default.removeItem(at: temporaryFile) }
+            batchProgress?.completed += 1
+        }
+    }
+
+    private func previousPage(before start: Int) -> PageRequest? {
+        guard start > 0 else { return nil }
+        let previousStart = max(0, start - pageSize)
+        return PageRequest(start: previousStart, count: min(pageSize, start))
+    }
+
+    private func merge<S: Sequence>(_ newPhotos: S) where S.Element == LumixPhoto {
+        var existingIDs = Set(photos.map(\.id))
+        for photo in newPhotos where existingIDs.insert(photo.id).inserted {
+            photos.append(photo)
+        }
+        selectedPhotoIDs.formIntersection(existingIDs)
+    }
+}
+
+private actor LumixMediaCache {
+    private struct InFlightRequest {
+        let task: Task<Data, Error>
+        var waiters: Set<UUID>
+    }
+
+    private let byteLimit: Int
+    private let loadLimiter = LumixMediaLoadLimiter(limit: 3)
+    private var cached: [URL: Data] = [:]
+    private var recency: [URL] = []
+    private var cachedBytes = 0
+    private var inFlight: [URL: InFlightRequest] = [:]
+
+    init(byteLimit: Int) {
+        self.byteLimit = max(0, byteLimit)
+    }
+
+    func data(
+        for url: URL,
+        loader: @escaping @Sendable () async throws -> Data
+    ) async throws -> Data {
+        if let value = cached[url] {
+            touch(url)
+            return value
+        }
+        let waiterID = UUID()
+        let task: Task<Data, Error>
+
+        if var request = inFlight[url] {
+            request.waiters.insert(waiterID)
+            inFlight[url] = request
+            task = request.task
+        } else {
+            let limiter = loadLimiter
+            task = Task {
+                try await limiter.load(loader)
+            }
+            inFlight[url] = InFlightRequest(task: task, waiters: [waiterID])
+        }
+
+        return try await withTaskCancellationHandler {
+            do {
+                let value = try await task.value
+                try Task.checkCancellation()
+                finishRequest(for: url, waiterID: waiterID, value: value)
+                return value
+            } catch {
+                finishRequest(for: url, waiterID: waiterID, value: nil)
+                throw error
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(waiterID, for: url) }
+        }
+    }
+
+    private func finishRequest(for url: URL, waiterID: UUID, value: Data?) {
+        guard var request = inFlight[url] else { return }
+        request.waiters.remove(waiterID)
+
+        if let value {
+            inFlight[url] = nil
+            insert(value, for: url)
+        } else if request.waiters.isEmpty {
+            inFlight[url] = nil
+        } else {
+            inFlight[url] = request
+        }
+    }
+
+    private func cancelWaiter(_ waiterID: UUID, for url: URL) {
+        guard var request = inFlight[url], request.waiters.remove(waiterID) != nil else { return }
+        if request.waiters.isEmpty {
+            inFlight[url] = nil
+            request.task.cancel()
+        } else {
+            inFlight[url] = request
+        }
+    }
+
+    private func insert(_ data: Data, for url: URL) {
+        guard data.count <= byteLimit else { return }
+        if let previous = cached[url] { cachedBytes -= previous.count }
+        cached[url] = data
+        cachedBytes += data.count
+        touch(url)
+
+        while cachedBytes > byteLimit, let oldest = recency.first {
+            recency.removeFirst()
+            if let removed = cached.removeValue(forKey: oldest) { cachedBytes -= removed.count }
+        }
+    }
+
+    private func touch(_ url: URL) {
+        recency.removeAll { $0 == url }
+        recency.append(url)
+    }
+
+    func removeAll() {
+        for request in inFlight.values { request.task.cancel() }
+        inFlight = [:]
+        cached = [:]
+        recency = []
+        cachedBytes = 0
+    }
+}
+
+private actor LumixMediaLoadLimiter {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
+    private let limit: Int
+    private var available: Int
+    private var waiters: [Waiter] = []
+
+    init(limit: Int) {
+        self.limit = max(1, limit)
+        available = max(1, limit)
+    }
+
+    func load(_ operation: @escaping @Sendable () async throws -> Data) async throws -> Data {
+        try await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        return try await operation()
+    }
+
+    private func acquire() async throws {
+        try Task.checkCancellation()
+        if available > 0 {
+            available -= 1
+            return
+        }
+
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters.append(Waiter(id: id, continuation: continuation))
+            }
+        } onCancel: {
+            Task { await self.cancel(id) }
+        }
+    }
+
+    private func cancel(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: index)
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+
+    private func release() {
+        if waiters.isEmpty {
+            available = min(limit, available + 1)
+        } else {
+            waiters.removeFirst().continuation.resume()
+        }
+    }
+}
+
+private extension String {
+    var nonEmpty: String? { isEmpty ? nil : self }
+}

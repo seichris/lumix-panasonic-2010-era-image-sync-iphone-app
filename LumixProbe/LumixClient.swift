@@ -17,11 +17,14 @@ struct LumixContentInfo: Sendable {
 }
 
 struct LumixResource: Identifiable, Hashable, Sendable {
-    let id = UUID()
     let itemID: String?
     let title: String?
     let url: URL
     let protocolInfo: String
+
+    var id: String {
+        [itemID ?? "", profileName ?? "", url.absoluteString].joined(separator: "|")
+    }
 
     var profileName: String? {
         guard let range = protocolInfo.range(of: "PANASONIC.COM_PN=") else { return nil }
@@ -32,6 +35,70 @@ struct LumixResource: Identifiable, Hashable, Sendable {
     var isOriginalJPEG: Bool {
         profileName == "CAM_ORG" || profileName == "CAM_RAW_JPG"
     }
+}
+
+struct LumixPhoto: Identifiable, Hashable, Sendable {
+    let id: String
+    let itemID: String?
+    let title: String
+    let resources: [LumixResource]
+
+    init(itemID: String?, title: String?, resources: [LumixResource]) {
+        self.itemID = itemID
+        self.title = title?.nonEmpty ?? resources.first?.url.deletingPathExtension().lastPathComponent.nonEmpty ?? "Camera photo"
+        self.resources = resources
+        id = itemID?.nonEmpty.map { "item:\($0)" }
+            ?? title?.nonEmpty.map { "title:\($0)" }
+            ?? "resource:\(resources.first?.url.absoluteString ?? "camera-photo")"
+    }
+
+    var thumbnailResource: LumixResource? {
+        resource(preferredProfiles: ["CAM_TN", "CAM_LRGTN"])
+    }
+
+    var previewResource: LumixResource? {
+        resource(preferredProfiles: ["CAM_LRGTN", "CAM_TN"])
+    }
+
+    var originalJPEGResource: LumixResource? {
+        resource(preferredProfiles: ["CAM_ORG", "CAM_RAW_JPG"])
+    }
+
+    var rawResource: LumixResource? {
+        resource(preferredProfiles: ["CAM_RAW"])
+    }
+
+    private func resource(preferredProfiles: [String]) -> LumixResource? {
+        for profile in preferredProfiles {
+            if let match = resources.first(where: { $0.profileName == profile }) { return match }
+        }
+        return nil
+    }
+
+    static func grouped(from resources: [LumixResource]) -> [LumixPhoto] {
+        var order: [String] = []
+        var grouped: [String: [LumixResource]] = [:]
+
+        for resource in resources {
+            let key = resource.itemID?.nonEmpty.map { "item:\($0)" }
+                ?? resource.title?.nonEmpty.map { "title:\($0)" }
+                ?? "resource:\(resource.url.deletingPathExtension().absoluteString)"
+            if grouped[key] == nil { order.append(key) }
+            grouped[key, default: []].append(resource)
+        }
+
+        return order.compactMap { key in
+            guard let itemResources = grouped[key], let first = itemResources.first else { return nil }
+            return LumixPhoto(itemID: first.itemID, title: first.title, resources: itemResources)
+        }
+    }
+}
+
+struct LumixPhotoPage: Sendable {
+    let startIndex: Int
+    let numberReturned: Int
+    let totalMatches: Int
+    let photos: [LumixPhoto]
 }
 
 struct LumixBrowseResult: Sendable {
@@ -49,6 +116,7 @@ enum LumixError: LocalizedError {
     case http(Int, String)
     case missingBrowseResult
     case noOriginalJPEG
+    case missingContentCount
 
     var errorDescription: String? {
         switch self {
@@ -57,6 +125,7 @@ enum LumixError: LocalizedError {
         case let .http(code, body): return "HTTP \(code): \(body.prefix(300))"
         case .missingBrowseResult: return "UPnP response did not contain a DIDL-Lite Result."
         case .noOriginalJPEG: return "No original JPEG was advertised in the browsed records."
+        case .missingContentCount: return "The camera did not report its media count after entering playback mode."
         }
     }
 }
@@ -155,14 +224,41 @@ actor LumixClient {
         return try await browse(start: max(0, total - count), count: min(count, max(total, 1)))
     }
 
-    func download(_ resource: LumixResource) async throws -> URL {
-        let data = try await LegacyLumixMediaDownloader.downloadJPEG(from: resource.url)
-        guard data.count >= 4,
-              data[0] == 0xff,
-              data[1] == 0xd8,
-              data.suffix(2).elementsEqual([0xff, 0xd9]) else {
-            throw LumixError.http(0, "download was not a complete JPEG (\(data.count) bytes)")
+    func prepareForBrowsing() async throws -> Int {
+        _ = try await setPlayMode()
+
+        for attempt in 0..<5 {
+            if attempt > 0 {
+                try await Task.sleep(for: .milliseconds(350 * attempt))
+            }
+            let (_, info) = try await getContentInfo()
+            if let total = info.contentNumber ?? info.totalContentNumber {
+                return max(0, total)
+            }
         }
+
+        throw LumixError.missingContentCount
+    }
+
+    func browsePhotos(start: Int, count: Int) async throws -> LumixPhotoPage {
+        let result = try await browse(start: start, count: count)
+        let photos = LumixPhoto.grouped(from: result.resources)
+        return LumixPhotoPage(
+            startIndex: max(0, start),
+            numberReturned: result.numberReturned ?? photos.count,
+            totalMatches: result.totalMatches ?? max(start + photos.count, photos.count),
+            photos: photos
+        )
+    }
+
+    func downloadJPEGData(_ resource: LumixResource) async throws -> Data {
+        let data = try await LegacyLumixMediaDownloader.downloadJPEG(from: resource.url)
+        try Self.validateJPEG(data)
+        return data
+    }
+
+    func download(_ resource: LumixResource) async throws -> URL {
+        let data = try await downloadJPEGData(resource)
 
         let suggested = resource.url.lastPathComponent
         let filename = suggested.isEmpty ? "lumix-original.jpg" : suggested
@@ -171,6 +267,15 @@ actor LumixClient {
         try? FileManager.default.removeItem(at: destination)
         try data.write(to: destination, options: .atomic)
         return destination
+    }
+
+    private static func validateJPEG(_ data: Data) throws {
+        guard data.count >= 4,
+              data[0] == 0xff,
+              data[1] == 0xd8,
+              data.suffix(2).elementsEqual([0xff, 0xd9]) else {
+            throw LumixError.http(0, "download was not a complete JPEG (\(data.count) bytes)")
+        }
     }
 
     private func cameraGET(_ query: [String: String]) async throws -> LumixHTTPResponse {
@@ -219,12 +324,22 @@ actor LumixClient {
 /// and matches the plain request accepted by the camera's legacy media server.
 private enum LegacyLumixMediaDownloader {
     static func downloadJPEG(from url: URL) async throws -> Data {
-        try await Task.detached(priority: .userInitiated) {
-            try downloadJPEGBlocking(from: url)
-        }.value
+        let operation = LegacyLumixDownloadOperation()
+        let task = Task.detached(priority: .userInitiated) {
+            try downloadJPEGBlocking(from: url, operation: operation)
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+            operation.cancel()
+        }
     }
 
-    private static func downloadJPEGBlocking(from url: URL) throws -> Data {
+    private static func downloadJPEGBlocking(
+        from url: URL,
+        operation: LegacyLumixDownloadOperation
+    ) throws -> Data {
         guard url.scheme == "http",
               let host = url.host,
               let port = url.port,
@@ -235,6 +350,9 @@ private enum LegacyLumixMediaDownloader {
         let fileDescriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard fileDescriptor >= 0 else { throw POSIXDownloadError("socket", errno) }
         defer { Darwin.close(fileDescriptor) }
+        try operation.register(fileDescriptor)
+        defer { operation.unregister(fileDescriptor) }
+        try operation.checkCancellation()
 
         var noSignal = Int32(1)
         setsockopt(fileDescriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout.size(ofValue: noSignal)))
@@ -254,11 +372,15 @@ private enum LegacyLumixMediaDownloader {
                 Darwin.connect(fileDescriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
-        guard connectResult == 0 else { throw POSIXDownloadError("connect", errno) }
+        guard connectResult == 0 else {
+            try operation.checkCancellation()
+            throw POSIXDownloadError("connect", errno)
+        }
+        try operation.checkCancellation()
 
         let path = url.path.isEmpty ? "/" : url.path
         let request = "GET \(path) HTTP/1.0\r\nHost: \(host):\(port)\r\nAccept: */*\r\nUser-Agent: GM1Sync/1.0\r\n\r\n"
-        try sendAll(Data(request.utf8), to: fileDescriptor)
+        try sendAll(Data(request.utf8), to: fileDescriptor, operation: operation)
 
         var received = Data()
         var body = Data()
@@ -268,10 +390,15 @@ private enum LegacyLumixMediaDownloader {
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
 
         while true {
+            try operation.checkCancellation()
             let count = Darwin.recv(fileDescriptor, &buffer, buffer.count, 0)
-            if count == 0 { break }
+            if count == 0 {
+                try operation.checkCancellation()
+                break
+            }
             if count < 0 {
                 if errno == EINTR { continue }
+                try operation.checkCancellation()
                 throw POSIXDownloadError("receive", errno)
             }
 
@@ -324,16 +451,23 @@ private enum LegacyLumixMediaDownloader {
         return body
     }
 
-    private static func sendAll(_ data: Data, to fileDescriptor: Int32) throws {
+    private static func sendAll(
+        _ data: Data,
+        to fileDescriptor: Int32,
+        operation: LegacyLumixDownloadOperation
+    ) throws {
         try data.withUnsafeBytes { rawBuffer in
             guard let base = rawBuffer.baseAddress else { return }
             var sent = 0
             while sent < rawBuffer.count {
+                try operation.checkCancellation()
                 let count = Darwin.send(fileDescriptor, base.advanced(by: sent), rawBuffer.count - sent, 0)
                 if count < 0 {
                     if errno == EINTR { continue }
+                    try operation.checkCancellation()
                     throw POSIXDownloadError("send", errno)
                 }
+                guard count > 0 else { throw POSIXDownloadError("send", EPIPE) }
                 sent += count
             }
         }
@@ -351,6 +485,41 @@ private enum LegacyLumixMediaDownloader {
             if detector.consume(byte) { return true }
         }
         return false
+    }
+}
+
+private final class LegacyLumixDownloadOperation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fileDescriptor: Int32 = -1
+    private var isCancelled = false
+
+    func register(_ fileDescriptor: Int32) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isCancelled else { throw CancellationError() }
+        self.fileDescriptor = fileDescriptor
+    }
+
+    func unregister(_ fileDescriptor: Int32) {
+        lock.lock()
+        defer { lock.unlock() }
+        if self.fileDescriptor == fileDescriptor { self.fileDescriptor = -1 }
+    }
+
+    func cancel() {
+        lock.lock()
+        isCancelled = true
+        if fileDescriptor >= 0 {
+            Darwin.shutdown(fileDescriptor, SHUT_RDWR)
+        }
+        lock.unlock()
+    }
+
+    func checkCancellation() throws {
+        lock.lock()
+        let cancelled = isCancelled
+        lock.unlock()
+        if cancelled || Task.isCancelled { throw CancellationError() }
     }
 }
 
@@ -526,6 +695,8 @@ private final class DIDLParser: NSObject, XMLParserDelegate {
 }
 
 private extension String {
+    var nonEmpty: String? { isEmpty ? nil : self }
+
     var htmlUnescaped: String {
         replacingOccurrences(of: "&lt;", with: "<")
             .replacingOccurrences(of: "&gt;", with: ">")

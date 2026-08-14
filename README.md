@@ -1,82 +1,95 @@
 # GM1 Sync
 
-Experimental iOS client for transferring and eventually geotagging photos from older Panasonic Wi-Fi cameras. The immediate goal is to validate the camera's local HTTP + UPnP/DLNA protocol on real GM-family hardware before building the full photo-transfer/geotagging experience.
+GM1 Sync is an independent iPhone app for browsing, transferring, and geotagging photos from older Panasonic Wi-Fi cameras. The Panasonic DMC-GM1S is the primary validated camera; the GM1, GM5, and other Image App-era models remain candidates until tested on hardware. See [COMPATIBILITY.md](COMPATIBILITY.md).
 
-The app starts with the GM1, GM1S, and GM5, but Panasonic reused Image App across many system and compact cameras from roughly 2013 onward. See [COMPATIBILITY.md](COMPATIBILITY.md) for the complete candidate list, regional model names, approximate model eras, and confidence tiers. Every model other than the active hardware test target remains unverified until it passes the capability probe.
+## The one camera mode to use
 
-## What we know
+On the GM1S choose:
 
-The GM1S has Wi-Fi but no Bluetooth or GPS. Panasonic Image App connects locally to the camera; cloud access is not required for remote control or media browsing.
+```text
+Wi-Fi → New Connection → Remote Shooting & View → Direct → Image App
+```
 
-On this Lumix protocol family the camera normally acts as a Wi-Fi AP and is commonly reachable at `192.168.54.1`. Camera control is plain HTTP through `/cam.cgi`. Open-source implementations use commands such as:
+Join the SSID shown by the camera from GM1 Sync's QR scanner, its manual network form, or iPhone Wi-Fi Settings.
+
+That single Image App Direct network is enough for the intended workflow. With the camera in this connection mode, GM1 Sync can reach `cam.cgi`, switch the camera into playback state, enumerate the SD card, load previews, and download original JPEGs. Do not switch to **Send Images Stored in the Camera** or another Wi-Fi destination for browsing or transfer.
+
+## Current app flow
+
+1. The app checks for the camera at `192.168.54.1`.
+2. If it is unreachable, it shows the exact camera steps plus QR and manual Wi-Fi joining.
+3. Once connected, the app enters playback mode and opens the photo browser.
+4. The newest 20 items load first; scrolling or **Load all photos** pages through the full card.
+5. Lightweight `CAM_TN`/`CAM_LRGTN` resources populate a lazy grid and detail preview.
+6. A single original or a selection can be imported sequentially into Apple Photos.
+7. Each transfer has its own downloading, saving, saved, or failed state; one failure does not stop a batch.
+8. Foreground refresh and Retry recover after camera sleep, battery replacement, app relaunch, or Wi-Fi reconnection.
+
+Protocol diagnostics remain available under **Settings → Camera diagnostics**.
+
+## Confirmed on DMC-GM1S
+
+The initial hardware session established:
+
+- Camera address `192.168.54.1`, firmware `D2.70`.
+- `/cam.cgi?mode=getstate` works in Image App Direct mode.
+- `get_content_info` and ContentDirectory browsing work in playback mode.
+- Record mode reports busy for content info and does not support the browse workflow.
+- The SD card reported 81 items.
+- ContentDirectory advertised `CAM_TN`, `CAM_LRGTN`, `CAM_RAW_JPG`, and `CAM_RAW` resources.
+- The legacy port-50001 server accepts the app's deliberately small HTTP/1.0 downloader.
+- A 6,455,292-byte, 4592 × 3448 `CAM_RAW_JPG` original was downloaded completely, identified as a Panasonic DMC-GM1S JPEG, and saved to Photos.
+
+This confirms that browsing and original transfer do not require two camera Wi-Fi modes. Remaining hardware acceptance checks are listed in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+
+## Protocol shape
+
+Camera control uses local HTTP endpoints such as:
 
 ```text
 GET http://192.168.54.1/cam.cgi?mode=getstate
-GET http://192.168.54.1/cam.cgi?mode=camcmd&value=recmode
 GET http://192.168.54.1/cam.cgi?mode=camcmd&value=playmode
 GET http://192.168.54.1/cam.cgi?mode=get_content_info
 ```
 
-`get_content_info` can return values including `current_position`, `total_content_number`, and `content_number`. libgphoto2 uses `content_number` as its count of available camera media.
-
-Media enumeration uses a UPnP `ContentDirectory:1` SOAP request to:
+Media enumeration uses a UPnP `ContentDirectory:1` SOAP request at:
 
 ```text
 http://192.168.54.1:60606/Server0/CDS_control
 ```
 
-The working libgphoto2 Lumix implementation sends `BrowseDirectChildren`, `ObjectID=0`, paging fields, and Panasonic's extra control-point marker:
+The request uses `BrowseDirectChildren`, `ObjectID=0`, paging fields, and Panasonic's control-point marker:
 
 ```xml
 <pana:X_FromCP>LumixLink2.0</pana:X_FromCP>
 ```
 
-Returned DIDL-Lite media items can expose multiple HTTP resources for the same asset, identified by Panasonic DLNA profile names such as original JPEG (`CAM_ORG`), thumbnail (`CAM_TN`), larger preview (`CAM_LRGTN`), RAW-related resources (`CAM_RAW`, `CAM_RAW_JPG`), and movies. Original/preview resources are direct HTTP URLs, commonly served on port `50001`.
+Returned DIDL-Lite items expose several resources for one camera item. GM1 Sync groups them by item ID and resolves profiles in this order:
 
-The important unknown is camera state. Existing clients switch the camera to `playmode` before media enumeration. We need to determine on the GM1S whether `get_content_info` and/or ContentDirectory browsing works while still in record mode. That decides whether physical-shutter auto-import can be seamless or whether transfer temporarily requires playback mode.
+| Purpose | Preferred profiles |
+|---|---|
+| Grid thumbnail | `CAM_TN`, then `CAM_LRGTN` |
+| Detail preview | `CAM_LRGTN`, then `CAM_TN` |
+| Original JPEG | `CAM_ORG`, then `CAM_RAW_JPG` |
+| RAW companion | `CAM_RAW` |
 
-## Target product flow
+Only previews are cached in memory. Originals are downloaded on demand, handed to Photos unchanged, and removed from temporary app storage after the import attempt.
 
-The intended app is:
+## Geotagging
 
-1. Connect iPhone to GM1S Wi-Fi.
-2. Discover/probe the camera.
-3. Authorize if the camera requires Panasonic's access-control handshake.
-4. Enumerate media through ContentDirectory.
-5. Show camera thumbnails.
-6. Download the untouched original JPEG (and RAW when exposed).
-7. Save the file into Apple Photos without decoding/re-encoding it.
-8. Log iPhone GPS positions with Core Location.
-9. Match imported image capture time against the GPS track and assign a `CLLocation` to the Photos asset while preserving original camera bytes.
-10. Let iCloud Photos perform its normal sync once the iPhone has Internet access again.
+Location logging begins only when the user taps **Start location log**. The visible session can continue while the iPhone is locked. On import, GM1 Sync reads the original JPEG's EXIF capture time and matches it to a nearby or interpolated track point. A camera-clock adjustment can correct a camera that is ahead or behind the iPhone.
 
-A later Auto Import mode should detect a changed content count/new media ID and import new photos while the app remains connected in the foreground. Continuous arbitrary local-network polling in the iOS background should not be assumed; background Core Location is a separate supported use case.
+Matches more than 15 minutes from a usable track point are rejected. Apple Photos receives the original camera file as its unadjusted resource and the matched `CLLocation` as asset metadata; the JPEG bytes and camera SD card are not modified.
 
-## What this first app tests
+## QR handling
 
-The current GM1 Sync build combines the diagnostic camera controls with an initial end-to-end geotagging flow. It performs these tests separately and keeps the raw responses visible:
+The scanner supports standard `WIFI:` QR payloads and URL payloads containing an SSID and password. Unsupported older Panasonic payloads are reported with a short, per-install keyed reference and byte length; the payload and password are never logged, and the reference cannot be used to test password guesses without the private on-device key. The app immediately offers manual SSID/password entry as a fallback.
 
-- Probe `192.168.54.1` with `getstate`.
-- Request camera access using the known `req_acc` shape.
-- Show raw camera state.
-- Call `get_content_info` in the current state.
-- Switch to record mode, then call `get_content_info`.
-- Switch to playback mode, then call `get_content_info`.
-- Browse the final five ContentDirectory records.
-- Parse DIDL-Lite resource URLs and Panasonic profile identifiers.
-- Download one advertised `CAM_ORG` JPEG to the app's temporary directory.
-- Record and persist a precise iPhone location track during an explicit, visible session, including while the phone is locked.
-- Parse the downloaded JPEG's EXIF capture time and match it to a nearby or interpolated track point.
-- Preview the proposed location and match confidence before import.
-- Add the untouched original file to Apple Photos with asset-level capture time and location metadata.
+The proprietary QR printed by the physical GM1S still needs one recorded scan before the project can claim native support for that exact payload format.
 
-Location logging starts only when the user taps **Start location log** and stops explicitly. The active blue location indicator remains visible while the app receives updates in the background. A camera-clock adjustment can correct a camera that is ahead or behind the iPhone. Matches more than 15 minutes from a usable track point are rejected rather than silently assigning a dubious geotag.
+## Build and test
 
-This should answer the major GM1S-specific unknowns in one test session.
-
-## Running
-
-The project definition uses [XcodeGen](https://github.com/yonaskolb/XcodeGen) so the repository can keep a small readable project configuration instead of a hand-edited `.pbxproj`.
+The project uses [XcodeGen](https://github.com/yonaskolb/XcodeGen):
 
 ```bash
 brew install xcodegen
@@ -84,53 +97,21 @@ xcodegen generate
 open LumixProbe.xcodeproj
 ```
 
-Build to a physical iPhone. The Simulator cannot reproduce the camera Wi-Fi environment usefully.
+The app, unit tests, and UI tests use the WEB3 development team `4H5PK8686H` and bundle ID `com.web3.gm1sync`.
 
-On the GM1S, enable its smartphone Wi-Fi connection and join that network from the iPhone before pressing **Run full probe**. The first release intentionally does not automate joining the SSID; that keeps the protocol test independent of Hotspot Configuration entitlements.
+Unit and simulator UI tests can run without a camera. The UI suite uses an explicit connected-gallery fixture for gallery navigation and skips only the end-to-end protocol test on Simulator. A physical iPhone is required for Hotspot Configuration, local-camera networking, Photos import, and the remaining hardware acceptance checks.
 
-The app requests Local Network and Photos permissions. Plain HTTP is allowed only for local networking via ATS configuration.
+## Scope
 
-Location permission is requested only when geotag logging is started. The iOS Location Updates background mode keeps an active logging session running while the iPhone is locked; it is not used when the logger is stopped.
+The current browser imports original JPEGs. It identifies `CAM_RAW` companions but does not yet export or decode RAW files. Cloud sync, video transfer, background local-network import while iOS suspends the app, and continuous auto-import are outside this branch.
 
-## Expected test procedure
-
-1. Put an SD card in the GM1S with at least five JPEG photos; also include a RAW+JPEG capture if possible.
-2. Enable the camera's smartphone Wi-Fi mode.
-3. Join its Wi-Fi from iPhone Settings.
-4. Launch GM1 Sync and tap **Probe getstate**.
-5. If the camera displays an authorization prompt, approve it.
-6. Tap **Run full probe**.
-7. Copy the complete on-screen log into an issue or commit it under `captures/` (remove anything sensitive first).
-8. Use **Download first original** to fetch a `CAM_ORG` URL.
-9. For byte-fidelity validation, copy the matching SD-card JPEG to a computer and compare SHA-256 hashes with the Wi-Fi-downloaded file.
-
-## Current uncertainties to resolve on GM1S hardware
-
-- Exact first-connection/access-control behavior on GM1S.
-- Whether arbitrary client names work in `req_acc` or a Panasonic-compatible identity is required.
-- Whether `get_content_info` succeeds in record mode.
-- Whether ContentDirectory `Browse` succeeds in record mode.
-- Whether the camera must remain in playback mode during the full HTTP download.
-- Whether a newly captured image becomes visible immediately, after a delay, or only after mode change.
-- Whether GM1S exposes `.RW2` using `CAM_RAW` / `CAM_RAW_JPG`.
-- Whether `CAM_ORG` is byte-for-byte identical to the SD-card JPEG.
-- Whether physical shooting can continue while a connected client polls state.
+The protocol is unofficial and can vary by camera and firmware. Panasonic, LUMIX, and the model names belong to their owner; GM1 Sync is not affiliated with or endorsed by Panasonic.
 
 ## Protocol references
 
-The current implementation is based on behavior independently implemented/reverse-engineered in:
+The implementation draws on behavior independently implemented or reverse-engineered in:
 
-- libgphoto2 Lumix Wi-Fi backend: `gphoto/libgphoto2`, `camlibs/lumix/lumix.c`
-- `peci1/lumix-link-desktop` (GM1 listed as tested / mostly compatible)
-- Panasonic Image App documentation for GM1S Wi-Fi and geotagging behavior
-- Panasonic/Lumix UPnP device descriptions showing `ContentDirectory:1` and `CDS_control`
-
-The protocol is unofficial and Panasonic may vary behavior between models/firmware versions. This project therefore treats all responses as data to inspect rather than assuming newer Lumix behavior is identical to GM1S.
-
-## Next milestone
-
-Once the probe results are known, replace the diagnostic UI with three production modules:
-
-- **Camera browser/importer:** thumbnails, original JPEG/RAW transfer, deduplication, Apple Photos import.
-- **Auto Import:** foreground new-media detection and transfer using the least disruptive state transition proven by the GM1S test.
-- **Geotag logger:** Core Location track recording, camera-clock calibration, timestamp interpolation, and Photos `CLLocation` assignment without modifying the downloaded original file bytes.
+- `gphoto/libgphoto2`, `camlibs/lumix/lumix.c`
+- `peci1/lumix-link-desktop`
+- Panasonic Image App documentation for GM1S Wi-Fi and geotagging
+- Panasonic/Lumix UPnP device descriptions exposing `ContentDirectory:1`

@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 @testable import GM1Sync
 
@@ -44,7 +45,73 @@ final class LumixWiFiCredentialsTests: XCTestCase {
     func testRejectsUnknownPayloadWithoutExposingItsContents() {
         XCTAssertThrowsError(try LumixWiFiCredentials(qrPayload: "PANASONIC-PROPRIETARY")) { error in
             XCTAssertFalse(error.localizedDescription.contains("PANASONIC-PROPRIETARY"))
+            XCTAssertTrue(error.localizedDescription.contains("reference"))
         }
+    }
+
+    func testUnsupportedPayloadReferenceIsDeterministicAndRedacted() {
+        let secretPayload = "PANASONIC:SSID=GM1S;PASSWORD=do-not-show"
+        let first = LumixQRCodeFingerprint.reference(for: secretPayload)
+        let second = LumixQRCodeFingerprint.reference(for: secretPayload)
+
+        XCTAssertEqual(first, second)
+        XCTAssertFalse(first.contains("GM1S"))
+        XCTAssertFalse(first.contains("do-not-show"))
+    }
+
+    func testUnsupportedPayloadReferenceDependsOnThePrivateInstallationKey() {
+        let payload = "PANASONIC:SSID=GM1S;PASSWORD=12345678"
+        let firstKey = SymmetricKey(data: Data(repeating: 0x11, count: 32))
+        let secondKey = SymmetricKey(data: Data(repeating: 0x22, count: 32))
+
+        let first = LumixQRCodeFingerprint.reference(for: payload, key: firstKey)
+        let repeated = LumixQRCodeFingerprint.reference(for: payload, key: firstKey)
+        let second = LumixQRCodeFingerprint.reference(for: payload, key: secondKey)
+
+        XCTAssertEqual(first, repeated)
+        XCTAssertNotEqual(first, second)
+        XCTAssertFalse(first.contains("12345678"))
+    }
+
+    func testRejectsMalformedWiFiPayloadWithoutExposingPassword() {
+        let payload = "WIFI:T:WPA;P:top-secret;;"
+
+        XCTAssertThrowsError(try LumixWiFiCredentials(qrPayload: payload)) { error in
+            XCTAssertFalse(error.localizedDescription.contains("top-secret"))
+        }
+    }
+
+    func testRejectsPasswordProtectedWiFiPayloadWithoutPassword() {
+        XCTAssertThrowsError(try LumixWiFiCredentials(qrPayload: "WIFI:T:WPA;S:GM1S-MISSING-PASSWORD;;"))
+    }
+
+    func testManualCredentialsTrimSSIDAndNormalizeEmptyPassword() throws {
+        let credentials = try LumixWiFiCredentials(ssid: "  GM1S-MANUAL  ", password: "", isWEP: false)
+
+        XCTAssertEqual(credentials.ssid, "GM1S-MANUAL")
+        XCTAssertNil(credentials.password)
+    }
+
+    func testGroupsProfilesIntoStableCameraPhoto() throws {
+        let itemID = "1280475"
+        let resources = try ["CAM_RAW", "CAM_TN", "CAM_RAW_JPG", "CAM_LRGTN"].map { profile in
+            LumixResource(
+                itemID: itemID,
+                title: "128-0475",
+                url: try XCTUnwrap(URL(string: "http://192.168.54.1:50001/\(profile).jpg")),
+                protocolInfo: "http-get:*:image/jpeg;PANASONIC.COM_PN=\(profile)"
+            )
+        }
+
+        let photos = LumixPhoto.grouped(from: resources)
+        let photo = try XCTUnwrap(photos.first)
+
+        XCTAssertEqual(photos.count, 1)
+        XCTAssertEqual(photo.id, "item:\(itemID)")
+        XCTAssertEqual(photo.thumbnailResource?.profileName, "CAM_TN")
+        XCTAssertEqual(photo.previewResource?.profileName, "CAM_LRGTN")
+        XCTAssertEqual(photo.originalJPEGResource?.profileName, "CAM_RAW_JPG")
+        XCTAssertEqual(photo.rawResource?.profileName, "CAM_RAW")
     }
 
     func testRecognizesGM1SOriginalJPEGProfile() throws {
