@@ -1,13 +1,13 @@
 name: LumixProbe
 options:
-  bundleIdPrefix: com.seichris
+  bundleIdPrefix: com.web3
   deploymentTarget:
     iOS: "17.0"
 settings:
   base:
     SWIFT_VERSION: 5.0
 targets:
-  LumixProbe:
+  GM1Sync:
     type: application
     platform: iOS
     sources:
@@ -15,15 +15,71 @@ targets:
     info:
       path: LumixProbe/Info.plist
       properties:
-        CFBundleDisplayName: LumixProbe
+        CFBundleDisplayName: GM1 Sync
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
         UILaunchScreen: {}
-        NSLocalNetworkUsageDescription: LumixProbe connects directly to your Lumix camera over its local Wi-Fi network.
-        NSPhotoLibraryAddUsageDescription: LumixProbe can save original photos downloaded from your Lumix camera to your photo library.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSCameraUsageDescription: GM1 Sync scans the QR code shown by your camera to join its Wi-Fi network.
+        NSLocalNetworkUsageDescription: GM1 Sync connects directly to your camera over its local Wi-Fi network.
+        NSLocationWhenInUseUsageDescription: GM1 Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
+        NSPhotoLibraryAddUsageDescription: GM1 Sync can save original photos downloaded from your camera to your photo library.
+        UIBackgroundModes:
+          - location
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+    entitlements:
+      path: LumixProbe/LumixProbe.entitlements
+      properties:
+        com.apple.developer.networking.HotspotConfiguration: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.seichris.LumixProbe
-        PRODUCT_NAME: LumixProbe
+        DEVELOPMENT_TEAM: 4H5PK8686H
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES:
+          - BlueCamera
+          - BlackCamera
+        PRODUCT_BUNDLE_IDENTIFIER: com.web3.gm1sync
+        PRODUCT_NAME: GM1Sync
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
+  LumixProbeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: LumixProbeUITests
+    dependencies:
+      - target: GM1Sync
+    settings:
+      base:
+        DEVELOPMENT_TEAM: 4H5PK8686H
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.web3.gm1sync.uitests
+        TARGETED_DEVICE_FAMILY: "1"
+  LumixProbeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: LumixProbeTests
+    dependencies:
+      - target: GM1Sync
+    settings:
+      base:
+        DEVELOPMENT_TEAM: 4H5PK8686H
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.web3.gm1sync.tests
+        TARGETED_DEVICE_FAMILY: "1"
+schemes:
+  GM1Sync:
+    build:
+      targets:
+        GM1Sync: all
+        LumixProbeTests: [test]
+        LumixProbeUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - name: LumixProbeTests
+        - name: LumixProbeUITests

@@ -1,6 +1,8 @@
-# Lumix GM1S iOS transfer probe
+# GM1 Sync
 
-Experimental iOS client for Panasonic Lumix GM1/GM1S Wi-Fi cameras. The immediate goal is to validate the camera's local HTTP + UPnP/DLNA protocol on a real GM1S before building the full photo-transfer/geotagging app.
+Experimental iOS client for transferring and eventually geotagging photos from older Panasonic Wi-Fi cameras. The immediate goal is to validate the camera's local HTTP + UPnP/DLNA protocol on real GM-family hardware before building the full photo-transfer/geotagging experience.
+
+The app starts with the GM1, GM1S, and GM5, but Panasonic reused Image App across many system and compact cameras from roughly 2013 onward. See [COMPATIBILITY.md](COMPATIBILITY.md) for the complete candidate list, regional model names, approximate model eras, and confidence tiers. Every model other than the active hardware test target remains unverified until it passes the capability probe.
 
 ## What we know
 
@@ -52,7 +54,7 @@ A later Auto Import mode should detect a changed content count/new media ID and 
 
 ## What this first app tests
 
-`LumixProbe` is deliberately diagnostic. It performs these tests separately and keeps the raw responses visible:
+The current GM1 Sync build combines the diagnostic camera controls with an initial end-to-end geotagging flow. It performs these tests separately and keeps the raw responses visible:
 
 - Probe `192.168.54.1` with `getstate`.
 - Request camera access using the known `req_acc` shape.
@@ -63,7 +65,12 @@ A later Auto Import mode should detect a changed content count/new media ID and 
 - Browse the final five ContentDirectory records.
 - Parse DIDL-Lite resource URLs and Panasonic profile identifiers.
 - Download one advertised `CAM_ORG` JPEG to the app's temporary directory.
-- Optionally add that untouched downloaded file to Apple Photos.
+- Record and persist a precise iPhone location track during an explicit, visible session, including while the phone is locked.
+- Parse the downloaded JPEG's EXIF capture time and match it to a nearby or interpolated track point.
+- Preview the proposed location and match confidence before import.
+- Add the untouched original file to Apple Photos with asset-level capture time and location metadata.
+
+Location logging starts only when the user taps **Start location log** and stops explicitly. The active blue location indicator remains visible while the app receives updates in the background. A camera-clock adjustment can correct a camera that is ahead or behind the iPhone. Matches more than 15 minutes from a usable track point are rejected rather than silently assigning a dubious geotag.
 
 This should answer the major GM1S-specific unknowns in one test session.
 
@@ -83,12 +90,14 @@ On the GM1S, enable its smartphone Wi-Fi connection and join that network from t
 
 The app requests Local Network and Photos permissions. Plain HTTP is allowed only for local networking via ATS configuration.
 
+Location permission is requested only when geotag logging is started. The iOS Location Updates background mode keeps an active logging session running while the iPhone is locked; it is not used when the logger is stopped.
+
 ## Expected test procedure
 
 1. Put an SD card in the GM1S with at least five JPEG photos; also include a RAW+JPEG capture if possible.
 2. Enable the camera's smartphone Wi-Fi mode.
 3. Join its Wi-Fi from iPhone Settings.
-4. Launch LumixProbe and tap **Probe getstate**.
+4. Launch GM1 Sync and tap **Probe getstate**.
 5. If the camera displays an authorization prompt, approve it.
 6. Tap **Run full probe**.
 7. Copy the complete on-screen log into an issue or commit it under `captures/` (remove anything sensitive first).
