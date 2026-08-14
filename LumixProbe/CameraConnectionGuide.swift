@@ -3,6 +3,7 @@ import SwiftUI
 struct CameraConnectionGuide: View {
     let statusMessage: String
     let scanQRCode: () -> Void
+    let joinManually: () -> Void
 
     var body: some View {
         Section("Connect the camera") {
@@ -24,6 +25,9 @@ struct CameraConnectionGuide: View {
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("scan-camera-qr-code")
+
+            Button("Enter network details", action: joinManually)
+                .accessibilityIdentifier("join-camera-wifi-manually")
 
             Label(statusMessage, systemImage: "wifi.exclamationmark")
                 .font(.caption)
@@ -47,5 +51,15 @@ struct CameraConnectionGuide: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+#Preview("Disconnected camera") {
+    List {
+        CameraConnectionGuide(
+            statusMessage: "Join the Wi-Fi network shown by the camera.",
+            scanQRCode: {},
+            joinManually: {}
+        )
     }
 }

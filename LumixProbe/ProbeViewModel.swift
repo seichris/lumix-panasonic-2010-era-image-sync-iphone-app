@@ -1,11 +1,4 @@
 import Foundation
-import Photos
-
-struct DownloadedPhoto: Equatable {
-    let fileURL: URL
-    let captureDate: Date?
-    let originalFilename: String
-}
 
 @MainActor
 final class ProbeViewModel: ObservableObject {
@@ -25,6 +18,7 @@ final class ProbeViewModel: ObservableObject {
     private let logFileURL: URL
     private let defaults: UserDefaults
     private let wifiConnector = LumixWiFiConnector()
+    private let usesConnectedUITestFixture: Bool
     let locationLogger: GeotagLocationLogger
     private var client: LumixClient { LumixClient(host: host.trimmingCharacters(in: .whitespacesAndNewlines)) }
     private static let cameraClockOffsetKey = "cameraClockOffsetMinutes"
@@ -32,50 +26,56 @@ final class ProbeViewModel: ObservableObject {
     init(defaults: UserDefaults = .standard, locationLogger: GeotagLocationLogger? = nil) {
         self.defaults = defaults
         self.locationLogger = locationLogger ?? GeotagLocationLogger()
+        usesConnectedUITestFixture = ProcessInfo.processInfo.arguments.contains("-UITestConnectedGallery")
         cameraClockOffsetMinutes = defaults.object(forKey: Self.cameraClockOffsetKey) as? Double ?? 0
         logFileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("GM1Sync.log")
         persistLog()
         print("[GM1Sync] Diagnostic session started")
+        if usesConnectedUITestFixture {
+            isCameraConnected = true
+            connectionStatusMessage = "Camera connected"
+        }
     }
 
     func refreshConnectionStatus() async {
+        if usesConnectedUITestFixture {
+            isCameraConnected = true
+            connectionStatusMessage = "Camera connected"
+            return
+        }
         connectionStatusMessage = "Checking for the camera…"
         do {
             let response = try await client.getState()
             isCameraConnected = response.text.contains("<result>ok</result>")
             connectionStatusMessage = isCameraConnected ? "Camera connected" : "Join the Wi-Fi network shown by the camera."
+            print("[GM1Sync] Camera connection check: \(isCameraConnected ? "reachable" : "unexpected response")")
         } catch {
             isCameraConnected = false
             connectionStatusMessage = "Join the Wi-Fi network shown by the camera."
+            print("[GM1Sync] Camera connection check: unreachable (\(error.localizedDescription))")
         }
     }
 
     func joinCameraWiFi(qrPayload: String) async {
         do {
             let ssid = try await wifiConnector.join(using: qrPayload)
-            connectionStatusMessage = "Joining \(ssid)…"
-
-            for _ in 0..<12 {
-                try await Task.sleep(for: .seconds(1))
-                do {
-                    let response = try await client.getState()
-                    guard response.text.contains("<result>ok</result>") else { continue }
-                    isCameraConnected = true
-                    connectionStatusMessage = "Camera connected"
-                    append("Joined camera Wi-Fi and reached the camera.")
-                    return
-                } catch {
-                    continue
-                }
-            }
-
-            isCameraConnected = false
-            connectionStatusMessage = "Wi-Fi joined, but the camera did not respond."
+            await waitForCamera(afterJoining: ssid)
         } catch {
             isCameraConnected = false
             connectionStatusMessage = error.localizedDescription
             append("Wi-Fi QR connection ERROR: \(error.localizedDescription)")
+        }
+    }
+
+    func joinCameraWiFi(ssid: String, password: String?, isWEP: Bool) async {
+        do {
+            let joinedSSID = try await wifiConnector.join(ssid: ssid, password: password, isWEP: isWEP)
+            await waitForCamera(afterJoining: joinedSSID)
+        } catch {
+            isCameraConnected = false
+            connectionStatusMessage = error.localizedDescription
+            append("Manual Wi-Fi connection ERROR: \(error.localizedDescription)")
         }
     }
 
@@ -238,6 +238,27 @@ final class ProbeViewModel: ObservableObject {
                 lastResult = "Failed: \(error.localizedDescription)"
             }
         }
+    }
+
+    private func waitForCamera(afterJoining ssid: String) async {
+        connectionStatusMessage = "Joining \(ssid)…"
+
+        for _ in 0..<12 {
+            try? await Task.sleep(for: .seconds(1))
+            do {
+                let response = try await client.getState()
+                guard response.text.contains("<result>ok</result>") else { continue }
+                isCameraConnected = true
+                connectionStatusMessage = "Camera connected"
+                append("Joined camera Wi-Fi and reached the camera.")
+                return
+            } catch {
+                continue
+            }
+        }
+
+        isCameraConnected = false
+        connectionStatusMessage = "Wi-Fi joined, but the camera did not respond."
     }
 
     private func testContentInfo(_ client: LumixClient, label: String) async {
