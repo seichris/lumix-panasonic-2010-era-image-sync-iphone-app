@@ -63,17 +63,18 @@ struct LumixResource: Identifiable, Hashable, Sendable {
         return ["mp4", "mov", "m4v", "mts", "m2ts"].contains(url.pathExtension.lowercased())
     }
 
-    /// Older Lumix cameras advertise AVCHD clips through a placeholder URL that
-    /// returns 404. The original stream inserts a hyphen before the four-digit
-    /// clip suffix and uses the MTS extension. GM1 bodies use a longer 20-digit
-    /// placeholder made from the zero-padded folder and clip identifiers.
+    /// Keep the exact URI advertised by the camera. Panasonic's DLNA client
+    /// passes AVCHD resource URIs through unchanged and changes the HTTP request
+    /// semantics instead; rewriting the name to an SD-card-style `.MTS` path
+    /// makes the GM1 media server return 404.
     var downloadURL: URL {
-        guard let components = legacyAVCHDNameComponents else { return url }
-        var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let parent = (url.path as NSString).deletingLastPathComponent
-        let filename = "DO\(components.base)-\(components.suffix).MTS"
-        urlComponents?.path = parent == "/" ? "/\(filename)" : "\(parent)/\(filename)"
-        return urlComponents?.url ?? url
+        url
+    }
+
+    var requiresDLNAStreamingRequest: Bool {
+        if mimeType == "video/vnd.dlna.mpeg-tts" { return true }
+        if profileName?.contains("CAM_AVC_TS_") == true { return true }
+        return isLegacyAVCHDPlaceholder
     }
 
     var isPreview: Bool {
@@ -153,6 +154,16 @@ struct LumixPhoto: Identifiable, Hashable, Sendable {
             .first
     }
 
+    /// Panasonic's phone player prefers the 360p AVCHD resource while keeping
+    /// the highest-quality resource for copy/export. On a GM1, requesting the
+    /// original transport-stream resource as a plain file returns 404.
+    var videoPlaybackResource: LumixResource? {
+        resources
+            .filter { $0.isVideo && !$0.isPreview }
+            .sorted { Self.videoPlaybackPriority($0) < Self.videoPlaybackPriority($1) }
+            .first
+    }
+
     var kind: LumixMediaKind {
         videoResource == nil ? .photo : .video
     }
@@ -197,6 +208,16 @@ struct LumixPhoto: Identifiable, Hashable, Sendable {
         case "mts", "m2ts": 2
         default: 3
         }
+    }
+
+    private static func videoPlaybackPriority(_ resource: LumixResource) -> Int {
+        guard resource.requiresDLNAStreamingRequest else {
+            return videoPriority(resource)
+        }
+        let profile = resource.profileName ?? ""
+        if profile.contains("_360_") { return 10 }
+        if profile.contains("_720_") { return 11 }
+        return 12
     }
 
     static func grouped(from resources: [LumixResource]) -> [LumixPhoto] {
@@ -388,7 +409,8 @@ actor LumixClient {
     func download(_ resource: LumixResource) async throws -> URL {
         try await LegacyLumixMediaDownloader.downloadFile(
             from: resource.downloadURL,
-            validatesJPEG: resource.isOriginalJPEG && !resource.isVideo
+            validatesJPEG: resource.isOriginalJPEG && !resource.isVideo,
+            requestStyle: resource.requiresDLNAStreamingRequest ? .dlnaStreaming : .legacy
         )
     }
 
@@ -450,16 +472,25 @@ actor LumixClient {
 }
 
 /// The GM1 generation's port-50001 server predates modern URLSession behavior.
-/// A deliberately small HTTP/1.0 client avoids persistent-connection negotiation
-/// and matches the plain request accepted by the camera's legacy media server.
+/// A deliberately small socket client can issue both the plain HTTP/1.0 request
+/// used for photos and the ranged HTTP/1.1 request used for DLNA video streams.
 private enum LegacyLumixMediaDownloader {
+    enum RequestStyle: Sendable {
+        case legacy
+        case dlnaStreaming
+    }
+
     static func downloadJPEG(from url: URL) async throws -> Data {
-        let fileURL = try await downloadFile(from: url, validatesJPEG: true)
+        let fileURL = try await downloadFile(from: url, validatesJPEG: true, requestStyle: .legacy)
         defer { try? FileManager.default.removeItem(at: fileURL) }
         return try Data(contentsOf: fileURL)
     }
 
-    static func downloadFile(from url: URL, validatesJPEG: Bool = false) async throws -> URL {
+    static func downloadFile(
+        from url: URL,
+        validatesJPEG: Bool = false,
+        requestStyle: RequestStyle = .legacy
+    ) async throws -> URL {
         let operation = LegacyLumixDownloadOperation()
         let suggestedName = url.lastPathComponent.isEmpty ? "lumix-media" : url.lastPathComponent
         let destination = FileManager.default.temporaryDirectory
@@ -469,6 +500,7 @@ private enum LegacyLumixMediaDownloader {
                 from: url,
                 to: destination,
                 validatesJPEG: validatesJPEG,
+                requestStyle: requestStyle,
                 operation: operation
             )
         }
@@ -484,6 +516,7 @@ private enum LegacyLumixMediaDownloader {
         from url: URL,
         to destination: URL,
         validatesJPEG: Bool,
+        requestStyle: RequestStyle,
         operation: LegacyLumixDownloadOperation
     ) throws -> URL {
         guard url.scheme == "http",
@@ -526,7 +559,16 @@ private enum LegacyLumixMediaDownloader {
 
         var requestTarget = url.path.isEmpty ? "/" : url.path
         if let query = url.query, !query.isEmpty { requestTarget += "?\(query)" }
-        let request = "GET \(requestTarget) HTTP/1.0\r\nHost: \(host):\(port)\r\nAccept: */*\r\nUser-Agent: GM1Sync/1.0\r\n\r\n"
+        let request: String
+        switch requestStyle {
+        case .legacy:
+            request = "GET \(requestTarget) HTTP/1.0\r\nHost: \(host):\(port)\r\nAccept: */*\r\nUser-Agent: GM1Sync/1.0\r\n\r\n"
+        case .dlnaStreaming:
+            // Matches the request shape used by Panasonic's DLNA player. The
+            // GM1's KDM server returns 404 for the same URI when it is fetched
+            // as an ordinary HTTP/1.0 file.
+            request = "GET \(requestTarget) HTTP/1.1\r\nUser-Agent: Panasonic Android/1 DM-CP\r\nHost: \(host):\(port)\r\nRange: bytes=0-\r\nConnection: close\r\n\r\n"
+        }
         try sendAll(Data(request.utf8), to: fileDescriptor, operation: operation)
 
         guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {

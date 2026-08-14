@@ -79,7 +79,7 @@ final class CameraImportTests: XCTestCase {
         XCTAssertEqual(LumixPhoto.grouped(from: [resource]).first?.kind, .video)
     }
 
-    func testLegacyAVCHDPlaceholderResolvesToDownloadableMTS() throws {
+    func testLegacyAVCHDPlaceholderKeepsAdvertisedDLNAURL() throws {
         let placeholder = resource(
             filename: "DO193986570001.JPG",
             profile: "CAM_AVCHD",
@@ -89,13 +89,14 @@ final class CameraImportTests: XCTestCase {
 
         XCTAssertTrue(placeholder.isVideo)
         XCTAssertFalse(placeholder.isOriginalJPEG)
-        XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO19398657-0001.MTS")
+        XCTAssertTrue(placeholder.requiresDLNAStreamingRequest)
+        XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO193986570001.JPG")
         XCTAssertEqual(video.kind, .video)
-        XCTAssertEqual(video.displayFilename, "DO19398657-0001.MTS")
+        XCTAssertEqual(video.displayFilename, "DO193986570001.JPG")
         XCTAssertEqual(try video.importPlan(photoMode: .jpeg).resources.first?.cameraResource, placeholder)
     }
 
-    func testGM1AVCHDTransportStreamPlaceholderResolvesToDownloadableMTS() throws {
+    func testGM1AVCHDTransportStreamKeepsAdvertisedDLNAURL() throws {
         let placeholder = resource(
             filename: "DO00193986570000000001.TS",
             profile: "CAM_AVC_TS_HP_1080_50I_AC3",
@@ -108,9 +109,31 @@ final class CameraImportTests: XCTestCase {
         )
 
         XCTAssertTrue(placeholder.isVideo)
-        XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO19398657-0001.MTS")
-        XCTAssertEqual(video.displayFilename, "DO19398657-0001.MTS")
+        XCTAssertTrue(placeholder.requiresDLNAStreamingRequest)
+        XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO00193986570000000001.TS")
+        XCTAssertEqual(video.displayFilename, "DO00193986570000000001.TS")
         XCTAssertEqual(try video.importPlan(photoMode: .jpeg).resources.first?.cameraResource, placeholder)
+    }
+
+    func testGM1PlaybackPrefersPhoneSizedAVCHDResource() throws {
+        let original = resource(
+            filename: "DO00193986570000000001.TS",
+            profile: "CAM_AVC_TS_HP_1080_50I_AC3",
+            mimeType: "video/vnd.dlna.mpeg-tts"
+        )
+        let phonePlayback = resource(
+            filename: "DO00193986570000000001_LOW.TS",
+            profile: "CAM_AVC_TS_HP_360_25P_AAC",
+            mimeType: "video/vnd.dlna.mpeg-tts"
+        )
+        let video = LumixPhoto(
+            itemID: "00193986570000000001",
+            title: "0019398657-0000000001",
+            resources: [original, phonePlayback]
+        )
+
+        XCTAssertEqual(video.videoResource, original)
+        XCTAssertEqual(video.videoPlaybackResource, phonePlayback)
     }
 
     func testOrdinaryJPEGKeepsItsAdvertisedDownloadURL() {

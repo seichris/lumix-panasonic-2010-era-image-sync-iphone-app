@@ -359,7 +359,7 @@ final class CameraGalleryStore: ObservableObject {
     }
 
     func videoFileForPlayback(_ photo: LumixPhoto) async throws -> URL {
-        guard let resource = photo.videoResource else { throw LumixError.noVideo }
+        guard let resource = photo.videoPlaybackResource else { throw LumixError.noVideo }
         let client = self.client
         return try await client.download(resource)
     }
