@@ -70,10 +70,14 @@ final class LumixProbeUITests: XCTestCase {
         app.buttons["Select newest 10"].tap()
         XCTAssertTrue(app.buttons["import-selected-photos"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["10 selected"].exists)
+        XCTAssertTrue(app.segmentedControls["camera-import-format"].exists)
+        XCTAssertTrue(app.buttons["JPEG"].exists)
+        XCTAssertTrue(app.buttons["JPEG + RAW"].exists)
+        XCTAssertTrue(app.buttons["RAW"].exists)
 
         app.buttons["toggle-photo-selection"].tap()
         app.buttons["Gallery actions"].tap()
-        app.buttons["Load all photos"].tap()
+        app.buttons["Load all media"].tap()
         XCTAssertTrue(app.staticTexts["all-camera-items-loaded"].waitForExistence(timeout: 8))
     }
 

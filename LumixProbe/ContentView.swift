@@ -20,6 +20,9 @@ struct ContentView: View {
             _galleryStore = StateObject(
                 wrappedValue: CameraGalleryStore(clientProvider: {
                     LumixClient(host: model.host.trimmingCharacters(in: .whitespacesAndNewlines))
+                }, sourceIdentifierProvider: {
+                    model.rememberedCameraNetwork?.ssid
+                        ?? model.host.trimmingCharacters(in: .whitespacesAndNewlines)
                 })
             )
         }

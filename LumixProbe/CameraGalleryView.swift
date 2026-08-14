@@ -5,6 +5,8 @@ struct CameraGalleryView: View {
     @ObservedObject var store: CameraGalleryStore
     @ObservedObject var model: ProbeViewModel
     @State private var isSelecting = false
+    @State private var importMode: CameraPhotoImportMode = .jpeg
+    @State private var showNoNewMediaAlert = false
 
     private let columns = [
         GridItem(.flexible(), spacing: 3),
@@ -16,15 +18,15 @@ struct CameraGalleryView: View {
         Group {
             switch store.phase {
             case .idle, .loading:
-                ProgressView("Loading camera photos…")
+                ProgressView("Loading camera media…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityIdentifier("camera-gallery-loading")
 
             case .empty:
                 ContentUnavailableView(
-                    "No photos on the camera",
+                    "No media on the camera",
                     systemImage: "photo.on.rectangle.angled",
-                    description: Text("Take a photo or check that the SD card is inserted, then refresh.")
+                    description: Text("Take a photo or video, or check that the SD card is inserted, then refresh.")
                 )
 
             case let .failed(message):
@@ -42,7 +44,7 @@ struct CameraGalleryView: View {
                 gallery
             }
         }
-        .navigationTitle("Camera Photos")
+        .navigationTitle("Camera Media")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { galleryToolbar }
         .safeAreaInset(edge: .bottom) {
@@ -52,8 +54,19 @@ struct CameraGalleryView: View {
             if store.phase == .idle { await store.loadInitial() }
         }
         .onDisappear { store.cancelLoading() }
+        .onChange(of: store.selectedPhotoIDs) { _, _ in
+            let modes = selectedPhotoImportModes
+            if !modes.isEmpty, !modes.contains(importMode) {
+                importMode = modes.first ?? .jpeg
+            }
+        }
         .navigationDestination(for: LumixPhoto.self) { photo in
             CameraPhotoDetailView(photo: photo, store: store, model: model)
+        }
+        .alert("No new camera media", isPresented: $showNoNewMediaAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Everything currently advertised by this camera has already been imported by GM1 Sync.")
         }
     }
 
@@ -97,7 +110,7 @@ struct CameraGalleryView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     ProgressView(value: progress.fractionCompleted)
                     HStack {
-                        Text(store.isImporting ? "Importing \(progress.currentTitle ?? "photo")" : "Import complete")
+                        Text(store.isImporting ? "Importing \(progress.currentTitle ?? "item")" : "Import complete")
                         Spacer()
                         Text("\(progress.saved) saved · \(progress.failed) failed")
                             .monospacedDigit()
@@ -106,6 +119,13 @@ struct CameraGalleryView: View {
                     .foregroundStyle(.secondary)
                 }
                 .accessibilityIdentifier("batch-import-progress")
+            }
+
+            if !store.importHistory.isEmpty {
+                Text("Green checks mark media imported by GM1 Sync on this iPhone.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.horizontal)
@@ -120,7 +140,8 @@ struct CameraGalleryView: View {
                     photo: photo,
                     store: store,
                     isSelected: store.selectedPhotoIDs.contains(photo.id),
-                    importState: store.importStates[photo.id]
+                    importState: store.importStates[photo.id],
+                    historyRecord: store.importHistoryRecord(for: photo)
                 )
             }
             .buttonStyle(.plain)
@@ -131,7 +152,8 @@ struct CameraGalleryView: View {
                     photo: photo,
                     store: store,
                     isSelected: false,
-                    importState: store.importStates[photo.id]
+                    importState: store.importStates[photo.id],
+                    historyRecord: store.importHistoryRecord(for: photo)
                 )
             }
             .buttonStyle(.plain)
@@ -150,12 +172,12 @@ struct CameraGalleryView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Button("Retry older photos") { Task { await store.loadNextPage() } }
+                Button("Retry older media") { Task { await store.loadNextPage() } }
                     .buttonStyle(.bordered)
             }
             .padding()
         } else if store.canLoadMore {
-            Button("Load older photos") { Task { await store.loadNextPage() } }
+            Button("Load older media") { Task { await store.loadNextPage() } }
                 .buttonStyle(.bordered)
                 .padding()
         } else {
@@ -180,8 +202,17 @@ struct CameraGalleryView: View {
 
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
-                Button("Load all photos") { Task { await store.loadAllPages() } }
+                Button("Load all media") { Task { await store.loadAllPages() } }
                     .disabled(!store.canLoadMore)
+                Button("Import new only") {
+                    Task {
+                        await store.loadAllPages()
+                        let selectedCount = store.selectUnimported()
+                        isSelecting = selectedCount > 0
+                        showNoNewMediaAlert = selectedCount == 0 && store.paginationError == nil
+                    }
+                }
+                .disabled(store.photos.isEmpty || store.isImporting)
                 Button("Select newest 10") {
                     isSelecting = true
                     store.selectNewest(10)
@@ -199,6 +230,24 @@ struct CameraGalleryView: View {
                 ProgressView(value: progress.fractionCompleted)
             }
 
+            if !selectedPhotoImportModes.isEmpty {
+                Picker("Photo format", selection: $importMode) {
+                    ForEach(selectedPhotoImportModes) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(store.isImporting)
+                .accessibilityIdentifier("camera-import-format")
+            }
+
+            if !store.selectedPhotoIDs.isEmpty {
+                Text("Review the selected new items, choose a photo format, then confirm the import.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             HStack {
                 Text(store.isImporting ? "Importing originals…" : "\(store.selectedPhotoIDs.count) selected")
                     .font(.subheadline.weight(.medium))
@@ -206,6 +255,7 @@ struct CameraGalleryView: View {
                 Button("Import to Photos") {
                     Task {
                         await store.importSelected(
+                            photoMode: importMode,
                             samples: model.locationLogger.samples,
                             cameraClockOffset: model.cameraClockOffsetMinutes * 60
                         )
@@ -213,13 +263,21 @@ struct CameraGalleryView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(store.selectedPhotoIDs.isEmpty || store.isImporting)
+                .disabled(!store.canImportSelected(using: importMode) || store.isImporting)
                 .accessibilityIdentifier("import-selected-photos")
             }
         }
         .padding(.horizontal)
         .padding(.vertical, 10)
         .background(.bar)
+    }
+
+    private var selectedPhotoImportModes: [CameraPhotoImportMode] {
+        let selectedPhotos = store.selectedPhotos.filter { $0.kind == .photo }
+        guard !selectedPhotos.isEmpty else { return [] }
+        return CameraPhotoImportMode.allCases.filter { mode in
+            selectedPhotos.allSatisfy { $0.supports(mode) }
+        }
     }
 }
 
@@ -228,12 +286,16 @@ private struct CameraPhotoGridCell: View {
     @ObservedObject var store: CameraGalleryStore
     let isSelected: Bool
     let importState: CameraPhotoImportState?
+    let historyRecord: CameraImportHistoryRecord?
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack {
             ZStack {
                 Color.secondary.opacity(0.12)
-                CameraMediaImage(resource: photo.thumbnailResource) { resource in
+                CameraMediaImage(
+                    resource: photo.thumbnailResource,
+                    placeholderSystemImage: photo.kind == .video ? "video" : "photo"
+                ) { resource in
                     try await store.mediaData(for: resource)
                 }
             }
@@ -241,16 +303,36 @@ private struct CameraPhotoGridCell: View {
             .aspectRatio(4 / 3, contentMode: .fit)
             .clipped()
 
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.title2)
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, .blue)
-                    .padding(6)
-            } else if let importState {
-                importBadge(importState)
-                    .padding(6)
+            VStack {
+                HStack {
+                    Spacer()
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2)
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .blue)
+                    } else if let importState, importState != .saved {
+                        importBadge(importState)
+                    }
+                }
+                Spacer()
+                HStack {
+                    if photo.kind == .video {
+                        Image(systemName: "video.fill")
+                            .font(.caption)
+                            .padding(6)
+                            .background(.regularMaterial, in: Capsule())
+                    }
+                    Spacer()
+                    if historyRecord != nil {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.green)
+                            .background(.white, in: Circle())
+                    }
+                }
             }
+            .padding(6)
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
@@ -267,10 +349,7 @@ private struct CameraPhotoGridCell: View {
                 .padding(5)
                 .background(.regularMaterial, in: Circle())
         case .saved:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.title2)
-                .foregroundStyle(.green)
-                .background(.white, in: Circle())
+            EmptyView()
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
                 .font(.title2)
@@ -283,10 +362,15 @@ private struct CameraPhotoGridCell: View {
         switch importState {
         case .downloading: return "Downloading"
         case .saving: return "Saving"
-        case .saved: return "Saved"
+        case .saved: return historyAccessibilityValue
         case .failed: return "Import failed"
-        case nil: return "Not selected"
+        case nil: return historyAccessibilityValue
         }
+    }
+
+    private var historyAccessibilityValue: String {
+        guard let historyRecord else { return "Not imported by GM1 Sync" }
+        return "Previously imported: \(historyRecord.summary)"
     }
 }
 
@@ -294,13 +378,21 @@ private struct CameraPhotoDetailView: View {
     let photo: LumixPhoto
     @ObservedObject var store: CameraGalleryStore
     @ObservedObject var model: ProbeViewModel
+    @State private var importMode: CameraPhotoImportMode = .jpeg
 
     private var importState: CameraPhotoImportState? { store.importStates[photo.id] }
+    private var historyRecord: CameraImportHistoryRecord? { store.importHistoryRecord(for: photo) }
+    private var availablePhotoModes: [CameraPhotoImportMode] {
+        CameraPhotoImportMode.allCases.filter(photo.supports)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                CameraMediaImage(resource: photo.previewResource) { resource in
+                CameraMediaImage(
+                    resource: photo.previewResource,
+                    placeholderSystemImage: photo.kind == .video ? "video" : "photo"
+                ) { resource in
                     try await store.mediaData(for: resource)
                 }
                 .aspectRatio(4 / 3, contentMode: .fit)
@@ -313,31 +405,56 @@ private struct CameraPhotoDetailView: View {
                     if let itemID = photo.itemID {
                         LabeledContent("Camera item", value: itemID)
                     }
-                    LabeledContent("Original JPEG") {
-                        Text(photo.originalJPEGResource?.profileName ?? "Unavailable")
+                    if photo.kind == .video {
+                        LabeledContent("Original video") {
+                            Text(photo.videoResource?.url.pathExtension.uppercased() ?? "Unavailable")
+                        }
+                    } else {
+                        LabeledContent("Original JPEG") {
+                            Text(photo.originalJPEGResource?.profileName ?? "Unavailable")
+                        }
+                        LabeledContent("Original RAW") {
+                            Text(photo.rawResource?.url.pathExtension.uppercased() ?? "Unavailable")
+                        }
                     }
-                    if photo.rawResource != nil {
-                        Label("RAW companion available for future export", systemImage: "doc.badge.gearshape")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    if let historyRecord {
+                        LabeledContent("Previously imported", value: historyRecord.summary)
+                            .foregroundStyle(.green)
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Geotagging").font(.headline)
-                    if model.locationLogger.samples.isEmpty {
-                        Label("No saved location samples", systemImage: "location.slash")
+                if photo.kind == .photo {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Import format").font(.headline)
+                        Picker("Import format", selection: $importMode) {
+                            ForEach(availablePhotoModes) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .accessibilityIdentifier("detail-camera-import-format")
+
+                        Text("JPEG is the default. JPEG + RAW stays together as one Photos asset.")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                    } else {
-                        Label(
-                            "\(model.locationLogger.samples.count) location \(model.locationLogger.samples.count == 1 ? "sample" : "samples") available",
-                            systemImage: "location.fill"
-                        )
-                        .foregroundStyle(.green)
                     }
-                    Text("The original's EXIF time is matched during import. If no nearby track point exists, the unchanged original is saved without a location.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Geotagging").font(.headline)
+                        if model.locationLogger.samples.isEmpty {
+                            Label("No saved location samples", systemImage: "location.slash")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Label(
+                                "\(model.locationLogger.samples.count) location \(model.locationLogger.samples.count == 1 ? "sample" : "samples") available",
+                                systemImage: "location.fill"
+                            )
+                            .foregroundStyle(.green)
+                        }
+                        Text("The original's EXIF time is matched during import. If no nearby track point exists, the unchanged original is saved without a location.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 importStatus
@@ -346,22 +463,36 @@ private struct CameraPhotoDetailView: View {
                     Task {
                         await store.importPhoto(
                             photo,
+                            photoMode: importMode,
                             samples: model.locationLogger.samples,
                             cameraClockOffset: model.cameraClockOffsetMinutes * 60
                         )
                     }
                 } label: {
-                    Label(importState == .saved ? "Save another copy" : "Save original to Photos", systemImage: "square.and.arrow.down")
+                    Label(importButtonTitle, systemImage: "square.and.arrow.down")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(photo.originalJPEGResource == nil || store.isImporting || importState?.isWorking == true)
+                .disabled(!photo.isImportable || !photo.supports(importMode) || store.isImporting || importState?.isWorking == true)
                 .accessibilityIdentifier("save-camera-photo")
             }
             .padding()
         }
         .navigationTitle(photo.title)
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            if !availablePhotoModes.isEmpty, !availablePhotoModes.contains(importMode) {
+                importMode = availablePhotoModes.first ?? .jpeg
+            }
+        }
+    }
+
+    private var importButtonTitle: String {
+        let again = historyRecord != nil || importState == .saved
+        if photo.kind == .video {
+            return again ? "Import video again" : "Import video to Photos"
+        }
+        return again ? "Import \(importMode.title) again" : "Import \(importMode.title) to Photos"
     }
 
     @ViewBuilder
@@ -372,7 +503,7 @@ private struct CameraPhotoDetailView: View {
         case .saving:
             Label("Adding the original to Photos…", systemImage: "photo.badge.arrow.down")
         case .saved:
-            Label("Saved to Photos", systemImage: "checkmark.circle.fill")
+            Label("Imported to Photos", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         case let .failed(message):
             VStack(alignment: .leading, spacing: 4) {
@@ -395,6 +526,7 @@ private struct CameraMediaImage: View {
     }
 
     let resource: LumixResource?
+    var placeholderSystemImage = "photo"
     let load: (LumixResource) async throws -> Data
     @State private var phase: Phase = .idle
 
@@ -408,7 +540,7 @@ private struct CameraMediaImage: View {
                     .resizable()
                     .scaledToFill()
             case .failed:
-                Image(systemName: "photo")
+                Image(systemName: placeholderSystemImage)
                     .font(.title2)
                     .foregroundStyle(.secondary)
             }

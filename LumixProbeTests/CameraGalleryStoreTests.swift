@@ -27,7 +27,12 @@ final class CameraGalleryStoreTests: XCTestCase {
     func testTenItemImportContinuesAfterOneFailure() async throws {
         let client = MockGalleryClient(total: 10)
         let importer = RecordingImporter(failingFilenames: ["photo-4.jpg"])
-        let store = CameraGalleryStore(client: client, importer: importer, pageSize: 10)
+        let store = CameraGalleryStore(
+            client: client,
+            importer: importer,
+            importHistoryStore: InMemoryCameraImportHistoryStore(),
+            pageSize: 10
+        )
 
         await store.loadInitial()
         store.selectNewest(10)
@@ -200,7 +205,12 @@ final class CameraGalleryStoreTests: XCTestCase {
     func testReconnectResetCancelsImportAndRemovesItsTemporaryFile() async throws {
         let client = MockGalleryClient(total: 1)
         let importer = CancellableImporter()
-        let store = CameraGalleryStore(client: client, importer: importer, pageSize: 1)
+        let store = CameraGalleryStore(
+            client: client,
+            importer: importer,
+            importHistoryStore: InMemoryCameraImportHistoryStore(),
+            pageSize: 1
+        )
 
         await store.loadInitial()
         let photo = try XCTUnwrap(store.photos.first)
@@ -222,6 +232,66 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertFalse(store.isImporting)
         XCTAssertNil(store.batchProgress)
         XCTAssertTrue(store.importStates.isEmpty)
+    }
+
+    func testJPEGAndRAWImportDownloadsBothResourcesAndRecordsHistory() async throws {
+        let client = MockGalleryClient(total: 1, includesRAW: true)
+        let importer = RecordingImporter()
+        let historyStore = InMemoryCameraImportHistoryStore()
+        let store = CameraGalleryStore(
+            client: client,
+            importer: importer,
+            importHistoryStore: historyStore,
+            sourceIdentifier: "GM1S-TEST",
+            pageSize: 1
+        )
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        await store.importPhoto(
+            photo,
+            photoMode: .jpegAndRAW,
+            samples: [],
+            cameraClockOffset: 0
+        )
+
+        let packages = await importer.packages
+        XCTAssertEqual(packages.count, 1)
+        XCTAssertEqual(packages[0].variant, .jpegAndRAW)
+        XCTAssertEqual(packages[0].filenames, ["photo-0.jpg", "photo-0.RW2"])
+        XCTAssertEqual(packages[0].roles, [.photo, .alternatePhoto])
+        XCTAssertEqual(store.importHistoryRecord(for: photo)?.variants, [.jpegAndRAW])
+        XCTAssertTrue(store.isPreviouslyImported(photo))
+    }
+
+    func testSelectUnimportedExcludesPreviouslyImportedItemsAfterReload() async throws {
+        let client = MockGalleryClient(total: 3)
+        let historyStore = InMemoryCameraImportHistoryStore()
+        let firstStore = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            importHistoryStore: historyStore,
+            sourceIdentifier: "GM1S-TEST",
+            pageSize: 3
+        )
+
+        await firstStore.loadInitial()
+        let importedPhoto = try XCTUnwrap(firstStore.photos.first)
+        await firstStore.importPhoto(importedPhoto, samples: [], cameraClockOffset: 0)
+
+        let reloadedStore = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            importHistoryStore: historyStore,
+            sourceIdentifier: "GM1S-TEST",
+            pageSize: 3
+        )
+        await reloadedStore.loadInitial()
+        reloadedStore.selectUnimported()
+
+        XCTAssertTrue(reloadedStore.isPreviouslyImported(importedPhoto))
+        XCTAssertEqual(reloadedStore.selectedPhotoIDs.count, 2)
+        XCTAssertFalse(reloadedStore.selectedPhotoIDs.contains(importedPhoto.id))
     }
 
     func testMediaLoadingIsBoundedAndCancellationReachesTheClient() async throws {
@@ -273,6 +343,7 @@ private actor MockGalleryClient: CameraGalleryClient {
     private var total: Int
     private let overlapsPages: Bool
     private let preparationDelay: Duration
+    private let includesRAW: Bool
     private var delayedBrowseStart: Int?
     private var delayedBrowseDuration: Duration = .milliseconds(250)
     private(set) var browseRequests: [BrowseRequest] = []
@@ -281,11 +352,13 @@ private actor MockGalleryClient: CameraGalleryClient {
     init(
         total: Int,
         overlapsPages: Bool = false,
-        preparationDelay: Duration = .zero
+        preparationDelay: Duration = .zero,
+        includesRAW: Bool = false
     ) {
         self.total = total
         self.overlapsPages = overlapsPages
         self.preparationDelay = preparationDelay
+        self.includesRAW = includesRAW
     }
 
     func setTotal(_ total: Int) {
@@ -315,9 +388,9 @@ private actor MockGalleryClient: CameraGalleryClient {
             }
         }
         let upperBound = min(total, start + count)
-        var photos = start < upperBound ? (start..<upperBound).map(Self.photo) : []
+        var photos = start < upperBound ? (start..<upperBound).map(photo) : []
         if overlapsPages, upperBound < total {
-            photos.append(Self.photo(upperBound))
+            photos.append(photo(upperBound))
         }
         return LumixPhotoPage(
             startIndex: start,
@@ -338,7 +411,7 @@ private actor MockGalleryClient: CameraGalleryClient {
         return destination
     }
 
-    private static func photo(_ index: Int) -> LumixPhoto {
+    private func photo(_ index: Int) -> LumixPhoto {
         let itemID = String(index)
         let resource = LumixResource(
             itemID: itemID,
@@ -346,7 +419,18 @@ private actor MockGalleryClient: CameraGalleryClient {
             url: URL(string: "http://192.168.54.1:50001/photo-\(index).jpg")!,
             protocolInfo: "http-get:*:image/jpeg;PANASONIC.COM_PN=CAM_ORG"
         )
-        return LumixPhoto(itemID: itemID, title: "Photo \(index)", resources: [resource])
+        var resources = [resource]
+        if includesRAW {
+            resources.append(
+                LumixResource(
+                    itemID: itemID,
+                    title: "Photo \(index)",
+                    url: URL(string: "http://192.168.54.1:50001/photo-\(index).RW2")!,
+                    protocolInfo: "http-get:*:application/octet-stream;PANASONIC.COM_PN=CAM_RAW"
+                )
+            )
+        }
+        return LumixPhoto(itemID: itemID, title: "Photo \(index)", resources: resources)
     }
 }
 
@@ -380,29 +464,44 @@ private actor CancellableMediaClient: CameraGalleryClient {
     }
 }
 
-private actor RecordingImporter: CameraPhotoImporting {
+private actor RecordingImporter: CameraMediaImporting {
+    struct Package: Sendable {
+        let variant: CameraImportVariant
+        let filenames: [String]
+        let roles: [CameraImportPlan.Resource.Role]
+    }
+
     private(set) var filenames: [String] = []
+    private(set) var packages: [Package] = []
     private let failingFilenames: Set<String>
 
     init(failingFilenames: Set<String> = []) {
         self.failingFilenames = failingFilenames
     }
 
-    func save(_ photo: DownloadedPhoto, geotag: GeotagMatch?) async throws {
-        filenames.append(photo.originalFilename)
-        if failingFilenames.contains(photo.originalFilename) {
+    func save(_ media: DownloadedCameraMedia, geotag: GeotagMatch?) async throws {
+        let mediaFilenames = media.resources.map(\.originalFilename)
+        filenames.append(contentsOf: mediaFilenames)
+        packages.append(
+            Package(
+                variant: media.variant,
+                filenames: mediaFilenames,
+                roles: media.resources.map(\.role)
+            )
+        )
+        if !failingFilenames.isDisjoint(with: mediaFilenames) {
             throw TestImportError.configuredFailure
         }
     }
 }
 
-private actor CancellableImporter: CameraPhotoImporting {
+private actor CancellableImporter: CameraMediaImporting {
     private(set) var isSaving = false
     private(set) var cancellationCount = 0
     private(set) var fileURL: URL?
 
-    func save(_ photo: DownloadedPhoto, geotag: GeotagMatch?) async throws {
-        fileURL = photo.fileURL
+    func save(_ media: DownloadedCameraMedia, geotag: GeotagMatch?) async throws {
+        fileURL = media.resources.first?.fileURL
         isSaving = true
         defer { isSaving = false }
 
