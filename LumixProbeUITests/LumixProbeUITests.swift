@@ -93,6 +93,24 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Lens"].exists)
         XCTAssertTrue(app.staticTexts["Blue Camera"].exists)
         XCTAssertTrue(app.staticTexts["Black Camera"].exists)
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let blueIcon = app.buttons["app-icon-BlueCamera"]
+        if blueIcon.isEnabled {
+            blueIcon.tap()
+            let confirmation = springboard.alerts.firstMatch
+            XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+            XCTAssertTrue(confirmation.staticTexts["You have changed the icon for “GM1 Sync”."].exists)
+            confirmation.buttons["OK"].tap()
+        }
+        let selected = NSPredicate(format: "value CONTAINS %@", "Selected")
+        XCTAssertEqual(
+            XCTWaiter.wait(
+                for: [XCTNSPredicateExpectation(predicate: selected, object: blueIcon)],
+                timeout: 8
+            ),
+            .completed
+        )
     }
 
     func testLocationLogCanStartAndStop() throws {
