@@ -63,9 +63,10 @@ struct LumixResource: Identifiable, Hashable, Sendable {
         return ["mp4", "mov", "m4v", "mts", "m2ts"].contains(url.pathExtension.lowercased())
     }
 
-    /// Older Lumix cameras advertise AVCHD clips through a JPEG-shaped URL that
+    /// Older Lumix cameras advertise AVCHD clips through a placeholder URL that
     /// returns 404. The original stream inserts a hyphen before the four-digit
-    /// clip suffix and uses the MTS extension.
+    /// clip suffix and uses the MTS extension. GM1 bodies use a longer 20-digit
+    /// placeholder made from the zero-padded folder and clip identifiers.
     var downloadURL: URL {
         guard let components = legacyAVCHDNameComponents else { return url }
         var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -90,12 +91,22 @@ struct LumixResource: Identifiable, Hashable, Sendable {
     }
 
     private var legacyAVCHDNameComponents: (base: String, suffix: String)? {
-        guard ["jpg", "jpeg", "mts"].contains(url.pathExtension.lowercased()) else { return nil }
+        guard ["jpg", "jpeg", "mts", "ts"].contains(url.pathExtension.lowercased()) else { return nil }
         let stem = url.deletingPathExtension().lastPathComponent
-        guard stem.count == 14, stem.uppercased().hasPrefix("DO") else { return nil }
+        guard stem.uppercased().hasPrefix("DO") else { return nil }
         let digits = String(stem.dropFirst(2))
-        guard digits.count == 12, digits.allSatisfy(\.isNumber) else { return nil }
-        return (String(digits.prefix(8)), String(digits.suffix(4)))
+        guard digits.allSatisfy(\.isNumber) else { return nil }
+
+        switch digits.count {
+        case 12:
+            return (String(digits.prefix(8)), String(digits.suffix(4)))
+        case 20:
+            let folder = digits.prefix(10)
+            guard folder.hasPrefix("00") else { return nil }
+            return (String(folder.dropFirst(2)), String(digits.suffix(4)))
+        default:
+            return nil
+        }
     }
 }
 

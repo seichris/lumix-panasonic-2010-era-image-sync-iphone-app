@@ -95,6 +95,24 @@ final class CameraImportTests: XCTestCase {
         XCTAssertEqual(try video.importPlan(photoMode: .jpeg).resources.first?.cameraResource, placeholder)
     }
 
+    func testGM1AVCHDTransportStreamPlaceholderResolvesToDownloadableMTS() throws {
+        let placeholder = resource(
+            filename: "DO00193986570000000001.TS",
+            profile: "CAM_AVC_TS_HP_1080_50I_AC3",
+            mimeType: "video/vnd.dlna.mpeg-tts"
+        )
+        let video = LumixPhoto(
+            itemID: "00193986570000000001",
+            title: "0019398657-0000000001",
+            resources: [placeholder]
+        )
+
+        XCTAssertTrue(placeholder.isVideo)
+        XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO19398657-0001.MTS")
+        XCTAssertEqual(video.displayFilename, "DO19398657-0001.MTS")
+        XCTAssertEqual(try video.importPlan(photoMode: .jpeg).resources.first?.cameraResource, placeholder)
+    }
+
     func testOrdinaryJPEGKeepsItsAdvertisedDownloadURL() {
         let jpeg = resource(filename: "DO1280475.JPG", profile: "CAM_ORG", mimeType: "image/jpeg")
 
