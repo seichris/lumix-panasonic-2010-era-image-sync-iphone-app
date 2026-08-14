@@ -113,7 +113,7 @@ final class LumixProbeUITests: XCTestCase {
 
         let appVersion = app.staticTexts["app-version"]
         scrollToElement(appVersion)
-        XCTAssertEqual(appVersion.label, "GM1 Sync · Version 1.0 (4)")
+        XCTAssertEqual(appVersion.label, "GM1 Sync · Version 1.0 (5)")
 
         let iconLink = app.buttons["app-icon-link"]
         scrollToElement(iconLink)

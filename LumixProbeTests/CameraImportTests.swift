@@ -136,6 +136,19 @@ final class CameraImportTests: XCTestCase {
         XCTAssertEqual(video.videoPlaybackResource, phonePlayback)
     }
 
+    func testGM1AVCHDUsesPanasonicInitialDLNARequestExactly() throws {
+        let url = try XCTUnwrap(
+            URL(string: "http://192.168.54.1:50001/DO00193986570000000001.TS")
+        )
+
+        XCTAssertEqual(
+            try LumixMediaHTTPRequest.make(for: url, style: .panasonicDLNAInitial),
+            "GET /DO00193986570000000001.TS HTTP/1.1\r\n" +
+                "User-Agent: Panasonic Android/1 DM-CP\r\n" +
+                "Host: 192.168.54.1\r\n\r\n"
+        )
+    }
+
     func testOrdinaryJPEGKeepsItsAdvertisedDownloadURL() {
         let jpeg = resource(filename: "DO1280475.JPG", profile: "CAM_ORG", mimeType: "image/jpeg")
 

@@ -410,7 +410,7 @@ actor LumixClient {
         try await LegacyLumixMediaDownloader.downloadFile(
             from: resource.downloadURL,
             validatesJPEG: resource.isOriginalJPEG && !resource.isVideo,
-            requestStyle: resource.requiresDLNAStreamingRequest ? .dlnaStreaming : .legacy
+            requestStyle: resource.requiresDLNAStreamingRequest ? .panasonicDLNAInitial : .legacy
         )
     }
 
@@ -471,15 +471,34 @@ actor LumixClient {
     }
 }
 
+enum LumixMediaRequestStyle: Sendable {
+    case legacy
+    case panasonicDLNAInitial
+}
+
+enum LumixMediaHTTPRequest {
+    static func make(for url: URL, style: LumixMediaRequestStyle) throws -> String {
+        guard let host = url.host else { throw LumixError.invalidURL }
+
+        var requestTarget = url.path.isEmpty ? "/" : url.path
+        if let query = url.query, !query.isEmpty { requestTarget += "?\(query)" }
+
+        switch style {
+        case .legacy:
+            let port = url.port.map { ":\($0)" } ?? ""
+            return "GET \(requestTarget) HTTP/1.0\r\nHost: \(host)\(port)\r\nAccept: */*\r\nUser-Agent: GM1Sync/1.0\r\n\r\n"
+        case .panasonicDLNAInitial:
+            // Panasonic's native DLNA transport starts with this exact plain
+            // request. Range and TimeSeekRange are only added after a seek.
+            return "GET \(requestTarget) HTTP/1.1\r\nUser-Agent: Panasonic Android/1 DM-CP\r\nHost: \(host)\r\n\r\n"
+        }
+    }
+}
+
 /// The GM1 generation's port-50001 server predates modern URLSession behavior.
 /// A deliberately small socket client can issue both the plain HTTP/1.0 request
-/// used for photos and the ranged HTTP/1.1 request used for DLNA video streams.
+/// used for photos and Panasonic's exact initial HTTP/1.1 DLNA request.
 private enum LegacyLumixMediaDownloader {
-    enum RequestStyle: Sendable {
-        case legacy
-        case dlnaStreaming
-    }
-
     static func downloadJPEG(from url: URL) async throws -> Data {
         let fileURL = try await downloadFile(from: url, validatesJPEG: true, requestStyle: .legacy)
         defer { try? FileManager.default.removeItem(at: fileURL) }
@@ -489,7 +508,7 @@ private enum LegacyLumixMediaDownloader {
     static func downloadFile(
         from url: URL,
         validatesJPEG: Bool = false,
-        requestStyle: RequestStyle = .legacy
+        requestStyle: LumixMediaRequestStyle = .legacy
     ) async throws -> URL {
         let operation = LegacyLumixDownloadOperation()
         let suggestedName = url.lastPathComponent.isEmpty ? "lumix-media" : url.lastPathComponent
@@ -516,7 +535,7 @@ private enum LegacyLumixMediaDownloader {
         from url: URL,
         to destination: URL,
         validatesJPEG: Bool,
-        requestStyle: RequestStyle,
+        requestStyle: LumixMediaRequestStyle,
         operation: LegacyLumixDownloadOperation
     ) throws -> URL {
         guard url.scheme == "http",
@@ -557,18 +576,7 @@ private enum LegacyLumixMediaDownloader {
         }
         try operation.checkCancellation()
 
-        var requestTarget = url.path.isEmpty ? "/" : url.path
-        if let query = url.query, !query.isEmpty { requestTarget += "?\(query)" }
-        let request: String
-        switch requestStyle {
-        case .legacy:
-            request = "GET \(requestTarget) HTTP/1.0\r\nHost: \(host):\(port)\r\nAccept: */*\r\nUser-Agent: GM1Sync/1.0\r\n\r\n"
-        case .dlnaStreaming:
-            // Matches the request shape used by Panasonic's DLNA player. The
-            // GM1's KDM server returns 404 for the same URI when it is fetched
-            // as an ordinary HTTP/1.0 file.
-            request = "GET \(requestTarget) HTTP/1.1\r\nUser-Agent: Panasonic Android/1 DM-CP\r\nHost: \(host):\(port)\r\nRange: bytes=0-\r\nConnection: close\r\n\r\n"
-        }
+        let request = try LumixMediaHTTPRequest.make(for: url, style: requestStyle)
         try sendAll(Data(request.utf8), to: fileDescriptor, operation: operation)
 
         guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {

@@ -360,6 +360,10 @@ final class CameraGalleryStore: ObservableObject {
 
     func videoFileForPlayback(_ photo: LumixPhoto) async throws -> URL {
         guard let resource = photo.videoPlaybackResource else { throw LumixError.noVideo }
+        print(
+            "[GM1Sync] Downloading playback resource item=\(photo.itemID ?? "unknown") " +
+                "profile=\(resource.profileName ?? "unknown") url=\(resource.url.absoluteString)"
+        )
         let client = self.client
         return try await client.download(resource)
     }
@@ -583,6 +587,15 @@ final class CameraGalleryStore: ObservableObject {
         var existingIDs = Set(photos.map(\.id))
         for photo in newPhotos where existingIDs.insert(photo.id).inserted {
             photos.append(photo)
+            if photo.kind == .video {
+                for resource in photo.resources where resource.isVideo {
+                    print(
+                        "[GM1Sync] Video resource item=\(photo.itemID ?? "unknown") " +
+                            "profile=\(resource.profileName ?? "unknown") " +
+                            "mime=\(resource.mimeType ?? "unknown") url=\(resource.url.absoluteString)"
+                    )
+                }
+            }
         }
         selectedPhotoIDs.formIntersection(existingIDs)
     }
