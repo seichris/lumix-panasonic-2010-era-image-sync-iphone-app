@@ -15,7 +15,7 @@ final class LumixProbeUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["Reconnect to GM1S-90C7E0"].waitForExistence(timeout: 12))
         XCTAssertTrue(app.buttons["Scan another camera QR code"].exists)
-        XCTAssertTrue(app.staticTexts["This camera is remembered securely. iPhone can also Auto-Join it whenever its Wi-Fi is available."].exists)
+        XCTAssertFalse(app.staticTexts["This camera is remembered securely. iPhone can also Auto-Join it whenever its Wi-Fi is available."].exists)
     }
 
     func testDisconnectedGuideQRCodeScannerAndManualFallback() throws {
@@ -25,6 +25,9 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Join from this iPhone"].exists)
         XCTAssertTrue(app.buttons["Scan camera QR code"].exists)
         XCTAssertTrue(app.buttons["Enter network details"].exists)
+        XCTAssertTrue(app.buttons["start-location-log"].exists)
+        XCTAssertFalse(app.staticTexts["Need help?"].exists)
+        XCTAssertFalse(app.textFields["camera-ip-address"].exists)
 
         addUIInterruptionMonitor(withDescription: "Camera permission") { alert in
             let allow = alert.buttons["Allow"]
@@ -64,14 +67,19 @@ final class LumixProbeUITests: XCTestCase {
         firstPhoto.tap()
 
         XCTAssertTrue(app.buttons["save-camera-photo"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Demo scene 0025"].exists)
+        XCTAssertTrue(app.navigationBars["Demo scene 0025"].exists)
+        app.swipeLeft()
+        XCTAssertTrue(app.navigationBars["Demo scene 0024"].waitForExistence(timeout: 5))
+        app.swipeRight()
+        XCTAssertTrue(app.navigationBars["Demo scene 0025"].waitForExistence(timeout: 5))
         app.navigationBars.buttons.firstMatch.tap()
 
         app.buttons["toggle-photo-selection"].tap()
         app.buttons["Gallery actions"].tap()
-        app.buttons["Select newest 10"].tap()
+        XCTAssertFalse(app.buttons["Select newest 10"].exists)
+        app.buttons["Select all items"].tap()
         XCTAssertTrue(app.buttons["import-selected-photos"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["10 selected"].exists)
+        XCTAssertTrue(app.staticTexts["25 selected"].exists)
         XCTAssertTrue(app.segmentedControls["camera-import-format"].exists)
         XCTAssertTrue(app.buttons["JPEG"].exists)
         XCTAssertTrue(app.buttons["JPEG + RAW"].exists)
@@ -92,6 +100,9 @@ final class LumixProbeUITests: XCTestCase {
                 NSPredicate(format: "label CONTAINS %@", "Remote Shooting & View → Direct → Image App")
             ).firstMatch.exists
         )
+        XCTAssertTrue(app.textFields["camera-ip-address"].exists)
+        XCTAssertTrue(app.buttons["check-camera-connection"].exists)
+        XCTAssertFalse(app.buttons["start-location-log"].exists)
 
         let compatibilityLink = app.buttons["camera-compatibility-link"]
         scrollToElement(compatibilityLink)
@@ -133,7 +144,6 @@ final class LumixProbeUITests: XCTestCase {
 
     func testLocationLogCanStartAndStop() throws {
         app.launch()
-        app.buttons["app-settings-link"].tap()
 
         let startButton = app.buttons["start-location-log"]
         scrollToElement(startButton)

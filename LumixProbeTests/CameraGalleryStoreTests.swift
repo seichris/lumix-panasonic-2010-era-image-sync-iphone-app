@@ -69,6 +69,17 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertEqual(store.videoCount, 2)
     }
 
+    func testSelectAllIncludesEveryImageAndVideo() async {
+        let client = MockGalleryClient(total: 5, videoIndexes: [1, 3])
+        let store = CameraGalleryStore(client: client, importer: RecordingImporter(), pageSize: 2)
+
+        await store.reloadAllMedia()
+        store.selectAll()
+
+        XCTAssertEqual(store.selectedPhotoIDs, Set(store.photos.map(\.id)))
+        XCTAssertEqual(store.selectedPhotoIDs.count, 5)
+    }
+
     func testRefreshReplacesStaleStateAndSelection() async {
         let client = MockGalleryClient(total: 3)
         let store = CameraGalleryStore(client: client, importer: RecordingImporter(), pageSize: 2)

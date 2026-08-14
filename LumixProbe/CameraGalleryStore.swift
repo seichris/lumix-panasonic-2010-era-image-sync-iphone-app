@@ -376,6 +376,10 @@ final class CameraGalleryStore: ObservableObject {
         selectedPhotoIDs = Set(photos.prefix(max(0, count)).map(\.id))
     }
 
+    func selectAll() {
+        selectedPhotoIDs = Set(photos.map(\.id))
+    }
+
     @discardableResult
     func selectUnimported() -> Int {
         selectedPhotoIDs = Set(

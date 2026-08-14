@@ -71,7 +71,7 @@ struct CameraGalleryView: View {
             if failedCount == 0 { showFailedOnly = false }
         }
         .navigationDestination(for: LumixPhoto.self) { photo in
-            CameraPhotoDetailView(photo: photo, store: store, model: model)
+            CameraPhotoDetailPager(initialPhoto: photo, store: store, model: model)
         }
         .alert("No new camera media", isPresented: $showNoNewMediaAlert) {
             Button("OK", role: .cancel) {}
@@ -257,9 +257,12 @@ struct CameraGalleryView: View {
                     }
                 }
                 .disabled(store.photos.isEmpty || store.isImporting)
-                Button("Select newest 10") {
-                    isSelecting = true
-                    store.selectNewest(10)
+                Button("Select all items") {
+                    Task {
+                        await store.loadAllPages()
+                        store.selectAll()
+                        isSelecting = !store.selectedPhotoIDs.isEmpty
+                    }
                 }
                 .disabled(store.photos.isEmpty || store.isImporting)
             } label: {
@@ -435,7 +438,42 @@ private struct CameraPhotoGridCell: View {
     }
 }
 
-private struct CameraPhotoDetailView: View {
+private struct CameraPhotoDetailPager: View {
+    let initialPhoto: LumixPhoto
+    @ObservedObject var store: CameraGalleryStore
+    @ObservedObject var model: ProbeViewModel
+    @State private var selectedPhotoID: LumixPhoto.ID
+
+    init(initialPhoto: LumixPhoto, store: CameraGalleryStore, model: ProbeViewModel) {
+        self.initialPhoto = initialPhoto
+        self.store = store
+        self.model = model
+        _selectedPhotoID = State(initialValue: initialPhoto.id)
+    }
+
+    private var photos: [LumixPhoto] {
+        store.photos.isEmpty ? [initialPhoto] : store.photos
+    }
+
+    private var selectedPhoto: LumixPhoto {
+        photos.first(where: { $0.id == selectedPhotoID }) ?? initialPhoto
+    }
+
+    var body: some View {
+        TabView(selection: $selectedPhotoID) {
+            ForEach(photos) { photo in
+                CameraPhotoDetailPage(photo: photo, store: store, model: model)
+                    .tag(photo.id)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .navigationTitle(selectedPhoto.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("camera-media-detail-pager")
+    }
+}
+
+private struct CameraPhotoDetailPage: View {
     let photo: LumixPhoto
     @ObservedObject var store: CameraGalleryStore
     @ObservedObject var model: ProbeViewModel
@@ -546,8 +584,7 @@ private struct CameraPhotoDetailView: View {
             }
             .padding()
         }
-        .navigationTitle(photo.title)
-        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("camera-media-detail-\(photo.id)")
         .task {
             if !availablePhotoModes.isEmpty, !availablePhotoModes.contains(importMode) {
                 importMode = availablePhotoModes.first ?? .jpeg

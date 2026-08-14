@@ -29,10 +29,6 @@ struct CameraConnectionGuide: View {
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("reconnect-remembered-camera")
 
-                Text("This camera is remembered securely. iPhone can also Auto-Join it whenever its Wi-Fi is available.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
                 Button(action: scanQRCode) {
                     Label("Scan another camera QR code", systemImage: "qrcode.viewfinder")
                         .frame(maxWidth: .infinity)

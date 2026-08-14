@@ -6,6 +6,7 @@ struct ContentView: View {
     @StateObject private var model: ProbeViewModel
     @StateObject private var galleryStore = CameraGalleryStore()
     @State private var presentedSheet: ConnectionSheet?
+    @State private var isConfirmingTrackClear = false
 
     init() {
         let model = ProbeViewModel()
@@ -40,7 +41,12 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
-                        AppSettingsView(model: model)
+                        AppSettingsView(model: model) {
+                            Task {
+                                await galleryStore.resetForReconnect()
+                                await model.refreshConnectionStatus()
+                            }
+                        }
                     } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
@@ -80,6 +86,12 @@ struct ContentView: View {
                     }
                 }
             }
+            .alert("Clear location track?", isPresented: $isConfirmingTrackClear) {
+                Button("Clear", role: .destructive) { model.locationLogger.clear() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Saved location samples will be removed from this iPhone. Downloaded camera originals are not affected.")
+            }
         }
     }
 
@@ -105,27 +117,11 @@ struct ContentView: View {
                 joinManually: { presentedSheet = .manualJoin }
             )
 
-            Section("Camera") {
-                TextField("Camera IP", text: $model.host)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.numbersAndPunctuation)
-                Button("Check connection") {
-                    Task {
-                        await galleryStore.resetForReconnect()
-                        await model.refreshConnectionStatus()
-                    }
-                }
-                .accessibilityIdentifier("check-camera-connection")
-                Text("The GM1S normally uses 192.168.54.1 in Image App Direct mode.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Need help?") {
-                NavigationLink("Connection and app settings") {
-                    AppSettingsView(model: model)
-                }
-            }
+            GeotaggingControls(
+                logger: model.locationLogger,
+                cameraClockOffsetMinutes: $model.cameraClockOffsetMinutes,
+                clearTrack: { isConfirmingTrackClear = true }
+            )
         }
         .navigationTitle("GM1 Sync")
     }
@@ -133,7 +129,7 @@ struct ContentView: View {
 
 private struct AppSettingsView: View {
     @ObservedObject var model: ProbeViewModel
-    @State private var isConfirmingTrackClear = false
+    let checkCameraConnection: () -> Void
     @State private var isConfirmingCameraForget = false
 
     var body: some View {
@@ -157,11 +153,17 @@ private struct AppSettingsView: View {
                 }
             }
 
-            GeotaggingControls(
-                logger: model.locationLogger,
-                cameraClockOffsetMinutes: $model.cameraClockOffsetMinutes,
-                clearTrack: { isConfirmingTrackClear = true }
-            )
+            Section("Camera") {
+                TextField("Camera IP", text: $model.host)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.numbersAndPunctuation)
+                    .accessibilityIdentifier("camera-ip-address")
+                Button("Check connection", action: checkCameraConnection)
+                    .accessibilityIdentifier("check-camera-connection")
+                Text("The GM1S normally uses 192.168.54.1 in Image App Direct mode.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             Section("About") {
                 NavigationLink {
@@ -205,12 +207,6 @@ private struct AppSettingsView: View {
             }
         }
         .navigationTitle("Settings")
-        .alert("Clear location track?", isPresented: $isConfirmingTrackClear) {
-            Button("Clear", role: .destructive) { model.locationLogger.clear() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Saved location samples will be removed from this iPhone. Downloaded camera originals are not affected.")
-        }
         .alert("Forget remembered camera?", isPresented: $isConfirmingCameraForget) {
             Button("Forget", role: .destructive) { model.forgetRememberedCamera() }
             Button("Cancel", role: .cancel) {}
