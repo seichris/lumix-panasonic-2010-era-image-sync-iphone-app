@@ -565,22 +565,36 @@ private struct CameraPhotoDetailPage: View {
 
                 importStatus
 
-                Button {
-                    Task {
-                        await store.importPhoto(
-                            photo,
-                            photoMode: importMode,
-                            samples: model.locationLogger.samples,
-                            cameraClockOffset: model.cameraClockOffsetMinutes * 60
-                        )
+                if store.canImport(photo, using: importMode) {
+                    Button {
+                        Task {
+                            await store.importPhoto(
+                                photo,
+                                photoMode: importMode,
+                                samples: model.locationLogger.samples,
+                                cameraClockOffset: model.cameraClockOffsetMinutes * 60
+                            )
+                        }
+                    } label: {
+                        Label(importButtonTitle, systemImage: "square.and.arrow.down")
+                            .frame(maxWidth: .infinity)
                     }
-                } label: {
-                    Label(importButtonTitle, systemImage: "square.and.arrow.down")
-                        .frame(maxWidth: .infinity)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(store.isImporting || importState?.isWorking == true)
+                    .accessibilityIdentifier("save-camera-photo")
+                } else if photo.kind == .video {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label("Playback only", systemImage: "play.rectangle.on.rectangle")
+                            .font(.headline)
+                        Text("This camera does not permit AVCHD copy to iPhone. Record MP4 to import videos.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityIdentifier("camera-video-playback-only")
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(!photo.isImportable || !photo.supports(importMode) || store.isImporting || importState?.isWorking == true)
-                .accessibilityIdentifier("save-camera-photo")
             }
             .padding()
         }
@@ -625,12 +639,18 @@ private struct CameraPhotoDetailPage: View {
 }
 
 private struct CameraVideoPreview: View {
+    private struct ActivePlayback {
+        let id: UUID
+        let session: any CameraPlaybackSession
+    }
+
     let photo: LumixPhoto
     @ObservedObject var store: CameraGalleryStore
     @State private var playbackRequest = 0
     @State private var isLoading = false
+    @State private var loadingMessage = "Connecting to camera…"
     @State private var player: AVPlayer?
-    @State private var temporaryFileURL: URL?
+    @State private var activePlayback: ActivePlayback?
     @State private var errorMessage: String?
 
     var body: some View {
@@ -652,7 +672,7 @@ private struct CameraVideoPreview: View {
                     VStack(spacing: 8) {
                         ProgressView()
                             .tint(.white)
-                        Text("Downloading video…")
+                        Text(loadingMessage)
                             .font(.caption.weight(.semibold))
                     }
                     .foregroundStyle(.white)
@@ -703,14 +723,22 @@ private struct CameraVideoPreview: View {
         player = nil
         errorMessage = nil
         isLoading = true
-        removeTemporaryFile()
+        loadingMessage = photo.videoPlaybackResource?.isAVCHD == true
+            ? "Connecting to camera…"
+            : "Downloading video…"
+        await stopActivePlayback()
 
+        var startedPlayback: ActivePlayback?
         do {
-            let fileURL = try await store.videoFileForPlayback(photo)
-            temporaryFileURL = fileURL
+            let session = try await store.videoPlaybackSession(photo)
+            let playback = ActivePlayback(id: UUID(), session: session)
+            startedPlayback = playback
+            activePlayback = playback
+            let playbackURL = try await session.start()
             try Task.checkCancellation()
 
-            let asset = AVURLAsset(url: fileURL)
+            loadingMessage = "Buffering…"
+            let asset = AVURLAsset(url: playbackURL)
             guard try await asset.load(.isPlayable) else {
                 throw CameraVideoPlaybackError.unsupportedFormat
             }
@@ -722,11 +750,17 @@ private struct CameraVideoPreview: View {
             newPlayer.play()
         } catch is CancellationError {
             isLoading = false
-            removeTemporaryFile()
+            if let startedPlayback {
+                await startedPlayback.session.stop()
+                if activePlayback?.id == startedPlayback.id { activePlayback = nil }
+            }
         } catch {
             isLoading = false
             errorMessage = error.localizedDescription
-            removeTemporaryFile()
+            if let startedPlayback {
+                await startedPlayback.session.stop()
+                if activePlayback?.id == startedPlayback.id { activePlayback = nil }
+            }
         }
     }
 
@@ -735,15 +769,16 @@ private struct CameraVideoPreview: View {
         player?.pause()
         player = nil
         isLoading = false
-        removeTemporaryFile()
+        let playback = activePlayback
+        activePlayback = nil
+        Task { await playback?.session.stop() }
     }
 
     @MainActor
-    private func removeTemporaryFile() {
-        if let temporaryFileURL {
-            try? FileManager.default.removeItem(at: temporaryFileURL)
-            self.temporaryFileURL = nil
-        }
+    private func stopActivePlayback() async {
+        let playback = activePlayback
+        activePlayback = nil
+        await playback?.session.stop()
     }
 }
 

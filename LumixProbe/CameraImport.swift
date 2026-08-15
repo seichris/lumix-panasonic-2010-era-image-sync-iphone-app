@@ -51,9 +51,52 @@ struct CameraImportPlan: Sendable {
     let resources: [Resource]
 }
 
+struct CameraMediaPolicy: Hashable, Sendable {
+    let capabilities: CameraCapabilities?
+
+    init(capabilities: CameraCapabilities? = nil) {
+        self.capabilities = capabilities
+    }
+
+    func supportsImport(of photo: LumixPhoto, photoMode: CameraPhotoImportMode) -> Bool {
+        guard photo.kind == .video else { return photo.supports(photoMode) }
+        return importResource(for: photo) != nil
+    }
+
+    func importResource(for photo: LumixPhoto) -> LumixResource? {
+        let candidates = photo.resources
+            .filter { $0.isVideo && !$0.isPreview }
+            .sorted { videoImportPriority($0) < videoImportPriority($1) }
+
+        return candidates.first { resource in
+            if resource.isAVCHD {
+                // Panasonic documents GM1S AVCHD as playback-only. Only an
+                // affirmative exact camera capability may override that.
+                return capabilities?.copyAllowed(for: resource) == true
+            }
+            if let explicit = capabilities?.copyAllowed(for: resource) {
+                return explicit
+            }
+            // Older capability documents can omit MP4 copy actions even though
+            // Image App-era cameras support the ordinary MP4 copy path.
+            return resource.isPhoneCopyableVideoFormat
+        }
+    }
+
+    func supportsPlayback(of resource: LumixResource) -> Bool {
+        capabilities?.playbackCapability(for: resource)?.enabled ?? true
+    }
+
+    private func videoImportPriority(_ resource: LumixResource) -> Int {
+        if resource.isPhoneCopyableVideoFormat { return 0 }
+        if resource.isAVCHD { return 10 }
+        return 20
+    }
+}
+
 extension LumixPhoto {
     func supports(_ mode: CameraPhotoImportMode) -> Bool {
-        guard kind == .photo else { return true }
+        guard kind == .photo else { return isImportable }
         switch mode {
         case .jpeg: return originalJPEGResource != nil
         case .jpegAndRAW: return originalJPEGResource != nil && rawResource != nil
@@ -61,9 +104,15 @@ extension LumixPhoto {
         }
     }
 
-    func importPlan(photoMode: CameraPhotoImportMode) throws -> CameraImportPlan {
+    func importPlan(
+        photoMode: CameraPhotoImportMode,
+        policy: CameraMediaPolicy = CameraMediaPolicy()
+    ) throws -> CameraImportPlan {
         if kind == .video {
-            guard let videoResource else { throw LumixError.noVideo }
+            guard videoResource != nil else { throw LumixError.noVideo }
+            guard let videoResource = policy.importResource(for: self) else {
+                throw LumixError.videoImportNotSupported
+            }
             return CameraImportPlan(
                 variant: .video,
                 resources: [.init(cameraResource: videoResource, role: .video)]

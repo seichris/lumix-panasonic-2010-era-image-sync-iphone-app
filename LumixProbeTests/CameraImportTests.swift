@@ -44,7 +44,7 @@ final class CameraImportTests: XCTestCase {
         XCTAssertFalse(photo.supports(.raw))
     }
 
-    func testVideoPlanPrefersMP4AndFallsBackToAVCHD() throws {
+    func testVideoPlanPrefersMP4AndRejectsAVCHDWithoutCopyCapability() throws {
         let avchd = resource(filename: "00001.MTS", profile: "CAM_AVCHD", mimeType: "video/mp2t")
         let mp4 = resource(filename: "P0001.MP4", profile: "CAM_MP4", mimeType: "video/mp4")
         let video = LumixPhoto(itemID: "2", title: "Video", resources: [avchd, mp4])
@@ -58,7 +58,10 @@ final class CameraImportTests: XCTestCase {
 
         let avchdOnly = LumixPhoto(itemID: "3", title: "AVCHD", resources: [avchd])
         XCTAssertEqual(avchdOnly.videoResource, avchd)
-        XCTAssertEqual(try avchdOnly.importPlan(photoMode: .raw).variant, .video)
+        XCTAssertFalse(avchdOnly.isImportable)
+        XCTAssertThrowsError(try avchdOnly.importPlan(photoMode: .raw)) { error in
+            XCTAssertEqual(error as? LumixError, .videoImportNotSupported)
+        }
     }
 
     func testDIDLParserRecognizesCameraVideoResource() throws {
@@ -93,7 +96,7 @@ final class CameraImportTests: XCTestCase {
         XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO193986570001.JPG")
         XCTAssertEqual(video.kind, .video)
         XCTAssertEqual(video.displayFilename, "DO193986570001.JPG")
-        XCTAssertEqual(try video.importPlan(photoMode: .jpeg).resources.first?.cameraResource, placeholder)
+        XCTAssertThrowsError(try video.importPlan(photoMode: .jpeg))
     }
 
     func testGM1AVCHDTransportStreamKeepsAdvertisedDLNAURL() throws {
@@ -112,7 +115,9 @@ final class CameraImportTests: XCTestCase {
         XCTAssertTrue(placeholder.requiresDLNAStreamingRequest)
         XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO00193986570000000001.TS")
         XCTAssertEqual(video.displayFilename, "DO00193986570000000001.TS")
-        XCTAssertEqual(try video.importPlan(photoMode: .jpeg).resources.first?.cameraResource, placeholder)
+        XCTAssertThrowsError(try video.importPlan(photoMode: .jpeg)) { error in
+            XCTAssertEqual(error as? LumixError, .videoImportNotSupported)
+        }
     }
 
     func testGM1PlaybackPrefersPhoneSizedAVCHDResource() throws {
@@ -134,6 +139,111 @@ final class CameraImportTests: XCTestCase {
 
         XCTAssertEqual(video.videoResource, original)
         XCTAssertEqual(video.videoPlaybackResource, phonePlayback)
+        XCTAssertEqual(original.role, .highQuality1080)
+        XCTAssertEqual(phonePlayback.role, .avchdPlayback360)
+    }
+
+    func testCapabilityParserSeparatesPlaybackFromIOSCopyPermission() throws {
+        let xml = """
+        <camrply>
+          <result>ok</result>
+          <contents_action_info model="DMC-GM1S" version="1.0" date="2014-10-01">
+            <item>
+              <content mime_type="video/vnd.dlna.mpeg-tts" panasonic_com_pn="CAM_AVC_TS_HP_1080_50I_AC3,CAM_AVC_TS_HP_360_25P_AAC">
+                <action type="playback" enable="yes" os="ios" player="hls" player_func="play,pause,seek" />
+                <action type="copy_to_sp" enable="yes" os="android" />
+                <action type="copy_to_sp" enable="yes" />
+                <action type="copy_to_sp" enable="no" os="ios" />
+              </content>
+            </item>
+          </contents_action_info>
+        </camrply>
+        """
+        let capabilities = CameraCapabilityParser.parse(Data(xml.utf8))
+        let playback = resource(
+            filename: "DO00193986570000000001_LOW.TS",
+            profile: "CAM_AVC_TS_HP_360_25P_AAC",
+            mimeType: "video/vnd.dlna.mpeg-tts"
+        )
+
+        XCTAssertEqual(capabilities.model, "DMC-GM1S")
+        XCTAssertEqual(capabilities.entries.count, 1)
+        XCTAssertEqual(capabilities.copyAllowed(for: playback), false)
+        XCTAssertEqual(capabilities.playbackCapability(for: playback)?.enabled, true)
+        XCTAssertEqual(capabilities.playbackCapability(for: playback)?.player, .dmpStream)
+        XCTAssertEqual(capabilities.playbackCapability(for: playback)?.functions, ["play", "pause", "seek"])
+    }
+
+    func testExactCapabilityCanExplicitlyPermitAVCHDImport() throws {
+        let avchd = resource(
+            filename: "00001.MTS",
+            profile: "CAM_AVC_TS_HP_720_25P_AAC",
+            mimeType: "video/vnd.dlna.mpeg-tts"
+        )
+        let video = LumixPhoto(itemID: "3", title: "AVCHD", resources: [avchd])
+        let capabilities = CameraCapabilities(
+            model: "TEST",
+            version: nil,
+            date: nil,
+            entries: [
+                CameraCapabilityEntry(
+                    mimeType: "video/vnd.dlna.mpeg-tts",
+                    panasonicProfiles: ["CAM_AVC_TS_HP_720_25P_AAC"],
+                    actions: [
+                        CameraContentAction(
+                            type: "copy_to_sp",
+                            enabled: true,
+                            operatingSystem: "ios",
+                            player: nil,
+                            playerFunctions: []
+                        )
+                    ]
+                )
+            ]
+        )
+        let policy = CameraMediaPolicy(capabilities: capabilities)
+
+        XCTAssertTrue(policy.supportsImport(of: video, photoMode: .jpeg))
+        XCTAssertEqual(
+            try video.importPlan(photoMode: .jpeg, policy: policy).resources.first?.cameraResource,
+            avchd
+        )
+    }
+
+    func testDIDLParserPreservesPlaybackMetadataAndDLNAFlags() throws {
+        let xml = """
+        <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+          <item id="00193986570000000001">
+            <dc:title>0019398657-0000000001</dc:title>
+            <upnp:class>object.item.videoItem</upnp:class>
+            <res duration="00:01:02.500" resolution="640x360" size="123456" bitrate="789000" ChapterList="0,10" protocolInfo="http-get:*:video/vnd.dlna.mpeg-tts;PANASONIC.COM_PN=CAM_AVC_TS_HP_360_25P_AAC;DLNA.ORG_OP=01;DLNA.ORG_FLAGS=ABC">http://192.168.54.1:50001/LOW.TS</res>
+          </item>
+        </DIDL-Lite>
+        """
+        let resource = try XCTUnwrap(DIDLParser.parse(xml).first)
+
+        XCTAssertEqual(resource.duration, 62.5)
+        XCTAssertEqual(resource.resolutionWidth, 640)
+        XCTAssertEqual(resource.resolutionHeight, 360)
+        XCTAssertEqual(resource.size, 123456)
+        XCTAssertEqual(resource.bitrate, 789000)
+        XCTAssertEqual(resource.chapterList, "0,10")
+        XCTAssertEqual(resource.dlnaOperations, "01")
+        XCTAssertEqual(resource.dlnaFlags, "ABC")
+        XCTAssertEqual(resource.role, .avchdPlayback360)
+    }
+
+    func testBrowseMetadataSOAPTargetsTheSelectedItem() {
+        let body = LumixBrowseSOAP.make(
+            objectID: "00193986570000000001",
+            flag: .metadata,
+            start: 0,
+            count: 1
+        )
+
+        XCTAssertTrue(body.contains("<ObjectID>00193986570000000001</ObjectID>"))
+        XCTAssertTrue(body.contains("<BrowseFlag>BrowseMetadata</BrowseFlag>"))
+        XCTAssertFalse(body.contains("X_FromCP"))
     }
 
     func testGM1AVCHDUsesPanasonicInitialDLNARequestExactly() throws {
@@ -146,6 +256,24 @@ final class CameraImportTests: XCTestCase {
             "GET /DO00193986570000000001.TS HTTP/1.1\r\n" +
                 "User-Agent: Panasonic Android/1 DM-CP\r\n" +
                 "Host: 192.168.54.1\r\n\r\n"
+        )
+    }
+
+    func testPanasonicSeekRequestAddsByteRangeAfterHost() throws {
+        let url = try XCTUnwrap(
+            URL(string: "http://192.168.54.1:50001/DO00193986570000000001_LOW.TS")
+        )
+
+        XCTAssertEqual(
+            try LumixMediaHTTPRequest.make(
+                for: url,
+                style: .panasonicDLNAInitial,
+                rangeHeader: "bytes=1048576-"
+            ),
+            "GET /DO00193986570000000001_LOW.TS HTTP/1.1\r\n" +
+                "User-Agent: Panasonic Android/1 DM-CP\r\n" +
+                "Host: 192.168.54.1\r\n" +
+                "Range: bytes=1048576-\r\n\r\n"
         )
     }
 

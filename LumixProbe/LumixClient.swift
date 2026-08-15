@@ -16,25 +16,154 @@ struct LumixContentInfo: Sendable {
     let contentNumber: Int?
 }
 
+struct CameraResourceKey: Hashable, Sendable {
+    let mimeType: String
+    let panasonicProfile: String?
+
+    init(mimeType: String, panasonicProfile: String?) {
+        self.mimeType = mimeType.lowercased()
+        self.panasonicProfile = panasonicProfile?.uppercased()
+    }
+}
+
+enum PanasonicPlayerKind: Hashable, Sendable {
+    case dmpStream
+    case standard
+    case liveView
+    case unknown(String)
+
+    init(_ value: String?) {
+        switch value?.lowercased() {
+        case "hls": self = .dmpStream
+        case "standard", "normal": self = .standard
+        case "liveview", "live_view": self = .liveView
+        case let value?: self = .unknown(value)
+        case nil: self = .standard
+        }
+    }
+}
+
+struct PlaybackCapability: Hashable, Sendable {
+    let enabled: Bool
+    let player: PanasonicPlayerKind
+    let functions: Set<String>
+}
+
+struct ContentActions: Hashable, Sendable {
+    let playback: PlaybackCapability?
+    let copyToPhone: Bool?
+}
+
+struct CameraContentAction: Hashable, Sendable {
+    let type: String
+    let enabled: Bool
+    let operatingSystem: String?
+    let player: String?
+    let playerFunctions: Set<String>
+
+    var appliesToIOS: Bool {
+        guard let operatingSystem = operatingSystem?.lowercased().nonEmpty else { return true }
+        return operatingSystem
+            .split(whereSeparator: { $0 == "," || $0 == ";" || $0.isWhitespace })
+            .contains("ios")
+    }
+
+    var isIOSSpecific: Bool { operatingSystem?.lowercased().contains("ios") == true }
+}
+
+struct CameraCapabilityEntry: Hashable, Sendable {
+    let mimeType: String
+    let panasonicProfiles: Set<String>
+    let actions: [CameraContentAction]
+
+    func matches(_ resource: LumixResource) -> Bool {
+        guard resource.mimeType == mimeType.lowercased() else { return false }
+        guard !panasonicProfiles.isEmpty else { return resource.profileName == nil }
+        guard let profile = resource.profileName?.uppercased() else { return false }
+        return panasonicProfiles.contains(profile)
+    }
+
+    func preferredAction(type: String) -> CameraContentAction? {
+        let matching = actions.filter { $0.type.caseInsensitiveCompare(type) == .orderedSame && $0.appliesToIOS }
+        return matching.first(where: \.isIOSSpecific) ?? matching.first
+    }
+}
+
+struct CameraCapabilities: Hashable, Sendable {
+    let model: String?
+    let version: String?
+    let date: String?
+    let entries: [CameraCapabilityEntry]
+
+    func actions(for resource: LumixResource) -> ContentActions? {
+        guard let entry = entries.first(where: { $0.matches(resource) }) else { return nil }
+        let playbackAction = entry.preferredAction(type: "playback")
+        let playback = playbackAction.map {
+            PlaybackCapability(
+                enabled: $0.enabled,
+                player: PanasonicPlayerKind($0.player),
+                functions: $0.playerFunctions
+            )
+        }
+        let copyToPhone = entry.preferredAction(type: "copy_to_sp")?.enabled
+        return ContentActions(playback: playback, copyToPhone: copyToPhone)
+    }
+
+    func copyAllowed(for resource: LumixResource) -> Bool? {
+        actions(for: resource)?.copyToPhone
+    }
+
+    func playbackCapability(for resource: LumixResource) -> PlaybackCapability? {
+        actions(for: resource)?.playback
+    }
+}
+
+enum LumixResourceRole: String, Hashable, Sendable {
+    case avchdPlayback360
+    case primary720
+    case highQuality1080
+    case original
+    case thumbnail
+    case unknown
+}
+
 struct LumixResource: Identifiable, Hashable, Sendable {
     let itemID: String?
     let title: String?
     let url: URL
     let protocolInfo: String
     let upnpClass: String?
+    let duration: TimeInterval?
+    let resolutionWidth: Int?
+    let resolutionHeight: Int?
+    let size: Int64?
+    let bitrate: Int?
+    let chapterList: String?
 
     init(
         itemID: String?,
         title: String?,
         url: URL,
         protocolInfo: String,
-        upnpClass: String? = nil
+        upnpClass: String? = nil,
+        duration: TimeInterval? = nil,
+        resolutionWidth: Int? = nil,
+        resolutionHeight: Int? = nil,
+        size: Int64? = nil,
+        bitrate: Int? = nil,
+        chapterList: String? = nil
     ) {
         self.itemID = itemID
         self.title = title
         self.url = url
         self.protocolInfo = protocolInfo
         self.upnpClass = upnpClass
+        self.duration = duration
+        self.resolutionWidth = resolutionWidth
+        self.resolutionHeight = resolutionHeight
+        self.size = size
+        self.bitrate = bitrate
+        self.chapterList = chapterList
     }
 
     var id: String {
@@ -73,9 +202,33 @@ struct LumixResource: Identifiable, Hashable, Sendable {
 
     var requiresDLNAStreamingRequest: Bool {
         if mimeType == "video/vnd.dlna.mpeg-tts" { return true }
+        if mimeType == "video/mp2t" { return true }
         if profileName?.contains("CAM_AVC_TS_") == true { return true }
+        if profileName?.contains("AVCHD") == true { return true }
+        if ["mts", "m2ts"].contains(url.pathExtension.lowercased()) { return true }
         return isLegacyAVCHDPlaceholder
     }
+
+    var isAVCHD: Bool { requiresDLNAStreamingRequest }
+
+    var isPhoneCopyableVideoFormat: Bool {
+        guard isVideo, !isAVCHD else { return false }
+        return mimeType == "video/mp4"
+            || ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased())
+    }
+
+    var role: LumixResourceRole {
+        if isPreview { return .thumbnail }
+        guard isAVCHD else { return isVideo ? .original : .unknown }
+        let profile = profileName?.uppercased() ?? ""
+        if profile.contains("_360_") { return .avchdPlayback360 }
+        if profile.contains("_720_") { return .primary720 }
+        if profile.contains("_1080_") { return .highQuality1080 }
+        return .original
+    }
+
+    var dlnaOperations: String? { protocolParameter("DLNA.ORG_OP") }
+    var dlnaFlags: String? { protocolParameter("DLNA.ORG_FLAGS") }
 
     var isPreview: Bool {
         profileName == "CAM_TN" || profileName == "CAM_LRGTN"
@@ -89,6 +242,19 @@ struct LumixResource: Identifiable, Hashable, Sendable {
 
     private var isLegacyAVCHDPlaceholder: Bool {
         legacyAVCHDNameComponents != nil
+    }
+
+    private func protocolParameter(_ name: String) -> String? {
+        protocolInfo
+            .split(separator: ";")
+            .dropFirst()
+            .compactMap { component -> (String, String)? in
+                let pair = component.split(separator: "=", maxSplits: 1).map(String.init)
+                guard pair.count == 2 else { return nil }
+                return (pair[0], pair[1])
+            }
+            .first { $0.0.caseInsensitiveCompare(name) == .orderedSame }?
+            .1
     }
 
     private var legacyAVCHDNameComponents: (base: String, suffix: String)? {
@@ -171,7 +337,7 @@ struct LumixPhoto: Identifiable, Hashable, Sendable {
     var isImportable: Bool {
         switch kind {
         case .photo: originalJPEGResource != nil || rawResource != nil
-        case .video: videoResource != nil
+        case .video: videoResource?.isPhoneCopyableVideoFormat == true
         }
     }
 
@@ -214,10 +380,12 @@ struct LumixPhoto: Identifiable, Hashable, Sendable {
         guard resource.requiresDLNAStreamingRequest else {
             return videoPriority(resource)
         }
-        let profile = resource.profileName ?? ""
-        if profile.contains("_360_") { return 10 }
-        if profile.contains("_720_") { return 11 }
-        return 12
+        switch resource.role {
+        case .avchdPlayback360: return 10
+        case .primary720: return 11
+        case .highQuality1080: return 12
+        default: return 13
+        }
     }
 
     static func grouped(from resources: [LumixResource]) -> [LumixPhoto] {
@@ -255,7 +423,41 @@ struct LumixBrowseResult: Sendable {
     let resources: [LumixResource]
 }
 
-enum LumixError: LocalizedError {
+enum LumixBrowseFlag: String, Sendable {
+    case directChildren = "BrowseDirectChildren"
+    case metadata = "BrowseMetadata"
+}
+
+enum LumixBrowseSOAP {
+    static func make(
+        objectID: String,
+        flag: LumixBrowseFlag,
+        start: Int,
+        count: Int
+    ) -> String {
+        let panasonicExtension = flag == .directChildren
+            ? "<pana:X_FromCP>LumixLink2.0</pana:X_FromCP>"
+            : ""
+        return """
+        <?xml version="1.0" encoding="utf-8"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+          <s:Body>
+            <u:Browse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1" xmlns:pana="urn:schemas-panasonic-com:pana">
+              <ObjectID>\(objectID.xmlEscaped)</ObjectID>
+              <BrowseFlag>\(flag.rawValue)</BrowseFlag>
+              <Filter>*</Filter>
+              <StartingIndex>\(max(0, start))</StartingIndex>
+              <RequestedCount>\(max(1, count))</RequestedCount>
+              <SortCriteria></SortCriteria>
+              \(panasonicExtension)
+            </u:Browse>
+          </s:Body>
+        </s:Envelope>
+        """
+    }
+}
+
+enum LumixError: LocalizedError, Equatable {
     case invalidURL
     case nonHTTPResponse
     case http(Int, String)
@@ -263,6 +465,8 @@ enum LumixError: LocalizedError {
     case noOriginalJPEG
     case noRAW
     case noVideo
+    case videoImportNotSupported
+    case videoPlaybackNotSupported
     case missingContentCount
 
     var errorDescription: String? {
@@ -274,6 +478,10 @@ enum LumixError: LocalizedError {
         case .noOriginalJPEG: return "This camera item does not advertise an original JPEG."
         case .noRAW: return "This camera item does not advertise a RAW companion."
         case .noVideo: return "This camera item does not advertise a downloadable video."
+        case .videoImportNotSupported:
+            return "This camera does not permit this video format to be copied to iPhone."
+        case .videoPlaybackNotSupported:
+            return "This camera does not permit this video format to be played on the phone."
         case .missingContentCount: return "The camera did not report its media count after entering playback mode."
         }
     }
@@ -325,24 +533,47 @@ actor LumixClient {
         ))
     }
 
+    func fetchCapabilities() async throws -> CameraCapabilities {
+        let response = try await cameraGET(["mode": "getinfo", "type": "capability"])
+        return CameraCapabilityParser.parse(response.data)
+    }
+
     func browse(start: Int, count: Int) async throws -> LumixBrowseResult {
+        try await performBrowse(
+            objectID: "0",
+            flag: .directChildren,
+            start: start,
+            count: count
+        )
+    }
+
+    func browseMetadata(itemID: String) async throws -> LumixPhoto {
+        let result = try await performBrowse(
+            objectID: itemID,
+            flag: .metadata,
+            start: 0,
+            count: 1
+        )
+        let photos = LumixPhoto.grouped(from: result.resources)
+        guard let photo = photos.first(where: { $0.itemID == itemID }) ?? photos.first else {
+            throw LumixError.missingBrowseResult
+        }
+        return photo
+    }
+
+    func makeAVCHDPlaybackSession(for resource: LumixResource) async throws -> any CameraPlaybackSession {
+        guard resource.isAVCHD else { throw LumixError.videoPlaybackNotSupported }
+        return PanasonicAVCHDPlaybackSession(remoteURL: resource.url)
+    }
+
+    private func performBrowse(
+        objectID: String,
+        flag: LumixBrowseFlag,
+        start: Int,
+        count: Int
+    ) async throws -> LumixBrowseResult {
         guard let url = URL(string: "http://\(host):60606/Server0/CDS_control") else { throw LumixError.invalidURL }
-        let body = """
-        <?xml version="1.0" encoding="utf-8"?>
-        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-          <s:Body>
-            <u:Browse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1" xmlns:pana="urn:schemas-panasonic-com:pana">
-              <ObjectID>0</ObjectID>
-              <BrowseFlag>BrowseDirectChildren</BrowseFlag>
-              <Filter>*</Filter>
-              <StartingIndex>\(max(0, start))</StartingIndex>
-              <RequestedCount>\(max(1, count))</RequestedCount>
-              <SortCriteria></SortCriteria>
-              <pana:X_FromCP>LumixLink2.0</pana:X_FromCP>
-            </u:Browse>
-          </s:Body>
-        </s:Envelope>
-        """
+        let body = LumixBrowseSOAP.make(objectID: objectID, flag: flag, start: start, count: count)
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -477,7 +708,11 @@ enum LumixMediaRequestStyle: Sendable {
 }
 
 enum LumixMediaHTTPRequest {
-    static func make(for url: URL, style: LumixMediaRequestStyle) throws -> String {
+    static func make(
+        for url: URL,
+        style: LumixMediaRequestStyle,
+        rangeHeader: String? = nil
+    ) throws -> String {
         guard let host = url.host else { throw LumixError.invalidURL }
 
         var requestTarget = url.path.isEmpty ? "/" : url.path
@@ -490,7 +725,12 @@ enum LumixMediaHTTPRequest {
         case .panasonicDLNAInitial:
             // Panasonic's native DLNA transport starts with this exact plain
             // request. Range and TimeSeekRange are only added after a seek.
-            return "GET \(requestTarget) HTTP/1.1\r\nUser-Agent: Panasonic Android/1 DM-CP\r\nHost: \(host)\r\n\r\n"
+            let range = rangeHeader?.nonEmpty.map { "Range: \($0)\r\n" } ?? ""
+            return "GET \(requestTarget) HTTP/1.1\r\n" +
+                "User-Agent: Panasonic Android/1 DM-CP\r\n" +
+                "Host: \(host)\r\n" +
+                range +
+                "\r\n"
         }
     }
 }
@@ -887,6 +1127,102 @@ private final class SimpleXML: NSObject, XMLParserDelegate {
     func firstInt(_ name: String) -> Int? { firstText(name).flatMap(Int.init) }
 }
 
+final class CameraCapabilityParser: NSObject, XMLParserDelegate {
+    private var model: String?
+    private var version: String?
+    private var date: String?
+    private var currentMimeType: String?
+    private var currentProfiles: Set<String> = []
+    private var currentActions: [CameraContentAction] = []
+    private var entries: [CameraCapabilityEntry] = []
+
+    static func parse(_ data: Data) -> CameraCapabilities {
+        let delegate = CameraCapabilityParser()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        parser.shouldProcessNamespaces = false
+        parser.parse()
+        return CameraCapabilities(
+            model: delegate.model,
+            version: delegate.version,
+            date: delegate.date,
+            entries: delegate.entries
+        )
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?,
+        attributes attributeDict: [String: String] = [:]
+    ) {
+        let name = elementName.split(separator: ":").last.map(String.init)?.lowercased() ?? elementName.lowercased()
+        let attributes = Dictionary(uniqueKeysWithValues: attributeDict.map { ($0.key.lowercased(), $0.value) })
+
+        switch name {
+        case "contents_action_info":
+            model = attributes["model"]
+            version = attributes["version"]
+            date = attributes["date"]
+        case "content":
+            currentMimeType = attributes["mime_type"]?.lowercased()
+            currentProfiles = Set(
+                (attributes["panasonic_com_pn"] ?? "")
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
+                    .filter { !$0.isEmpty }
+            )
+            currentActions = []
+        case "action" where currentMimeType != nil:
+            guard let type = attributes["type"]?.nonEmpty else { return }
+            let playerFunctions = Set(
+                (attributes["player_func"] ?? "")
+                    .split(whereSeparator: { $0 == "," || $0 == ";" || $0.isWhitespace })
+                    .map { String($0).lowercased() }
+            )
+            currentActions.append(
+                CameraContentAction(
+                    type: type,
+                    enabled: Self.isAffirmative(attributes["enable"]),
+                    operatingSystem: attributes["os"],
+                    player: attributes["player"],
+                    playerFunctions: playerFunctions
+                )
+            )
+        default:
+            break
+        }
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didEndElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?
+    ) {
+        let name = elementName.split(separator: ":").last.map(String.init)?.lowercased() ?? elementName.lowercased()
+        guard name == "content", let currentMimeType else { return }
+        entries.append(
+            CameraCapabilityEntry(
+                mimeType: currentMimeType,
+                panasonicProfiles: currentProfiles,
+                actions: currentActions
+            )
+        )
+        self.currentMimeType = nil
+        currentProfiles = []
+        currentActions = []
+    }
+
+    private static func isAffirmative(_ value: String?) -> Bool {
+        switch value?.lowercased() {
+        case "yes", "true", "1", "on", "enable", "enabled": true
+        default: false
+        }
+    }
+}
+
 final class DIDLParser: NSObject, XMLParserDelegate {
     private var itemID: String?
     private var title: String?
@@ -894,6 +1230,7 @@ final class DIDLParser: NSObject, XMLParserDelegate {
     private var currentElement = ""
     private var currentText = ""
     private var currentProtocol = ""
+    private var currentResourceAttributes: [String: String] = [:]
     private var resources: [LumixResource] = []
 
     static func parse(_ xml: String) -> [LumixResource] {
@@ -914,7 +1251,10 @@ final class DIDLParser: NSObject, XMLParserDelegate {
             title = nil
             itemClass = nil
         }
-        if elementName == "res" { currentProtocol = attributeDict["protocolInfo"] ?? "" }
+        if elementName == "res" {
+            currentProtocol = attributeDict["protocolInfo"] ?? ""
+            currentResourceAttributes = attributeDict
+        }
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) { currentText += string }
@@ -924,18 +1264,44 @@ final class DIDLParser: NSObject, XMLParserDelegate {
         if elementName.hasSuffix("title") { title = value }
         if elementName.hasSuffix("class") { itemClass = value }
         if elementName == "res", let url = URL(string: value) {
+            let duration = Self.parseDuration(currentResourceAttributes["duration"])
+            let resolution = Self.parseResolution(currentResourceAttributes["resolution"])
+            let chapterList = currentResourceAttributes.first { key, _ in
+                key.lowercased().hasSuffix("chapterlist")
+            }?.value
             resources.append(
                 LumixResource(
                     itemID: itemID,
                     title: title,
                     url: url,
                     protocolInfo: currentProtocol,
-                    upnpClass: itemClass
+                    upnpClass: itemClass,
+                    duration: duration,
+                    resolutionWidth: resolution?.width,
+                    resolutionHeight: resolution?.height,
+                    size: currentResourceAttributes["size"].flatMap(Int64.init),
+                    bitrate: currentResourceAttributes["bitrate"].flatMap(Int.init),
+                    chapterList: chapterList
                 )
             )
+            currentResourceAttributes = [:]
         }
         currentElement = ""
         currentText = ""
+    }
+
+    private static func parseDuration(_ value: String?) -> TimeInterval? {
+        guard let value else { return nil }
+        let parts = value.split(separator: ":").compactMap { Double($0) }
+        guard parts.count == 3 else { return nil }
+        return parts[0] * 3_600 + parts[1] * 60 + parts[2]
+    }
+
+    private static func parseResolution(_ value: String?) -> (width: Int, height: Int)? {
+        guard let value else { return nil }
+        let parts = value.lowercased().split(separator: "x").compactMap { Int($0) }
+        guard parts.count == 2 else { return nil }
+        return (parts[0], parts[1])
     }
 }
 
@@ -948,5 +1314,13 @@ private extension String {
             .replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&apos;", with: "'")
             .replacingOccurrences(of: "&amp;", with: "&")
+    }
+
+    var xmlEscaped: String {
+        replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
     }
 }
