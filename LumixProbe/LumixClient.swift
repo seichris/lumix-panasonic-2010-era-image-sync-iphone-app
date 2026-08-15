@@ -713,6 +713,28 @@ enum LumixMediaRequestStyle: Sendable {
     case panasonicDLNAInitial
 }
 
+enum PanasonicDLNARemoteRange {
+    /// Panasonic's native transport owns the camera-side seek state. A local
+    /// player probe beginning at byte zero is still the native initial mode and
+    /// must not become a camera `Range` request. Only a positive byte seek uses
+    /// the native range request template.
+    static func fromLocalPlayerRange(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty else {
+            return nil
+        }
+        let components = value.split(separator: "=", maxSplits: 1).map(String.init)
+        guard components.count == 2,
+              components[0].caseInsensitiveCompare("bytes") == .orderedSame,
+              let firstRange = components[1].split(separator: ",", maxSplits: 1).first,
+              let startText = firstRange.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).first,
+              let start = Int64(startText),
+              start > 0 else {
+            return nil
+        }
+        return value
+    }
+}
+
 enum LumixMediaHTTPRequest {
     static func make(
         for url: URL,

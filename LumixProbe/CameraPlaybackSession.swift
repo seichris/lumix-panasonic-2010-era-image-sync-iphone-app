@@ -279,20 +279,22 @@ private final class PanasonicLoopbackProxy: @unchecked Sendable {
 
         let range = lines.first { $0.lowercased().hasPrefix("range:") }
             .map { String($0.dropFirst("range:".count)).trimmingCharacters(in: .whitespaces) }
+        let remoteRange = PanasonicDLNARemoteRange.fromLocalPlayerRange(range)
         let request: String
         do {
             request = try LumixMediaHTTPRequest.make(
                 for: remoteURL,
                 style: .panasonicDLNAInitial,
-                rangeHeader: range
+                rangeHeader: remoteRange
             )
         } catch {
             sendError(502, reason: "Bad Gateway", to: local, id: localID)
             return
         }
         diagnosticEvents.append("Local AVPlayer range: \(range ?? "none")")
+        diagnosticEvents.append("Camera range after Panasonic seek translation: \(remoteRange ?? "none")")
         diagnosticEvents.append("Camera request: \(request.components(separatedBy: "\r\n").first ?? "GET")")
-        diagnosticEvents.append("Camera request mode: \(range == nil ? "Panasonic initial plain GET" : "Panasonic byte range")")
+        diagnosticEvents.append("Camera request mode: \(remoteRange == nil ? "Panasonic initial plain GET" : "Panasonic byte range")")
 
         let remote = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
         let remoteID = UUID()

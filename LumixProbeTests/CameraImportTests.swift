@@ -277,6 +277,21 @@ final class CameraImportTests: XCTestCase {
         )
     }
 
+    func testPanasonicZeroBytePlayerProbeRemainsInitialPlainRequest() throws {
+        XCTAssertNil(PanasonicDLNARemoteRange.fromLocalPlayerRange("bytes=0-1"))
+        XCTAssertNil(PanasonicDLNARemoteRange.fromLocalPlayerRange("bytes=0-"))
+        XCTAssertNil(PanasonicDLNARemoteRange.fromLocalPlayerRange(nil))
+    }
+
+    func testPanasonicPositivePlayerSeekBecomesCameraByteRange() throws {
+        XCTAssertEqual(
+            PanasonicDLNARemoteRange.fromLocalPlayerRange("bytes=1048576-"),
+            "bytes=1048576-"
+        )
+        XCTAssertNil(PanasonicDLNARemoteRange.fromLocalPlayerRange("items=1-2"))
+        XCTAssertNil(PanasonicDLNARemoteRange.fromLocalPlayerRange("bytes=-500"))
+    }
+
     func testPanasonicRequestPreservesAdvertisedPercentEncodedTarget() throws {
         let url = try XCTUnwrap(
             URL(string: "http://192.168.54.1:50001/stream%20folder/video%2B1.TS?token=a%2Fb")
