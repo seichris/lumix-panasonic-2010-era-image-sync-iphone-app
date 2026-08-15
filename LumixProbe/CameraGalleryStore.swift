@@ -735,11 +735,25 @@ final class CameraGalleryStore: ObservableObject {
                 "Photo geotag check \(photo.displayFilename): \(inspection.diagnosticSummary)",
                 onDiagnostic: onDiagnostic
             )
+            recordMetadataDiagnostic(
+                "Photo geotag check \(photo.displayFilename): final UI state = resolved.",
+                onDiagnostic: onDiagnostic
+            )
             return state
         } catch is CancellationError {
+            recordMetadataDiagnostic(
+                "Photo geotag check \(photo.displayFilename): metadata-prefix catch = CancellationError; " +
+                    "final UI state = cancelled.",
+                onDiagnostic: onDiagnostic
+            )
             return cancelMetadataInspection(photo, generation: generation)
         } catch {
             let elapsed = Date().timeIntervalSince(downloadStartedAt)
+            recordMetadataDiagnostic(
+                "Photo geotag check \(photo.displayFilename): metadata-prefix catch type=" +
+                    "\(String(reflecting: type(of: error))) message=\(error.localizedDescription).",
+                onDiagnostic: onDiagnostic
+            )
             return failMetadataInspection(
                 photo,
                 message: "Could not inspect the original JPEG after \(elapsed.secondsLabel): \(error.localizedDescription)",
@@ -768,7 +782,7 @@ final class CameraGalleryStore: ObservableObject {
         let state = CameraPhotoMetadataInspectionState.failed(message)
         metadataInspectionStates[photo.id] = state
         recordMetadataDiagnostic(
-            "Photo geotag check \(photo.displayFilename) failed: \(message)",
+            "Photo geotag check \(photo.displayFilename): final UI state = failed: \(message)",
             onDiagnostic: onDiagnostic
         )
         return state

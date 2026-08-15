@@ -805,15 +805,18 @@ private enum LegacyLumixMediaDownloader {
         maximumBodyBytes: Int? = nil,
         socketTimeoutSeconds: Int = 90
     ) async throws -> URL {
+        let suggestedName = url.lastPathComponent.isEmpty ? "lumix-media" : url.lastPathComponent
+        let traceID = "\(String(UUID().uuidString.prefix(8))) \(suggestedName)"
         let operation = LegacyLumixDownloadOperation()
         let continuationGate = LegacyLumixDownloadContinuationGate()
-        let traceID = String(UUID().uuidString.prefix(8))
-        let suggestedName = url.lastPathComponent.isEmpty ? "lumix-media" : url.lastPathComponent
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + "-" + suggestedName)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                continuationGate.install(continuation)
+                guard continuationGate.install(continuation) else {
+                    logLegacyMedia(traceID, "continuation already terminal; worker not scheduled.")
+                    return
+                }
                 // recv(2) is intentionally blocking for compatibility with the
                 // camera's HTTP/1.0 server. Keep it off Swift's cooperative task
                 // pool so thumbnails cannot starve timers and cancellation.
@@ -1005,6 +1008,15 @@ private enum LegacyLumixMediaDownloader {
                     }
                 }
             }
+            if bodyCount == 0 {
+                let bodyPrefix = data.prefix(16)
+                    .map { String(format: "%02x", $0) }
+                    .joined(separator: " ")
+                logLegacyMedia(
+                    traceID,
+                    "first body bytes count=\(data.count) hex=\(bodyPrefix)."
+                )
+            }
             try file.write(contentsOf: data)
             bodyCount += data.count
 
@@ -1037,6 +1049,15 @@ private enum LegacyLumixMediaDownloader {
             }
 
             let chunk = Data(buffer.prefix(count))
+            if receiveCount == 1 {
+                let responsePrefix = String(decoding: chunk.prefix(80), as: UTF8.self)
+                    .replacingOccurrences(of: "\r", with: "\\r")
+                    .replacingOccurrences(of: "\n", with: "\\n")
+                logLegacyMedia(
+                    traceID,
+                    "first response bytes count=\(chunk.count) prefix=\(responsePrefix)."
+                )
+            }
             if !parsedHeaders {
                 received.append(chunk)
                 guard let boundary = received.range(of: Data("\r\n\r\n".utf8)) else {
@@ -1095,6 +1116,7 @@ private enum LegacyLumixMediaDownloader {
             )
         }
 
+        try operation.checkCancellation()
         keepFile = true
         return destination
     }
@@ -1156,17 +1178,30 @@ private enum LegacyLumixMediaDownloader {
         traceID: String
     ) throws {
         let originalFlags = fcntl(fileDescriptor, F_GETFL, 0)
+        let getFlagsError = originalFlags >= 0 ? 0 : errno
+        logLegacyMedia(traceID, "fcntl F_GETFL result=\(originalFlags) errno=\(getFlagsError).")
         guard originalFlags >= 0 else {
-            throw POSIXDownloadError("fcntl F_GETFL", errno)
+            throw POSIXDownloadError("fcntl F_GETFL", getFlagsError)
         }
-        guard fcntl(fileDescriptor, F_SETFL, originalFlags | O_NONBLOCK) == 0 else {
-            throw POSIXDownloadError("fcntl F_SETFL", errno)
+        let nonblockingResult = fcntl(fileDescriptor, F_SETFL, originalFlags | O_NONBLOCK)
+        let nonblockingError = nonblockingResult == 0 ? 0 : errno
+        logLegacyMedia(
+            traceID,
+            "fcntl F_SETFL O_NONBLOCK result=\(nonblockingResult) errno=\(nonblockingError)."
+        )
+        guard nonblockingResult == 0 else {
+            throw POSIXDownloadError("fcntl F_SETFL O_NONBLOCK", nonblockingError)
         }
-        defer {
+
+        func restoreBlockingMode() throws {
             let restoreResult = fcntl(fileDescriptor, F_SETFL, originalFlags)
-            if restoreResult != 0 {
-                let restoreError = errno
-                logLegacyMedia(traceID, "restore blocking mode failed errno=\(restoreError).")
+            let restoreError = restoreResult == 0 ? 0 : errno
+            logLegacyMedia(
+                traceID,
+                "fcntl restore blocking result=\(restoreResult) errno=\(restoreError)."
+            )
+            guard restoreResult == 0 else {
+                throw POSIXDownloadError("fcntl restore blocking", restoreError)
             }
         }
 
@@ -1178,6 +1213,7 @@ private enum LegacyLumixMediaDownloader {
             }
         }
         if connectResult == 0 {
+            try restoreBlockingMode()
             logLegacyMedia(traceID, "connect complete immediately.")
             return
         }
@@ -1189,21 +1225,27 @@ private enum LegacyLumixMediaDownloader {
             throw POSIXDownloadError("connect", connectError)
         }
 
+        let timeoutNanoseconds = UInt64(max(1, timeoutSeconds)) * 1_000_000_000
         let startedAt = DispatchTime.now().uptimeNanoseconds
-        let deadlineNanoseconds = UInt64(max(1, timeoutSeconds)) * 1_000_000_000
+        let deadline = startedAt > UInt64.max - timeoutNanoseconds
+            ? UInt64.max
+            : startedAt + timeoutNanoseconds
         var descriptor = pollfd(fd: fileDescriptor, events: Int16(POLLOUT), revents: 0)
         var pollCount = 0
 
         while true {
             try operation.checkCancellation()
-            let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt
-            guard elapsed < deadlineNanoseconds else {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else {
                 logLegacyMedia(traceID, "connect deadline expired after \(pollCount) polls.")
                 throw POSIXDownloadError("connect", ETIMEDOUT)
             }
 
+            let remainingNanoseconds = deadline - now
+            let roundedMilliseconds = remainingNanoseconds / 1_000_000
+                + (remainingNanoseconds % 1_000_000 == 0 ? 0 : 1)
             let remainingMilliseconds = Int32(
-                min(UInt64(250), max(UInt64(1), (deadlineNanoseconds - elapsed) / 1_000_000))
+                min(UInt64(250), max(UInt64(1), roundedMilliseconds))
             )
             descriptor.revents = 0
             pollCount += 1
@@ -1239,6 +1281,7 @@ private enum LegacyLumixMediaDownloader {
             }
 
             try operation.checkCancellation()
+            try restoreBlockingMode()
             logLegacyMedia(traceID, "connect complete after \(pollCount) polls.")
             return
         }
@@ -1262,17 +1305,19 @@ private final class LegacyLumixDownloadContinuationGate: @unchecked Sendable {
     private var pendingResult: Result<URL, Error>?
     private var isFinished = false
 
-    func install(_ continuation: CheckedContinuation<URL, Error>) {
+    @discardableResult
+    func install(_ continuation: CheckedContinuation<URL, Error>) -> Bool {
         lock.lock()
         if isFinished {
             let result = pendingResult
             pendingResult = nil
             lock.unlock()
             if let result { continuation.resume(with: result) }
-            return
+            return false
         }
         self.continuation = continuation
         lock.unlock()
+        return true
     }
 
     @discardableResult
