@@ -562,6 +562,19 @@ final class CameraGalleryStore: ObservableObject {
         }
     }
 
+    func waitForMediaLoadsToFinish(maximumWait: Duration = .seconds(8)) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: maximumWait)
+        while await mediaCache.hasInFlightRequests {
+            guard !Task.isCancelled, clock.now < deadline else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                return
+            }
+        }
+    }
+
     @discardableResult
     func inspectOriginalMetadata(
         for photo: LumixPhoto,
@@ -1270,6 +1283,8 @@ private actor LumixMediaCache {
     init(byteLimit: Int) {
         self.byteLimit = max(0, byteLimit)
     }
+
+    var hasInFlightRequests: Bool { !inFlight.isEmpty }
 
     func data(
         for url: URL,

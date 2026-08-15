@@ -549,6 +549,29 @@ private struct CameraPhotoDetailPager: View {
         .task(id: selectedPhotoID) {
             let photo = selectedPhoto
             guard photo.kind == .photo else { return }
+
+            // The GM1S media server can stall when the preview and original JPEG
+            // are requested at the same time. The manual metadata button worked
+            // because people naturally tapped it after the preview appeared. Keep
+            // the automatic flow in that same order, including adjacent page
+            // previews that SwiftUI may start while preparing the pager.
+            if let preview = photo.previewResource {
+                do {
+                    _ = try await store.mediaData(for: preview)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // Metadata can still succeed when only the preview is missing.
+                }
+            }
+            await store.waitForMediaLoadsToFinish()
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, store.metadataInspectionState(for: photo) == nil else { return }
+
             _ = await store.inspectOriginalMetadata(
                 for: photo,
                 onDiagnostic: { message in
