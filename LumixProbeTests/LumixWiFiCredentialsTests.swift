@@ -5,10 +5,10 @@ import XCTest
 final class LumixWiFiCredentialsTests: XCTestCase {
     func testParsesStandardWPAWiFiPayload() throws {
         let credentials = try LumixWiFiCredentials(
-            qrPayload: "WIFI:T:WPA;S:GM1S-90C7E0;P:secret123;;"
+            qrPayload: "WIFI:T:WPA;S:GM1S-DEMO01;P:secret123;;"
         )
 
-        XCTAssertEqual(credentials.ssid, "GM1S-90C7E0")
+        XCTAssertEqual(credentials.ssid, "GM1S-DEMO01")
         XCTAssertEqual(credentials.password, "secret123")
         XCTAssertFalse(credentials.isWEP)
     }
@@ -43,12 +43,12 @@ final class LumixWiFiCredentialsTests: XCTestCase {
     }
 
     func testParsesGM1SPlainPanasonicPayloadWithCRLF() throws {
-        let payload = "CRYPT: PLANE\r\n\r\nSSID: GM1S-90C7E0\r\nPW: 12345678"
+        let payload = "CRYPT: PLANE\r\n\r\nSSID: GM1S-DEMO01\r\nPW: 12345678"
         XCTAssertEqual(payload.utf8.count, 48)
 
         let credentials = try LumixWiFiCredentials(qrPayload: payload)
 
-        XCTAssertEqual(credentials.ssid, "GM1S-90C7E0")
+        XCTAssertEqual(credentials.ssid, "GM1S-DEMO01")
         XCTAssertEqual(credentials.password, "12345678")
         XCTAssertFalse(credentials.isWEP)
     }
@@ -140,7 +140,7 @@ final class LumixWiFiCredentialsTests: XCTestCase {
         try? store.remove()
         defer { try? store.remove() }
         let credentials = try LumixWiFiCredentials(
-            ssid: "GM1S-90C7E0",
+            ssid: "GM1S-DEMO01",
             password: "camera-secret",
             isWEP: false
         )
@@ -149,17 +149,17 @@ final class LumixWiFiCredentialsTests: XCTestCase {
         try store.save(network)
 
         XCTAssertEqual(try store.load(), network)
-        XCTAssertEqual(try store.load()?.credentials.ssid, "GM1S-90C7E0")
+        XCTAssertEqual(try store.load()?.credentials.ssid, "GM1S-DEMO01")
         try store.remove()
         XCTAssertNil(try store.load())
     }
 
     func testGroupsProfilesIntoStableCameraPhoto() throws {
-        let itemID = "1280475"
+        let itemID = "0000001"
         let resources = try ["CAM_RAW", "CAM_TN", "CAM_RAW_JPG", "CAM_LRGTN"].map { profile in
             LumixResource(
                 itemID: itemID,
-                title: "128-0475",
+                title: "000-0001",
                 url: try XCTUnwrap(URL(string: "http://192.168.54.1:50001/\(profile).jpg")),
                 protocolInfo: "http-get:*:image/jpeg;PANASONIC.COM_PN=\(profile)"
             )
@@ -178,9 +178,9 @@ final class LumixWiFiCredentialsTests: XCTestCase {
 
     func testRecognizesGM1SOriginalJPEGProfile() throws {
         let resource = LumixResource(
-            itemID: "1280475",
-            title: "128-0475",
-            url: try XCTUnwrap(URL(string: "http://192.168.54.1:50001/DO1280475.JPG")),
+            itemID: "0000001",
+            title: "000-0001",
+            url: try XCTUnwrap(URL(string: "http://192.168.54.1:50001/DO0000001.JPG")),
             protocolInfo: "http-get:*:application/octet-stream;PANASONIC.COM_PN=CAM_RAW_JPG"
         )
 

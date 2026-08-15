@@ -54,7 +54,7 @@ final class ProbeViewModel: ObservableObject {
         } else if launchArguments.contains("-UITestRememberedCamera") {
             rememberedCameraNetwork = try? RememberedCameraNetwork(
                 credentials: LumixWiFiCredentials(
-                    ssid: "GM1S-90C7E0",
+                    ssid: "GM1S-DEMO01",
                     password: "ui-test-password",
                     isWEP: false
                 )

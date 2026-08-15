@@ -13,7 +13,7 @@ final class LumixProbeUITests: XCTestCase {
         app.launchArguments = ["-UITestRememberedCamera"]
         app.launch()
 
-        XCTAssertTrue(app.buttons["Reconnect to GM1S-90C7E0"].waitForExistence(timeout: 12))
+        XCTAssertTrue(app.buttons["Reconnect to GM1S-DEMO01"].waitForExistence(timeout: 12))
         XCTAssertTrue(app.buttons["Scan another camera QR code"].exists)
         XCTAssertTrue(app.staticTexts["Turn on your camera and reconnect Wi-Fi."].waitForExistence(timeout: 12))
         XCTAssertFalse(app.staticTexts["This camera is remembered securely. iPhone can also Auto-Join it whenever its Wi-Fi is available."].exists)
