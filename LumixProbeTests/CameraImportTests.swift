@@ -14,25 +14,25 @@ final class CameraImportTests: XCTestCase {
 
     func testImportFilenamesIncludeOriginalsButExcludeThumbnails() {
         let photo = LumixPhoto(
-            itemID: "1280475",
-            title: "128-0475",
+            itemID: "0000001",
+            title: "000-0001",
             resources: [
-                resource(filename: "DT1280475.JPG", profile: "CAM_TN", mimeType: "image/jpeg"),
-                resource(filename: "DO1280475.JPG", profile: "CAM_RAW_JPG", mimeType: "image/jpeg"),
-                resource(filename: "DO1280475.RW2", profile: "CAM_RAW", mimeType: "application/octet-stream")
+                resource(filename: "DT0000001.JPG", profile: "CAM_TN", mimeType: "image/jpeg"),
+                resource(filename: "DO0000001.JPG", profile: "CAM_RAW_JPG", mimeType: "image/jpeg"),
+                resource(filename: "DO0000001.RW2", profile: "CAM_RAW", mimeType: "application/octet-stream")
             ]
         )
 
-        XCTAssertEqual(photo.importFilenames, ["DO1280475.JPG", "DO1280475.RW2"])
+        XCTAssertEqual(photo.importFilenames, ["DO0000001.JPG", "DO0000001.RW2"])
     }
 
     func testPhotoPlansExposeJPEGPairedAndRAWImports() throws {
         let photo = LumixPhoto(
-            itemID: "1280475",
-            title: "128-0475",
+            itemID: "0000001",
+            title: "000-0001",
             resources: [
-                resource(filename: "DO1280475.JPG", profile: "CAM_RAW_JPG", mimeType: "image/jpeg"),
-                resource(filename: "DO1280475.RW2", profile: "CAM_RAW", mimeType: "application/octet-stream")
+                resource(filename: "DO0000001.JPG", profile: "CAM_RAW_JPG", mimeType: "image/jpeg"),
+                resource(filename: "DO0000001.RW2", profile: "CAM_RAW", mimeType: "application/octet-stream")
             ]
         )
 
@@ -91,7 +91,7 @@ final class CameraImportTests: XCTestCase {
         let policy = CameraMediaPolicy()
         let mp4 = resource(filename: "P0001.MP4", profile: "CAM_MP4", mimeType: "video/mp4")
         let avchd = resource(
-            filename: "DO00193986570000000001.TS",
+            filename: "DO00000000010000000001.TS",
             profile: "CAM_AVC_TS_HP_1080_60I_AC3",
             mimeType: "video/vnd.dlna.mpeg-tts"
         )
@@ -120,7 +120,7 @@ final class CameraImportTests: XCTestCase {
 
     func testLegacyAVCHDPlaceholderKeepsAdvertisedDLNAURL() throws {
         let placeholder = resource(
-            filename: "DO193986570001.JPG",
+            filename: "DO000000000001.JPG",
             profile: "CAM_AVCHD",
             mimeType: "image/jpeg"
         )
@@ -129,28 +129,28 @@ final class CameraImportTests: XCTestCase {
         XCTAssertTrue(placeholder.isVideo)
         XCTAssertFalse(placeholder.isOriginalJPEG)
         XCTAssertTrue(placeholder.requiresDLNAStreamingRequest)
-        XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO193986570001.JPG")
+        XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO000000000001.JPG")
         XCTAssertEqual(video.kind, .video)
-        XCTAssertEqual(video.displayFilename, "DO193986570001.JPG")
+        XCTAssertEqual(video.displayFilename, "DO000000000001.JPG")
         XCTAssertThrowsError(try video.importPlan(photoMode: .jpeg))
     }
 
     func testGM1AVCHDTransportStreamKeepsAdvertisedDLNAURL() throws {
         let placeholder = resource(
-            filename: "DO00193986570000000001.TS",
+            filename: "DO00000000010000000001.TS",
             profile: "CAM_AVC_TS_HP_1080_50I_AC3",
             mimeType: "video/vnd.dlna.mpeg-tts"
         )
         let video = LumixPhoto(
-            itemID: "00193986570000000001",
-            title: "0019398657-0000000001",
+            itemID: "00000000010000000001",
+            title: "0000000001-0000000001",
             resources: [placeholder]
         )
 
         XCTAssertTrue(placeholder.isVideo)
         XCTAssertTrue(placeholder.requiresDLNAStreamingRequest)
-        XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO00193986570000000001.TS")
-        XCTAssertEqual(video.displayFilename, "DO00193986570000000001.TS")
+        XCTAssertEqual(placeholder.downloadURL.lastPathComponent, "DO00000000010000000001.TS")
+        XCTAssertEqual(video.displayFilename, "DO00000000010000000001.TS")
         XCTAssertThrowsError(try video.importPlan(photoMode: .jpeg)) { error in
             XCTAssertEqual(error as? LumixError, .videoImportNotSupported)
         }
@@ -158,18 +158,18 @@ final class CameraImportTests: XCTestCase {
 
     func testGM1PlaybackPrefersPhoneSizedAVCHDResource() throws {
         let original = resource(
-            filename: "DO00193986570000000001.TS",
+            filename: "DO00000000010000000001.TS",
             profile: "CAM_AVC_TS_HP_1080_50I_AC3",
             mimeType: "video/vnd.dlna.mpeg-tts"
         )
         let phonePlayback = resource(
-            filename: "DO00193986570000000001_LOW.TS",
+            filename: "DO00000000010000000001_LOW.TS",
             profile: "CAM_AVC_TS_HP_360_25P_AAC",
             mimeType: "video/vnd.dlna.mpeg-tts"
         )
         let video = LumixPhoto(
-            itemID: "00193986570000000001",
-            title: "0019398657-0000000001",
+            itemID: "00000000010000000001",
+            title: "0000000001-0000000001",
             resources: [original, phonePlayback]
         )
 
@@ -197,7 +197,7 @@ final class CameraImportTests: XCTestCase {
         """
         let capabilities = CameraCapabilityParser.parse(Data(xml.utf8))
         let playback = resource(
-            filename: "DO00193986570000000001_LOW.TS",
+            filename: "DO00000000010000000001_LOW.TS",
             profile: "CAM_AVC_TS_HP_360_25P_AAC",
             mimeType: "video/vnd.dlna.mpeg-tts"
         )
@@ -249,8 +249,8 @@ final class CameraImportTests: XCTestCase {
     func testDIDLParserPreservesPlaybackMetadataAndDLNAFlags() throws {
         let xml = """
         <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
-          <item id="00193986570000000001">
-            <dc:title>0019398657-0000000001</dc:title>
+          <item id="00000000010000000001">
+            <dc:title>0000000001-0000000001</dc:title>
             <upnp:class>object.item.videoItem</upnp:class>
             <res duration="00:01:02.500" resolution="640x360" size="123456" bitrate="789000" ChapterList="0,10" protocolInfo="http-get:*:video/vnd.dlna.mpeg-tts;PANASONIC.COM_PN=CAM_AVC_TS_HP_360_25P_AAC;DLNA.ORG_OP=01;DLNA.ORG_FLAGS=ABC">http://192.168.54.1:50001/LOW.TS</res>
           </item>
@@ -289,25 +289,25 @@ final class CameraImportTests: XCTestCase {
 
     func testBrowseMetadataSOAPTargetsTheSelectedItem() {
         let body = LumixBrowseSOAP.make(
-            objectID: "00193986570000000001",
+            objectID: "00000000010000000001",
             flag: .metadata,
             start: 0,
             count: 1
         )
 
-        XCTAssertTrue(body.contains("<ObjectID>00193986570000000001</ObjectID>"))
+        XCTAssertTrue(body.contains("<ObjectID>00000000010000000001</ObjectID>"))
         XCTAssertTrue(body.contains("<BrowseFlag>BrowseMetadata</BrowseFlag>"))
         XCTAssertFalse(body.contains("X_FromCP"))
     }
 
     func testGM1AVCHDUsesPanasonicInitialDLNARequestExactly() throws {
         let url = try XCTUnwrap(
-            URL(string: "http://192.168.54.1:50001/DO00193986570000000001.TS")
+            URL(string: "http://192.168.54.1:50001/DO00000000010000000001.TS")
         )
 
         XCTAssertEqual(
             try LumixMediaHTTPRequest.make(for: url, style: .panasonicDLNAInitial),
-            "GET /DO00193986570000000001.TS HTTP/1.1\r\n" +
+            "GET /DO00000000010000000001.TS HTTP/1.1\r\n" +
                 "User-Agent: Panasonic Android/1 DM-CP\r\n" +
                 "Host: 192.168.54.1\r\n\r\n"
         )
@@ -315,7 +315,7 @@ final class CameraImportTests: XCTestCase {
 
     func testPanasonicSeekRequestAddsByteRangeAfterHost() throws {
         let url = try XCTUnwrap(
-            URL(string: "http://192.168.54.1:50001/DO00193986570000000001_LOW.TS")
+            URL(string: "http://192.168.54.1:50001/DO00000000010000000001_LOW.TS")
         )
 
         XCTAssertEqual(
@@ -324,7 +324,7 @@ final class CameraImportTests: XCTestCase {
                 style: .panasonicDLNAInitial,
                 rangeHeader: "bytes=1048576-"
             ),
-            "GET /DO00193986570000000001_LOW.TS HTTP/1.1\r\n" +
+            "GET /DO00000000010000000001_LOW.TS HTTP/1.1\r\n" +
                 "User-Agent: Panasonic Android/1 DM-CP\r\n" +
                 "Host: 192.168.54.1\r\n" +
                 "Range: bytes=1048576-\r\n\r\n"
@@ -360,7 +360,7 @@ final class CameraImportTests: XCTestCase {
     }
 
     func testOrdinaryJPEGKeepsItsAdvertisedDownloadURL() {
-        let jpeg = resource(filename: "DO1280475.JPG", profile: "CAM_ORG", mimeType: "image/jpeg")
+        let jpeg = resource(filename: "DO0000001.JPG", profile: "CAM_ORG", mimeType: "image/jpeg")
 
         XCTAssertFalse(jpeg.isVideo)
         XCTAssertTrue(jpeg.isOriginalJPEG)

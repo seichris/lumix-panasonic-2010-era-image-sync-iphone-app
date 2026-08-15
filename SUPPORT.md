@@ -1,6 +1,6 @@
 # GM1 Sync Support
 
-GM1 Sync is an independent iPhone app for browsing and importing photos from compatible Panasonic Image App-era cameras.
+GM1 Sync is an independent alternative to Panasonic's Image App for browsing and importing photos and supported videos from compatible Image App-era cameras.
 
 ## Connect a camera
 
@@ -10,7 +10,7 @@ On a Panasonic DMC-GM1S choose:
 Wi-Fi → New Connection → Remote Shooting & View → Direct → Image App
 ```
 
-Join the network shown by the camera. That one Image App Direct connection is enough to browse previews and import original JPEGs.
+Join the network shown by the camera. That one Image App Direct connection is enough to browse previews and import supported JPEG, RAW, and MP4 originals.
 
 ## Troubleshooting
 
@@ -21,6 +21,6 @@ Join the network shown by the camera. That one Image App Direct connection is en
 
 ## Contact
 
-For help, bug reports, or camera compatibility results, [open a GitHub issue](https://github.com/seichris/lumix/issues/new).
+For help, bug reports, or camera compatibility results, [open a GitHub issue](https://github.com/seichris/lumix-panasonic-2010-era-image-sync-iphone-app/issues/new).
 
 Panasonic and LUMIX are trademarks of their respective owner. GM1 Sync is independent software and is not affiliated with or endorsed by Panasonic.

@@ -10,7 +10,7 @@ GM1 Sync connects directly to a compatible camera over the camera's local Wi-Fi 
 
 ## Photos
 
-When the user chooses to import an image, GM1 Sync adds the selected original to Apple Photos. The app uses add-only Photos access and does not read the user's existing photo library.
+When the user chooses to import an image or supported video, GM1 Sync adds the selected original to Apple Photos. If the user grants Photos read access, the app compares original filenames with camera filenames to mark items that were imported previously. It does not upload the library or send its contents anywhere.
 
 ## Location
 
@@ -26,4 +26,4 @@ Downloaded temporary files are removed after an import attempt. Location tracks 
 
 ## Contact
 
-For privacy questions or support, open an issue in the [GM1 Sync support repository](https://github.com/seichris/lumix/issues).
+For privacy questions or support, open an issue in the [GM1 Sync support repository](https://github.com/seichris/lumix-panasonic-2010-era-image-sync-iphone-app/issues).

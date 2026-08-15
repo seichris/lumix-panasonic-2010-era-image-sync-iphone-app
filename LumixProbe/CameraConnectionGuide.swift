@@ -115,7 +115,7 @@ struct CameraConnectionGuide: View {
     List {
         CameraConnectionGuide(
             statusMessage: "Join the Wi-Fi network shown by the camera.",
-            rememberedCameraSSID: "GM1S-90C7E0",
+            rememberedCameraSSID: "GM1S-DEMO01",
             reconnect: {},
             scanQRCode: {},
             joinManually: {}
