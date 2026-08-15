@@ -51,7 +51,17 @@ actor DemoCameraGalleryClient: CameraGalleryClient {
             url: URL(string: "http://192.168.54.1:50001/DO\(sequence).JPG")!,
             protocolInfo: "http-get:*:image/jpeg;PANASONIC.COM_PN=CAM_ORG"
         )
-        return LumixPhoto(itemID: itemID, title: "Demo scene \(sequence)", resources: [thumbnail, original])
+        let raw = LumixResource(
+            itemID: itemID,
+            title: "Demo scene \(sequence)",
+            url: URL(string: "http://192.168.54.1:50001/DO\(sequence).RW2")!,
+            protocolInfo: "http-get:*:application/octet-stream;PANASONIC.COM_PN=CAM_RAW"
+        )
+        return LumixPhoto(
+            itemID: itemID,
+            title: "Demo scene \(sequence)",
+            resources: [thumbnail, original, raw]
+        )
     }
 
     /// Generates deterministic, clearly synthetic scenery for UI tests and App Store captures.

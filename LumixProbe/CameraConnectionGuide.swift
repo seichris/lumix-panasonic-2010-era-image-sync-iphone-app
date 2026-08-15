@@ -2,29 +2,50 @@ import SwiftUI
 
 struct CameraConnectionGuide: View {
     let statusMessage: String
+    let rememberedCameraSSID: String?
+    let reconnect: () -> Void
     let scanQRCode: () -> Void
     let joinManually: () -> Void
+    @State private var showsConnectionSteps = false
 
     var body: some View {
-        Section("Connect the camera") {
-            connectionStep(
-                number: 1,
-                title: "Enable the camera Wi-Fi",
-                detail: "On the camera choose Wi-Fi → New Connection → Remote Shooting & View. Leave its QR code on screen."
-            )
+        Section {
+            if showsConnectionSteps {
+                connectionStep(
+                    number: 1,
+                    title: "Enable the camera Wi-Fi",
+                    detail: "On the camera choose Wi-Fi → New Connection → Remote Shooting & View."
+                )
 
-            connectionStep(
-                number: 2,
-                title: "Join from this iPhone",
-                detail: "Scan the camera QR code below, or manually join the SSID shown by the camera in iPhone Settings."
-            )
-
-            Button(action: scanQRCode) {
-                Label("Scan camera QR code", systemImage: "qrcode.viewfinder")
-                    .frame(maxWidth: .infinity)
+                connectionStep(
+                    number: 2,
+                    title: "Join from this iPhone",
+                    detail: "Connect to the camera Wi-Fi by scanning the QR code, or manually."
+                )
             }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("scan-camera-qr-code")
+
+            if let rememberedCameraSSID {
+                Button(action: reconnect) {
+                    Label("Reconnect to \(rememberedCameraSSID)", systemImage: "wifi")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("reconnect-remembered-camera")
+
+                Button(action: scanQRCode) {
+                    Label("Scan another camera QR code", systemImage: "qrcode.viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("scan-camera-qr-code")
+            } else {
+                Button(action: scanQRCode) {
+                    Label("Scan camera QR code", systemImage: "qrcode.viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("scan-camera-qr-code")
+            }
 
             Button("Enter network details", action: joinManually)
                 .accessibilityIdentifier("join-camera-wifi-manually")
@@ -32,6 +53,22 @@ struct CameraConnectionGuide: View {
             Label(statusMessage, systemImage: "wifi.exclamationmark")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        } header: {
+            HStack {
+                Text("Connect the camera")
+                Spacer()
+                Button {
+                    withAnimation { showsConnectionSteps.toggle() }
+                } label: {
+                    Image(systemName: showsConnectionSteps ? "questionmark.circle.fill" : "questionmark.circle")
+                        .imageScale(.large)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(showsConnectionSteps ? "Hide connection steps" : "Show connection steps")
+                .accessibilityIdentifier("camera-connection-help")
+            }
         }
     }
 
@@ -58,6 +95,8 @@ struct CameraConnectionGuide: View {
     List {
         CameraConnectionGuide(
             statusMessage: "Join the Wi-Fi network shown by the camera.",
+            rememberedCameraSSID: "GM1S-90C7E0",
+            reconnect: {},
             scanQRCode: {},
             joinManually: {}
         )

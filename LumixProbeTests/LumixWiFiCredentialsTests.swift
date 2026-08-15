@@ -42,6 +42,46 @@ final class LumixWiFiCredentialsTests: XCTestCase {
         XCTAssertTrue(credentials.isWEP)
     }
 
+    func testParsesGM1SPlainPanasonicPayloadWithCRLF() throws {
+        let payload = "CRYPT: PLANE\r\n\r\nSSID: GM1S-90C7E0\r\nPW: 12345678"
+        XCTAssertEqual(payload.utf8.count, 48)
+
+        let credentials = try LumixWiFiCredentials(qrPayload: payload)
+
+        XCTAssertEqual(credentials.ssid, "GM1S-90C7E0")
+        XCTAssertEqual(credentials.password, "12345678")
+        XCTAssertFalse(credentials.isWEP)
+    }
+
+    func testParsesPanasonicPayloadWithModelAndOpenNetwork() throws {
+        let credentials = try LumixWiFiCredentials(
+            qrPayload: "MDL: GM1S\nCRYPT: PLANE\n\nSSID: GM1S-OPEN\n"
+        )
+
+        XCTAssertEqual(credentials.ssid, "GM1S-OPEN")
+        XCTAssertNil(credentials.password)
+        XCTAssertFalse(credentials.isWEP)
+    }
+
+    func testParsesCompactLegacyPanasonicPayload() throws {
+        let credentials = try LumixWiFiCredentials(
+            qrPayload: "PASS:camera-secret SSID:GM1S-LEGACY"
+        )
+
+        XCTAssertEqual(credentials.ssid, "GM1S-LEGACY")
+        XCTAssertEqual(credentials.password, "camera-secret")
+        XCTAssertFalse(credentials.isWEP)
+    }
+
+    func testRejectsEncryptedPanasonicPayloadWithoutExposingItsContents() {
+        let payload = "MDL: GM1S\nCRYPT: AES\n\nvery-secret-body"
+
+        XCTAssertThrowsError(try LumixWiFiCredentials(qrPayload: payload)) { error in
+            XCTAssertFalse(error.localizedDescription.contains("very-secret-body"))
+            XCTAssertTrue(error.localizedDescription.contains("reference"))
+        }
+    }
+
     func testRejectsUnknownPayloadWithoutExposingItsContents() {
         XCTAssertThrowsError(try LumixWiFiCredentials(qrPayload: "PANASONIC-PROPRIETARY")) { error in
             XCTAssertFalse(error.localizedDescription.contains("PANASONIC-PROPRIETARY"))
@@ -90,6 +130,28 @@ final class LumixWiFiCredentialsTests: XCTestCase {
 
         XCTAssertEqual(credentials.ssid, "GM1S-MANUAL")
         XCTAssertNil(credentials.password)
+    }
+
+    func testRememberedCameraNetworkRoundTripsThroughKeychain() throws {
+        let store = KeychainCameraNetworkStore(
+            service: "com.web3.gm1sync.tests.\(UUID().uuidString)",
+            account: "remembered-camera"
+        )
+        try? store.remove()
+        defer { try? store.remove() }
+        let credentials = try LumixWiFiCredentials(
+            ssid: "GM1S-90C7E0",
+            password: "camera-secret",
+            isWEP: false
+        )
+        let network = RememberedCameraNetwork(credentials: credentials)
+
+        try store.save(network)
+
+        XCTAssertEqual(try store.load(), network)
+        XCTAssertEqual(try store.load()?.credentials.ssid, "GM1S-90C7E0")
+        try store.remove()
+        XCTAssertNil(try store.load())
     }
 
     func testGroupsProfilesIntoStableCameraPhoto() throws {

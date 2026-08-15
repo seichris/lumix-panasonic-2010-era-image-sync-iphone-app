@@ -8,25 +8,33 @@ struct DownloadedPhoto: Equatable, Sendable {
 
 protocol CameraGalleryClient: Sendable {
     func prepareForBrowsing() async throws -> Int
+    func fetchCapabilities() async throws -> CameraCapabilities
     func browsePhotos(start: Int, count: Int) async throws -> LumixPhotoPage
+    func browseMetadata(itemID: String) async throws -> LumixPhoto
     func downloadJPEGData(_ resource: LumixResource) async throws -> Data
     func download(_ resource: LumixResource) async throws -> URL
+    func makeAVCHDPlaybackSession(
+        for resource: LumixResource,
+        availableResources: [LumixResource]
+    ) async throws -> any CameraPlaybackSession
 }
 
 extension LumixClient: CameraGalleryClient {}
 
-protocol CameraPhotoImporting: Sendable {
-    func save(_ photo: DownloadedPhoto, geotag: GeotagMatch?) async throws
-}
+extension CameraGalleryClient {
+    func fetchCapabilities() async throws -> CameraCapabilities {
+        CameraCapabilities(model: nil, version: nil, date: nil, entries: [])
+    }
 
-struct SystemCameraPhotoImporter: CameraPhotoImporting {
-    func save(_ photo: DownloadedPhoto, geotag: GeotagMatch?) async throws {
-        try await PhotosOriginalImporter.save(
-            fileURL: photo.fileURL,
-            originalFilename: photo.originalFilename,
-            captureDate: photo.captureDate,
-            location: geotag?.location
-        )
+    func browseMetadata(itemID: String) async throws -> LumixPhoto {
+        throw LumixError.missingBrowseResult
+    }
+
+    func makeAVCHDPlaybackSession(
+        for resource: LumixResource,
+        availableResources: [LumixResource]
+    ) async throws -> any CameraPlaybackSession {
+        throw LumixError.videoPlaybackNotSupported
     }
 }
 
@@ -42,11 +50,16 @@ enum CameraPhotoImportState: Equatable {
     case downloading
     case saving
     case saved
-    case failed(String)
+    case failed(CameraImportFailure)
 
     var isWorking: Bool {
         self == .downloading || self == .saving
     }
+}
+
+struct CameraImportFailure: Equatable, Sendable {
+    let filename: String
+    let message: String
 }
 
 struct CameraBatchProgress: Equatable {
@@ -60,6 +73,8 @@ struct CameraBatchProgress: Equatable {
         guard total > 0 else { return 0 }
         return Double(completed) / Double(total)
     }
+
+    var attempted: Int { saved + failed }
 }
 
 @MainActor
@@ -73,6 +88,8 @@ final class CameraGalleryStore: ObservableObject {
     @Published private(set) var importStates: [LumixPhoto.ID: CameraPhotoImportState] = [:]
     @Published private(set) var batchProgress: CameraBatchProgress?
     @Published private(set) var isImporting = false
+    @Published private(set) var importHistory: [String: CameraImportHistoryRecord] = [:]
+    @Published private(set) var capabilities: CameraCapabilities?
 
     private struct PageRequest: Equatable {
         let start: Int
@@ -80,8 +97,10 @@ final class CameraGalleryStore: ObservableObject {
     }
 
     private let clientProvider: @MainActor () -> any CameraGalleryClient
+    private let sourceIdentifierProvider: @MainActor () -> String
     private var client: any CameraGalleryClient
-    private let importer: any CameraPhotoImporting
+    private let importer: any CameraMediaImporting
+    private let importHistoryStore: any CameraImportHistoryStoring
     private let mediaCache: LumixMediaCache
     private let pageSize: Int
     private var nextPageRequest: PageRequest?
@@ -97,28 +116,38 @@ final class CameraGalleryStore: ObservableObject {
 
     init(
         client: any CameraGalleryClient = LumixClient(),
-        importer: any CameraPhotoImporting = SystemCameraPhotoImporter(),
+        importer: any CameraMediaImporting = SystemCameraMediaImporter(),
+        importHistoryStore: any CameraImportHistoryStoring = UserDefaultsCameraImportHistoryStore(),
+        sourceIdentifier: String = "camera",
         pageSize: Int = 20,
         mediaCacheByteLimit: Int = 24 * 1024 * 1024
     ) {
         clientProvider = { client }
+        sourceIdentifierProvider = { sourceIdentifier }
         self.client = client
         self.importer = importer
+        self.importHistoryStore = importHistoryStore
         self.pageSize = max(1, pageSize)
         mediaCache = LumixMediaCache(byteLimit: mediaCacheByteLimit)
+        loadImportHistory()
     }
 
     init(
         clientProvider: @escaping @MainActor () -> any CameraGalleryClient,
-        importer: any CameraPhotoImporting = SystemCameraPhotoImporter(),
+        sourceIdentifierProvider: @escaping @MainActor () -> String = { "camera" },
+        importer: any CameraMediaImporting = SystemCameraMediaImporter(),
+        importHistoryStore: any CameraImportHistoryStoring = UserDefaultsCameraImportHistoryStore(),
         pageSize: Int = 20,
         mediaCacheByteLimit: Int = 24 * 1024 * 1024
     ) {
         self.clientProvider = clientProvider
+        self.sourceIdentifierProvider = sourceIdentifierProvider
         client = clientProvider()
         self.importer = importer
+        self.importHistoryStore = importHistoryStore
         self.pageSize = max(1, pageSize)
         mediaCache = LumixMediaCache(byteLimit: mediaCacheByteLimit)
+        loadImportHistory()
     }
 
     init(
@@ -128,8 +157,10 @@ final class CameraGalleryStore: ObservableObject {
     ) {
         let previewClient = DemoCameraGalleryClient(total: max(totalCount, photos.count))
         clientProvider = { previewClient }
+        sourceIdentifierProvider = { "preview-camera" }
         client = previewClient
-        importer = SystemCameraPhotoImporter()
+        importer = SystemCameraMediaImporter()
+        importHistoryStore = InMemoryCameraImportHistoryStore()
         pageSize = 20
         mediaCache = LumixMediaCache(byteLimit: 1 * 1024 * 1024)
         phase = previewPhase
@@ -139,8 +170,42 @@ final class CameraGalleryStore: ObservableObject {
 
     var canLoadMore: Bool { nextPageRequest != nil }
 
+    var hasCompleteMediaCounts: Bool {
+        phase == .loaded && !canLoadMore && !isLoadingNextPage && paginationError == nil
+    }
+
+    var imageCount: Int { photos.lazy.filter { $0.kind == .photo }.count }
+    var videoCount: Int { photos.lazy.filter { $0.kind == .video }.count }
+
+    var failedPhotos: [LumixPhoto] {
+        photos.filter { photo in
+            guard case .failed = importStates[photo.id] else { return false }
+            return true
+        }
+    }
+
     var selectedPhotos: [LumixPhoto] {
         photos.filter { selectedPhotoIDs.contains($0.id) }
+    }
+
+    private var mediaPolicy: CameraMediaPolicy {
+        CameraMediaPolicy(capabilities: capabilities)
+    }
+
+    func importHistoryRecord(for photo: LumixPhoto) -> CameraImportHistoryRecord? {
+        importHistory[historyKey(for: photo)]
+    }
+
+    func isPreviouslyImported(_ photo: LumixPhoto) -> Bool {
+        importHistoryRecord(for: photo) != nil
+    }
+
+    func canImportSelected(using mode: CameraPhotoImportMode) -> Bool {
+        !selectedPhotos.isEmpty && selectedPhotos.allSatisfy { canImport($0, using: mode) }
+    }
+
+    func canImport(_ photo: LumixPhoto, using mode: CameraPhotoImportMode = .jpeg) -> Bool {
+        mediaPolicy.supportsImport(of: photo, photoMode: mode)
     }
 
     func loadInitial() async {
@@ -159,6 +224,7 @@ final class CameraGalleryStore: ObservableObject {
         nextPageRequest = nil
         photos = []
         totalCount = 0
+        capabilities = nil
         selectedPhotoIDs = []
         let client = self.client
 
@@ -166,6 +232,18 @@ final class CameraGalleryStore: ObservableObject {
             guard let self else { return }
             do {
                 let reportedTotal = try await client.prepareForBrowsing()
+                try Task.checkCancellation()
+                guard loadGeneration == generation else { return }
+
+                do {
+                    capabilities = try await client.fetchCapabilities()
+                    print("[GM1Sync] Loaded \(capabilities?.entries.count ?? 0) camera media capability entries.")
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    capabilities = nil
+                    print("[GM1Sync] Camera capabilities unavailable: \(error.localizedDescription)")
+                }
                 try Task.checkCancellation()
                 guard loadGeneration == generation else { return }
 
@@ -262,6 +340,12 @@ final class CameraGalleryStore: ObservableObject {
         }
     }
 
+    func reloadAllMedia() async {
+        await loadInitial()
+        guard phase == .loaded else { return }
+        await loadAllPages()
+    }
+
     func cancelLoading() {
         loadGeneration = UUID()
         initialLoadTask?.cancel()
@@ -304,6 +388,7 @@ final class CameraGalleryStore: ObservableObject {
         phase = .idle
         photos = []
         totalCount = 0
+        capabilities = nil
         nextPageRequest = nil
         paginationError = nil
         selectedPhotoIDs = []
@@ -319,32 +404,106 @@ final class CameraGalleryStore: ObservableObject {
         }
     }
 
+    func videoPlaybackSession(_ photo: LumixPhoto) async throws -> any CameraPlaybackSession {
+        var playbackPhoto = photo
+        if photo.videoPlaybackResource?.isAVCHD == true, let itemID = photo.itemID {
+            do {
+                playbackPhoto = try await client.browseMetadata(itemID: itemID)
+                print("[GM1Sync] Loaded AVCHD metadata with \(playbackPhoto.resources.count) resources for item \(itemID).")
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                print("[GM1Sync] AVCHD BrowseMetadata failed; using direct resource set: \(error.localizedDescription)")
+            }
+        }
+
+        guard let resource = playbackPhoto.videoPlaybackResource else { throw LumixError.noVideo }
+        guard mediaPolicy.supportsPlayback(of: resource) else {
+            throw LumixError.videoPlaybackNotSupported
+        }
+        print(
+            "[GM1Sync] Preparing playback resource item=\(photo.itemID ?? "unknown") " +
+                "role=\(resource.role.rawValue) profile=\(resource.profileName ?? "unknown") " +
+                "url=\(resource.url.absoluteString)"
+        )
+        let client = self.client
+        if resource.isAVCHD {
+            return try await client.makeAVCHDPlaybackSession(
+                for: resource,
+                availableResources: playbackPhoto.resources
+            )
+        }
+        return DownloadedCameraPlaybackSession {
+            try await client.download(resource)
+        }
+    }
+
     func toggleSelection(_ photo: LumixPhoto) {
         if selectedPhotoIDs.contains(photo.id) {
             selectedPhotoIDs.remove(photo.id)
         } else {
+            guard isSelectableForImport(photo) else { return }
             selectedPhotoIDs.insert(photo.id)
         }
     }
 
     func selectNewest(_ count: Int) {
-        selectedPhotoIDs = Set(photos.prefix(max(0, count)).map(\.id))
+        selectedPhotoIDs = Set(photos.filter(isSelectableForImport).prefix(max(0, count)).map(\.id))
+    }
+
+    func selectAll() {
+        selectedPhotoIDs = Set(photos.filter(isSelectableForImport).map(\.id))
+    }
+
+    private func isSelectableForImport(_ photo: LumixPhoto) -> Bool {
+        if photo.kind == .video { return mediaPolicy.importResource(for: photo) != nil }
+        return photo.isImportable
+    }
+
+    @discardableResult
+    func selectUnimported() -> Int {
+        selectedPhotoIDs = Set(
+            photos
+                .filter { isSelectableForImport($0) && !isPreviouslyImported($0) }
+                .map(\.id)
+        )
+        return selectedPhotoIDs.count
     }
 
     func clearSelection() {
         selectedPhotoIDs = []
     }
 
-    func importSelected(samples: [LocationSample], cameraClockOffset: TimeInterval) async {
-        await importPhotos(selectedPhotos, samples: samples, cameraClockOffset: cameraClockOffset)
+    func importSelected(
+        photoMode: CameraPhotoImportMode = .jpeg,
+        samples: [LocationSample],
+        cameraClockOffset: TimeInterval
+    ) async {
+        await importPhotos(
+            selectedPhotos,
+            photoMode: photoMode,
+            samples: samples,
+            cameraClockOffset: cameraClockOffset
+        )
     }
 
-    func importPhoto(_ photo: LumixPhoto, samples: [LocationSample], cameraClockOffset: TimeInterval) async {
-        await importPhotos([photo], samples: samples, cameraClockOffset: cameraClockOffset)
+    func importPhoto(
+        _ photo: LumixPhoto,
+        photoMode: CameraPhotoImportMode = .jpeg,
+        samples: [LocationSample],
+        cameraClockOffset: TimeInterval
+    ) async {
+        await importPhotos(
+            [photo],
+            photoMode: photoMode,
+            samples: samples,
+            cameraClockOffset: cameraClockOffset
+        )
     }
 
     private func importPhotos(
         _ photosToImport: [LumixPhoto],
+        photoMode: CameraPhotoImportMode,
         samples: [LocationSample],
         cameraClockOffset: TimeInterval
     ) async {
@@ -363,6 +522,7 @@ final class CameraGalleryStore: ObservableObject {
             guard let self else { return }
             await performImport(
                 photosToImport,
+                photoMode: photoMode,
                 samples: samples,
                 cameraClockOffset: cameraClockOffset,
                 client: client
@@ -381,6 +541,7 @@ final class CameraGalleryStore: ObservableObject {
 
     private func performImport(
         _ photosToImport: [LumixPhoto],
+        photoMode: CameraPhotoImportMode,
         samples: [LocationSample],
         cameraClockOffset: TimeInterval,
         client: any CameraGalleryClient
@@ -388,20 +549,43 @@ final class CameraGalleryStore: ObservableObject {
         for photo in photosToImport {
             if Task.isCancelled { break }
             batchProgress?.currentTitle = photo.title
-            var temporaryFile: URL?
+            var temporaryFiles: [URL] = []
+            var failingFilename = photo.displayFilename
 
             do {
-                guard let resource = photo.originalJPEGResource else { throw LumixError.noOriginalJPEG }
+                let plan = try photo.importPlan(photoMode: photoMode, policy: mediaPolicy)
                 importStates[photo.id] = .downloading
-                let fileURL = try await client.download(resource)
-                temporaryFile = fileURL
-                try Task.checkCancellation()
-                let downloadedPhoto = DownloadedPhoto(
-                    fileURL: fileURL,
-                    captureDate: PhotoCaptureDateReader.read(from: fileURL),
-                    originalFilename: resource.url.lastPathComponent.nonEmpty ?? "lumix-original.jpg"
+                var downloadedResources: [DownloadedCameraMedia.Resource] = []
+
+                for plannedResource in plan.resources {
+                    failingFilename = plannedResource.cameraResource.downloadURL.lastPathComponent.nonEmpty
+                        ?? photo.displayFilename
+                    let fileURL = try await client.download(plannedResource.cameraResource)
+                    temporaryFiles.append(fileURL)
+                    downloadedResources.append(
+                        DownloadedCameraMedia.Resource(
+                            fileURL: fileURL,
+                            originalFilename: plannedResource.cameraResource.downloadURL.lastPathComponent.nonEmpty
+                                ?? "lumix-media",
+                            role: plannedResource.role
+                        )
+                    )
+                    try Task.checkCancellation()
+                }
+
+                let captureDate = downloadedResources
+                    .lazy
+                    .compactMap { PhotoCaptureDateReader.read(from: $0.fileURL) }
+                    .first
+                let downloadedMedia = DownloadedCameraMedia(
+                    variant: plan.variant,
+                    resources: downloadedResources,
+                    captureDate: captureDate
                 )
-                let geotag = downloadedPhoto.captureDate.flatMap {
+                failingFilename = downloadedResources
+                    .map(\.originalFilename)
+                    .joined(separator: " + ")
+                let geotag = captureDate.flatMap {
                     LocationTrackMatcher.match(
                         captureDate: $0,
                         samples: samples,
@@ -410,25 +594,63 @@ final class CameraGalleryStore: ObservableObject {
                 }
 
                 importStates[photo.id] = .saving
-                try await importer.save(downloadedPhoto, geotag: geotag)
+                try await importer.save(downloadedMedia, geotag: geotag)
                 try Task.checkCancellation()
                 importStates[photo.id] = .saved
+                recordImport(of: photo, variant: plan.variant)
                 batchProgress?.saved += 1
                 selectedPhotoIDs.remove(photo.id)
-                print("[GM1Sync] Imported camera item \(photo.itemID ?? "unknown") to Photos.")
+                print(
+                    "[GM1Sync] Imported camera item \(photo.itemID ?? "unknown") " +
+                        "to Photos as \(plan.variant.title)."
+                )
             } catch is CancellationError {
-                importStates[photo.id] = .failed("Import cancelled")
-                if let temporaryFile { try? FileManager.default.removeItem(at: temporaryFile) }
+                importStates[photo.id] = .failed(
+                    CameraImportFailure(filename: failingFilename, message: "Import cancelled")
+                )
+                for fileURL in temporaryFiles { try? FileManager.default.removeItem(at: fileURL) }
                 break
             } catch {
-                importStates[photo.id] = .failed(error.localizedDescription)
+                importStates[photo.id] = .failed(
+                    CameraImportFailure(filename: failingFilename, message: error.localizedDescription)
+                )
                 batchProgress?.failed += 1
                 print("[GM1Sync] Import failed for camera item \(photo.itemID ?? "unknown"): \(error.localizedDescription)")
             }
 
-            if let temporaryFile { try? FileManager.default.removeItem(at: temporaryFile) }
+            for fileURL in temporaryFiles { try? FileManager.default.removeItem(at: fileURL) }
             batchProgress?.completed += 1
         }
+    }
+
+    private func loadImportHistory() {
+        do {
+            importHistory = try importHistoryStore.load()
+        } catch {
+            importHistory = [:]
+            print("[GM1Sync] Import history could not be loaded: \(error.localizedDescription)")
+        }
+    }
+
+    private func recordImport(of photo: LumixPhoto, variant: CameraImportVariant) {
+        let key = historyKey(for: photo)
+        var record = importHistory[key] ?? CameraImportHistoryRecord(
+            variants: [],
+            lastImportedAt: .now
+        )
+        record.variants.insert(variant)
+        record.lastImportedAt = .now
+        importHistory[key] = record
+
+        do {
+            try importHistoryStore.save(importHistory)
+        } catch {
+            print("[GM1Sync] Import history could not be saved: \(error.localizedDescription)")
+        }
+    }
+
+    private func historyKey(for photo: LumixPhoto) -> String {
+        [sourceIdentifierProvider(), photo.importIdentity].joined(separator: "|")
     }
 
     private func previousPage(before start: Int) -> PageRequest? {
@@ -441,6 +663,15 @@ final class CameraGalleryStore: ObservableObject {
         var existingIDs = Set(photos.map(\.id))
         for photo in newPhotos where existingIDs.insert(photo.id).inserted {
             photos.append(photo)
+            if photo.kind == .video {
+                for resource in photo.resources where resource.isVideo {
+                    print(
+                        "[GM1Sync] Video resource item=\(photo.itemID ?? "unknown") " +
+                            "profile=\(resource.profileName ?? "unknown") " +
+                            "mime=\(resource.mimeType ?? "unknown") url=\(resource.url.absoluteString)"
+                    )
+                }
+            }
         }
         selectedPhotoIDs.formIntersection(existingIDs)
     }

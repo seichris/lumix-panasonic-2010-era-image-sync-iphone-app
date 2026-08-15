@@ -6,6 +6,7 @@ struct ContentView: View {
     @StateObject private var model: ProbeViewModel
     @StateObject private var galleryStore = CameraGalleryStore()
     @State private var presentedSheet: ConnectionSheet?
+    @State private var isConfirmingTrackClear = false
 
     init() {
         let model = ProbeViewModel()
@@ -20,6 +21,9 @@ struct ContentView: View {
             _galleryStore = StateObject(
                 wrappedValue: CameraGalleryStore(clientProvider: {
                     LumixClient(host: model.host.trimmingCharacters(in: .whitespacesAndNewlines))
+                }, sourceIdentifierProvider: {
+                    model.rememberedCameraNetwork?.ssid
+                        ?? model.host.trimmingCharacters(in: .whitespacesAndNewlines)
                 })
             )
         }
@@ -35,16 +39,13 @@ struct ContentView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        AppSettingsView(model: model)
-                    } label: {
-                        Label("Settings", systemImage: "gearshape")
+                if model.isCameraConnected {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        settingsLink
                     }
-                    .accessibilityIdentifier("app-settings-link")
                 }
             }
-            .task { await model.refreshConnectionStatus() }
+            .task { await model.refreshConnectionStatus(waitingForRememberedCamera: true) }
             .onChange(of: model.isCameraConnected) { _, isConnected in
                 guard !isConnected else { return }
                 Task { await galleryStore.resetForReconnect() }
@@ -53,8 +54,10 @@ struct ContentView: View {
                 guard phase == .active else { return }
                 Task {
                     if !model.isCameraConnected { await galleryStore.resetForReconnect() }
-                    await model.refreshConnectionStatus()
-                    if model.isCameraConnected { await galleryStore.loadInitial() }
+                    await model.refreshConnectionStatus(waitingForRememberedCamera: true)
+                    if model.isCameraConnected, !galleryStore.isImporting {
+                        await galleryStore.reloadAllMedia()
+                    }
                 }
             }
             .sheet(item: $presentedSheet) { destination in
@@ -75,53 +78,90 @@ struct ContentView: View {
                     }
                 }
             }
+            .alert("Clear location track?", isPresented: $isConfirmingTrackClear) {
+                Button("Clear", role: .destructive) { model.locationLogger.clear() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Saved location samples will be removed from this iPhone. Downloaded camera originals are not affected.")
+            }
         }
+    }
+
+    private var settingsLink: some View {
+        NavigationLink {
+            AppSettingsView(model: model) {
+                Task {
+                    await galleryStore.resetForReconnect()
+                    await model.refreshConnectionStatus()
+                }
+            }
+        } label: {
+            Label("Settings", systemImage: "gearshape")
+        }
+        .accessibilityIdentifier("app-settings-link")
     }
 
     private var disconnectedHome: some View {
         List {
-            Section {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("GM1 Sync")
+                            .font(.largeTitle.bold())
+                        Text("& other 2010-era Lumix cams")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("landing-title")
+
+                    Spacer(minLength: 8)
+
+                    settingsLink
+                        .labelStyle(.iconOnly)
+                        .font(.title3)
+                }
+
                 Text("An independent alternative to Panasonic Image App for compatible older cameras.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("image-app-alternative-text")
             }
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
 
             CameraConnectionGuide(
                 statusMessage: model.connectionStatusMessage,
+                rememberedCameraSSID: model.rememberedCameraNetwork?.ssid,
+                reconnect: {
+                    Task {
+                        await galleryStore.resetForReconnect()
+                        await model.reconnectToRememberedCamera()
+                    }
+                },
                 scanQRCode: { presentedSheet = .qrScanner },
                 joinManually: { presentedSheet = .manualJoin }
             )
 
-            Section("Camera") {
-                TextField("Camera IP", text: $model.host)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.numbersAndPunctuation)
-                Button("Check connection") {
-                    Task {
-                        await galleryStore.resetForReconnect()
-                        await model.refreshConnectionStatus()
-                    }
-                }
-                .accessibilityIdentifier("check-camera-connection")
-                Text("The GM1S normally uses 192.168.54.1 in Image App Direct mode.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Need help?") {
-                NavigationLink("Connection and app settings") {
-                    AppSettingsView(model: model)
-                }
-            }
+            GeotaggingControls(
+                logger: model.locationLogger,
+                cameraClockOffsetMinutes: $model.cameraClockOffsetMinutes,
+                clearTrack: { isConfirmingTrackClear = true }
+            )
         }
-        .navigationTitle("GM1 Sync")
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
+        .contentMargins(.top, 0, for: .scrollContent)
     }
 }
 
 private struct AppSettingsView: View {
     @ObservedObject var model: ProbeViewModel
-    @State private var isConfirmingTrackClear = false
+    let checkCameraConnection: () -> Void
+    @State private var isConfirmingCameraForget = false
 
     var body: some View {
         List {
@@ -134,13 +174,27 @@ private struct AppSettingsView: View {
                 Text("Use one camera mode: Remote Shooting & View → Direct → Image App. Browsing and original downloads do not require a second Wi-Fi destination.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if let rememberedCameraSSID = model.rememberedCameraNetwork?.ssid {
+                    LabeledContent("Remembered camera", value: rememberedCameraSSID)
+                    Button("Forget \(rememberedCameraSSID)", role: .destructive) {
+                        isConfirmingCameraForget = true
+                    }
+                    .accessibilityIdentifier("forget-remembered-camera")
+                }
             }
 
-            GeotaggingControls(
-                logger: model.locationLogger,
-                cameraClockOffsetMinutes: $model.cameraClockOffsetMinutes,
-                clearTrack: { isConfirmingTrackClear = true }
-            )
+            Section("Camera") {
+                TextField("Camera IP", text: $model.host)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.numbersAndPunctuation)
+                    .accessibilityIdentifier("camera-ip-address")
+                Button("Check connection", action: checkCameraConnection)
+                    .accessibilityIdentifier("check-camera-connection")
+                Text("The GM1S normally uses 192.168.54.1 in Image App Direct mode.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             Section("About") {
                 NavigationLink {
@@ -172,14 +226,30 @@ private struct AppSettingsView: View {
                 }
                 .accessibilityIdentifier("camera-diagnostics-link")
             }
+
+            Section {
+                Text(appVersionText)
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .accessibilityIdentifier("app-version")
+            }
         }
         .navigationTitle("Settings")
-        .alert("Clear location track?", isPresented: $isConfirmingTrackClear) {
-            Button("Clear", role: .destructive) { model.locationLogger.clear() }
+        .alert("Forget remembered camera?", isPresented: $isConfirmingCameraForget) {
+            Button("Forget", role: .destructive) { model.forgetRememberedCamera() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Saved location samples will be removed from this iPhone. Downloaded camera originals are not affected.")
+            Text("GM1 Sync will remove the saved Wi-Fi password and its Auto-Join configuration. You will need to scan the camera QR code again.")
         }
+    }
+
+    private var appVersionText: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return "GM1 Sync · Version \(version) (\(build))"
     }
 }
 
@@ -390,7 +460,7 @@ private struct DownloadedPhotoGeotagPreview: View {
     }
 }
 
-private struct MatchedLocationMap: View {
+struct MatchedLocationMap: View {
     let match: GeotagMatch
 
     var body: some View {
