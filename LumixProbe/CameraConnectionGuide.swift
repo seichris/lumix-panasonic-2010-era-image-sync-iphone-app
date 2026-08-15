@@ -27,31 +27,43 @@ struct CameraConnectionGuide: View {
             if let rememberedCameraSSID {
                 Button(action: reconnect) {
                     Label("Reconnect to \(rememberedCameraSSID)", systemImage: "wifi")
+                        .labelStyle(.titleAndIcon)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .listRowInsets(connectionActionInsets)
                 .accessibilityIdentifier("reconnect-remembered-camera")
 
                 Button(action: scanQRCode) {
                     Label("Scan another camera QR code", systemImage: "qrcode.viewfinder")
+                        .labelStyle(.titleAndIcon)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.large)
+                .listRowInsets(connectionActionInsets)
                 .accessibilityIdentifier("scan-camera-qr-code")
             } else {
                 Button(action: scanQRCode) {
                     Label("Scan camera QR code", systemImage: "qrcode.viewfinder")
+                        .labelStyle(.titleAndIcon)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .listRowInsets(connectionActionInsets)
                 .accessibilityIdentifier("scan-camera-qr-code")
             }
 
             Button(action: joinManually) {
                 Label("Enter wi-fi name and password", systemImage: "keyboard")
+                    .labelStyle(.titleAndIcon)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
+            .controlSize(.large)
+            .listRowInsets(connectionActionInsets)
             .accessibilityIdentifier("join-camera-wifi-manually")
 
             Label(statusMessage, systemImage: "wifi.exclamationmark")
@@ -74,6 +86,10 @@ struct CameraConnectionGuide: View {
                 .accessibilityIdentifier("camera-connection-help")
             }
         }
+    }
+
+    private var connectionActionInsets: EdgeInsets {
+        EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20)
     }
 
     private func connectionStep(number: Int, title: String, detail: String) -> some View {

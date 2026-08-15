@@ -113,8 +113,8 @@ final class ProbeViewModel: ObservableObject {
         }
 
         isCameraConnected = false
-        if let rememberedCameraNetwork {
-            connectionStatusMessage = "Turn on \(rememberedCameraNetwork.ssid), or tap Reconnect."
+        if rememberedCameraNetwork != nil {
+            connectionStatusMessage = "Turn on your camera and reconnect Wi-Fi."
         } else {
             connectionStatusMessage = "Join the Wi-Fi network shown by the camera."
         }
