@@ -97,12 +97,27 @@ struct ContentView: View {
 
     private var disconnectedHome: some View {
         List {
-            Section {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("GM1 Sync")
+                        .font(.largeTitle.bold())
+                    Text("& other 2010-era Lumix cams")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("landing-title")
+
                 Text("An independent alternative to Panasonic Image App for compatible older cameras.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("image-app-alternative-text")
             }
+            .padding(.vertical, 4)
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
 
             CameraConnectionGuide(
                 statusMessage: model.connectionStatusMessage,
@@ -123,7 +138,8 @@ struct ContentView: View {
                 clearTrack: { isConfirmingTrackClear = true }
             )
         }
-        .navigationTitle("GM1 Sync")
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

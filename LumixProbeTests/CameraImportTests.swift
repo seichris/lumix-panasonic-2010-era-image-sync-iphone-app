@@ -64,6 +64,19 @@ final class CameraImportTests: XCTestCase {
         }
     }
 
+    func testPlaybackPolicyAllowsMP4AndRejectsAVCHD() {
+        let policy = CameraMediaPolicy()
+        let mp4 = resource(filename: "P0001.MP4", profile: "CAM_MP4", mimeType: "video/mp4")
+        let avchd = resource(
+            filename: "DO00193986570000000001.TS",
+            profile: "CAM_AVC_TS_HP_1080_60I_AC3",
+            mimeType: "video/vnd.dlna.mpeg-tts"
+        )
+
+        XCTAssertTrue(policy.supportsPlayback(of: mp4))
+        XCTAssertFalse(policy.supportsPlayback(of: avchd))
+    }
+
     func testDIDLParserRecognizesCameraVideoResource() throws {
         let xml = """
         <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">

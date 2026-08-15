@@ -489,7 +489,11 @@ private struct CameraPhotoDetailPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if photo.kind == .video {
-                    CameraVideoPreview(photo: photo, store: store)
+                    if isAVCHDVideo {
+                        CameraAVCHDUnavailablePreview(photo: photo, store: store)
+                    } else {
+                        CameraVideoPreview(photo: photo, store: store)
+                    }
                 } else {
                     CameraMediaImage(
                         resource: photo.previewResource,
@@ -565,7 +569,19 @@ private struct CameraPhotoDetailPage: View {
 
                 importStatus
 
-                if store.canImport(photo, using: importMode) {
+                if isAVCHDVideo {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label("AVCHD unavailable", systemImage: "video.slash")
+                            .font(.headline)
+                        Text("This camera does not make AVCHD videos available for playback or import over Wi-Fi. Record MP4 to play and import videos on iPhone.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityIdentifier("camera-avchd-unavailable")
+                } else if store.canImport(photo, using: importMode) {
                     Button {
                         Task {
                             await store.importPhoto(
@@ -586,7 +602,7 @@ private struct CameraPhotoDetailPage: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Label("Playback only", systemImage: "play.rectangle.on.rectangle")
                             .font(.headline)
-                        Text("This camera does not permit AVCHD copy to iPhone. Record MP4 to import videos.")
+                        Text("This camera does not permit this video to be copied to iPhone.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -604,6 +620,10 @@ private struct CameraPhotoDetailPage: View {
                 importMode = availablePhotoModes.first ?? .jpeg
             }
         }
+    }
+
+    private var isAVCHDVideo: Bool {
+        photo.kind == .video && photo.videoPlaybackResource?.isAVCHD == true
     }
 
     private var importButtonTitle: String {
@@ -635,6 +655,35 @@ private struct CameraPhotoDetailPage: View {
         case nil:
             EmptyView()
         }
+    }
+}
+
+private struct CameraAVCHDUnavailablePreview: View {
+    let photo: LumixPhoto
+    @ObservedObject var store: CameraGalleryStore
+
+    var body: some View {
+        ZStack {
+            Color.black
+            CameraMediaImage(
+                resource: photo.previewResource,
+                placeholderSystemImage: "video",
+                contentMode: .fit
+            ) { resource in
+                try await store.mediaData(for: resource)
+            }
+
+            Label("AVCHD unavailable", systemImage: "video.slash.fill")
+                .font(.headline)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.black.opacity(0.72), in: Capsule())
+        }
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .accessibilityIdentifier("camera-avchd-preview-unavailable")
     }
 }
 
@@ -753,13 +802,7 @@ private struct CameraVideoPreview: View {
             try Task.checkCancellation()
 
             loadingMessage = "Buffering…"
-            let asset = AVURLAsset(url: playbackURL)
-            guard try await asset.load(.isPlayable) else {
-                throw CameraVideoPlaybackError.unsupportedFormat
-            }
-            try Task.checkCancellation()
-
-            let newPlayer = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+            let newPlayer = AVPlayer(playerItem: AVPlayerItem(url: playbackURL))
             player = newPlayer
             isLoading = false
             newPlayer.play()
@@ -796,14 +839,6 @@ private struct CameraVideoPreview: View {
         let playback = activePlayback
         activePlayback = nil
         await playback?.session.stop()
-    }
-}
-
-private enum CameraVideoPlaybackError: LocalizedError {
-    case unsupportedFormat
-
-    var errorDescription: String? {
-        "This camera video format cannot be played by this iPhone."
     }
 }
 

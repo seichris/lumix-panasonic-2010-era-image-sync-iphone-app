@@ -69,6 +69,23 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertEqual(store.videoCount, 2)
     }
 
+    func testMP4PlaybackUsesTheCompletedLocalDownloadUntilSessionStops() async throws {
+        let client = MockGalleryClient(total: 1, videoIndexes: [0])
+        let store = CameraGalleryStore(client: client, importer: RecordingImporter(), pageSize: 1)
+
+        await store.loadInitial()
+        let video = try XCTUnwrap(store.photos.first)
+        let session = try await store.videoPlaybackSession(video)
+        let localURL = try await session.start()
+
+        XCTAssertTrue(localURL.isFileURL)
+        XCTAssertEqual(localURL.pathExtension.uppercased(), "MP4")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: localURL.path))
+
+        await session.stop()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: localURL.path))
+    }
+
     func testSelectAllIncludesEveryImageAndVideo() async {
         let client = MockGalleryClient(total: 5, videoIndexes: [1, 3])
         let store = CameraGalleryStore(client: client, importer: RecordingImporter(), pageSize: 2)

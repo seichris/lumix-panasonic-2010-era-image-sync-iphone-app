@@ -84,7 +84,8 @@ struct CameraMediaPolicy: Hashable, Sendable {
     }
 
     func supportsPlayback(of resource: LumixResource) -> Bool {
-        capabilities?.playbackCapability(for: resource)?.enabled ?? true
+        guard !resource.isAVCHD else { return false }
+        return capabilities?.playbackCapability(for: resource)?.enabled ?? true
     }
 
     private func videoImportPriority(_ resource: LumixResource) -> Int {

@@ -6,20 +6,23 @@ struct CameraConnectionGuide: View {
     let reconnect: () -> Void
     let scanQRCode: () -> Void
     let joinManually: () -> Void
+    @State private var showsConnectionSteps = false
 
     var body: some View {
-        Section("Connect the camera") {
-            connectionStep(
-                number: 1,
-                title: "Enable the camera Wi-Fi",
-                detail: "On the camera choose Wi-Fi → New Connection → Remote Shooting & View. Leave its QR code on screen."
-            )
+        Section {
+            if showsConnectionSteps {
+                connectionStep(
+                    number: 1,
+                    title: "Enable the camera Wi-Fi",
+                    detail: "On the camera choose Wi-Fi → New Connection → Remote Shooting & View."
+                )
 
-            connectionStep(
-                number: 2,
-                title: "Join from this iPhone",
-                detail: connectionDetail
-            )
+                connectionStep(
+                    number: 2,
+                    title: "Join from this iPhone",
+                    detail: "Connect to the camera Wi-Fi by scanning the QR code, or manually."
+                )
+            }
 
             if let rememberedCameraSSID {
                 Button(action: reconnect) {
@@ -50,14 +53,22 @@ struct CameraConnectionGuide: View {
             Label(statusMessage, systemImage: "wifi.exclamationmark")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    private var connectionDetail: String {
-        if let rememberedCameraSSID {
-            "Turn on the camera Wi-Fi. iPhone should Auto-Join \(rememberedCameraSSID); if it does not, reconnect below."
-        } else {
-            "Scan the camera QR code below, or manually join the SSID shown by the camera in iPhone Settings."
+        } header: {
+            HStack {
+                Text("Connect the camera")
+                Spacer()
+                Button {
+                    withAnimation { showsConnectionSteps.toggle() }
+                } label: {
+                    Image(systemName: showsConnectionSteps ? "questionmark.circle.fill" : "questionmark.circle")
+                        .imageScale(.large)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(showsConnectionSteps ? "Hide connection steps" : "Show connection steps")
+                .accessibilityIdentifier("camera-connection-help")
+            }
         }
     }
 

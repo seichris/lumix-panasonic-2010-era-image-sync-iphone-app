@@ -21,8 +21,14 @@ final class LumixProbeUITests: XCTestCase {
     func testDisconnectedGuideQRCodeScannerAndManualFallback() throws {
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["Enable the camera Wi-Fi"].waitForExistence(timeout: 12))
+        let connectionHelp = app.buttons["camera-connection-help"]
+        XCTAssertTrue(connectionHelp.waitForExistence(timeout: 12))
+        XCTAssertFalse(app.staticTexts["Enable the camera Wi-Fi"].exists)
+        connectionHelp.tap()
+        XCTAssertTrue(app.staticTexts["Enable the camera Wi-Fi"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Join from this iPhone"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Leave its QR code on screen")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Connect to the camera Wi-Fi by scanning the QR code, or manually."].exists)
         XCTAssertTrue(app.buttons["Scan camera QR code"].exists)
         XCTAssertTrue(app.buttons["Enter network details"].exists)
         XCTAssertTrue(app.buttons["start-location-log"].exists)
@@ -91,6 +97,7 @@ final class LumixProbeUITests: XCTestCase {
 
     func testSettingsCompatibilityAndAppIcons() throws {
         app.launch()
+        XCTAssertTrue(app.staticTexts["landing-title"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["image-app-alternative-text"].waitForExistence(timeout: 8))
 
         app.buttons["app-settings-link"].tap()
@@ -113,7 +120,7 @@ final class LumixProbeUITests: XCTestCase {
 
         let appVersion = app.staticTexts["app-version"]
         scrollToElement(appVersion)
-        XCTAssertEqual(appVersion.label, "GM1 Sync · Version 1.0 (5)")
+        XCTAssertEqual(appVersion.label, "GM1 Sync · Version 1.0 (10)")
 
         let iconLink = app.buttons["app-icon-link"]
         scrollToElement(iconLink)
