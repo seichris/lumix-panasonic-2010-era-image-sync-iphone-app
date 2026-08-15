@@ -246,6 +246,24 @@ final class CameraImportTests: XCTestCase {
         XCTAssertEqual(resource.role, .avchdPlayback360)
     }
 
+    func testDIDLParserPreservesCameraItemCaptureDateForGeotagPreview() throws {
+        let xml = """
+        <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+          <item id="photo-1">
+            <dc:title>Photo 1</dc:title>
+            <upnp:class>object.item.imageItem.photo</upnp:class>
+            <res protocolInfo="http-get:*:image/jpeg;PANASONIC.COM_PN=CAM_ORG">http://192.168.54.1:50001/D0001.JPG</res>
+            <dc:date>2026-08-15T06:30:00+08:00</dc:date>
+          </item>
+        </DIDL-Lite>
+        """
+
+        let resource = try XCTUnwrap(DIDLParser.parse(xml).first)
+        let expected = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-15T06:30:00+08:00"))
+        XCTAssertEqual(resource.captureDate, expected)
+        XCTAssertEqual(LumixPhoto.grouped(from: [resource]).first?.captureDate, expected)
+    }
+
     func testBrowseMetadataSOAPTargetsTheSelectedItem() {
         let body = LumixBrowseSOAP.make(
             objectID: "00193986570000000001",
@@ -324,6 +342,48 @@ final class CameraImportTests: XCTestCase {
         XCTAssertFalse(jpeg.isVideo)
         XCTAssertTrue(jpeg.isOriginalJPEG)
         XCTAssertEqual(jpeg.downloadURL, jpeg.url)
+    }
+
+    func testCompleteJPEGAcceptsLegacyAdvertisedSizeMismatch() throws {
+        XCTAssertNoThrow(
+            try LumixMediaDownloadCompletion.validate(
+                parsedHeaders: true,
+                bodyCount: 6_329_397,
+                expectedLength: 7_111_680,
+                validatesJPEG: true,
+                jpegComplete: true
+            )
+        )
+    }
+
+    func testIncompleteJPEGStillFailsAndIsRetryable() {
+        XCTAssertThrowsError(
+            try LumixMediaDownloadCompletion.validate(
+                parsedHeaders: true,
+                bodyCount: 6_329_397,
+                expectedLength: 7_111_680,
+                validatesJPEG: true,
+                jpegComplete: false
+            )
+        ) { error in
+            XCTAssertTrue(LumixMediaDownloadRetryPolicy.shouldRetry(error))
+        }
+    }
+
+    func testIncompleteNonJPEGStillRequiresAdvertisedLength() {
+        XCTAssertThrowsError(
+            try LumixMediaDownloadCompletion.validate(
+                parsedHeaders: true,
+                bodyCount: 6_329_397,
+                expectedLength: 7_111_680,
+                validatesJPEG: false,
+                jpegComplete: false
+            )
+        )
+    }
+
+    func testHTTP404IsNotRetried() {
+        XCTAssertFalse(LumixMediaDownloadRetryPolicy.shouldRetry(LumixError.http(404, "Not Found")))
     }
 
     private func resource(filename: String, profile: String, mimeType: String) -> LumixResource {

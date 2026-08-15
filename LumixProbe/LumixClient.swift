@@ -139,6 +139,7 @@ struct LumixResource: Identifiable, Hashable, Sendable {
     let size: Int64?
     let bitrate: Int?
     let chapterList: String?
+    let captureDate: Date?
 
     init(
         itemID: String?,
@@ -151,7 +152,8 @@ struct LumixResource: Identifiable, Hashable, Sendable {
         resolutionHeight: Int? = nil,
         size: Int64? = nil,
         bitrate: Int? = nil,
-        chapterList: String? = nil
+        chapterList: String? = nil,
+        captureDate: Date? = nil
     ) {
         self.itemID = itemID
         self.title = title
@@ -164,6 +166,7 @@ struct LumixResource: Identifiable, Hashable, Sendable {
         self.size = size
         self.bitrate = bitrate
         self.chapterList = chapterList
+        self.captureDate = captureDate
     }
 
     var id: String {
@@ -332,6 +335,12 @@ struct LumixPhoto: Identifiable, Hashable, Sendable {
 
     var kind: LumixMediaKind {
         videoResource == nil ? .photo : .video
+    }
+
+    /// Best-effort timestamp advertised by the camera's content directory.
+    /// Import still verifies the original JPEG's EXIF capture time.
+    var captureDate: Date? {
+        resources.compactMap(\.captureDate).first
     }
 
     var isImportable: Bool {
@@ -790,13 +799,38 @@ private enum LegacyLumixMediaDownloader {
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + "-" + suggestedName)
         let task = Task.detached(priority: .userInitiated) {
-            try downloadBlocking(
-                from: url,
-                to: destination,
-                validatesJPEG: validatesJPEG,
-                requestStyle: requestStyle,
-                operation: operation
-            )
+            let retryDelaysMicroseconds: [useconds_t] = [0, 300_000, 800_000]
+            var lastError: Error?
+
+            for (attempt, delay) in retryDelaysMicroseconds.enumerated() {
+                try operation.checkCancellation()
+                if delay > 0 {
+                    usleep(delay)
+                    try operation.checkCancellation()
+                }
+
+                do {
+                    return try downloadBlocking(
+                        from: url,
+                        to: destination,
+                        validatesJPEG: validatesJPEG,
+                        requestStyle: requestStyle,
+                        operation: operation
+                    )
+                } catch {
+                    lastError = error
+                    let hasAnotherAttempt = attempt + 1 < retryDelaysMicroseconds.count
+                    guard hasAnotherAttempt, LumixMediaDownloadRetryPolicy.shouldRetry(error) else {
+                        throw error
+                    }
+                    print(
+                        "[GM1Sync] Camera media transfer ended early for \(suggestedName); " +
+                            "retrying attempt \(attempt + 2) of \(retryDelaysMicroseconds.count)."
+                    )
+                }
+            }
+
+            throw lastError ?? LumixError.http(0, "camera media download failed")
         }
         return try await withTaskCancellationHandler {
             try await task.value
@@ -953,18 +987,13 @@ private enum LegacyLumixMediaDownloader {
             }
         }
 
-        guard parsedHeaders, bodyCount > 0 else {
-            throw LumixError.http(0, "camera returned an empty media response")
-        }
-        if let expectedLength, bodyCount != expectedLength {
-            throw LumixError.http(
-                0,
-                "camera closed an incomplete media response (\(bodyCount) of \(expectedLength) bytes)"
-            )
-        }
-        if validatesJPEG, !jpegComplete {
-            throw LumixError.http(0, "camera closed an incomplete JPEG response (\(bodyCount) bytes)")
-        }
+        try LumixMediaDownloadCompletion.validate(
+            parsedHeaders: parsedHeaders,
+            bodyCount: bodyCount,
+            expectedLength: expectedLength,
+            validatesJPEG: validatesJPEG,
+            jpegComplete: jpegComplete
+        )
 
         keepFile = true
         return destination
@@ -992,6 +1021,56 @@ private enum LegacyLumixMediaDownloader {
         }
     }
 
+}
+
+enum LumixMediaDownloadCompletion {
+    static func validate(
+        parsedHeaders: Bool,
+        bodyCount: Int,
+        expectedLength: Int?,
+        validatesJPEG: Bool,
+        jpegComplete: Bool
+    ) throws {
+        guard parsedHeaders, bodyCount > 0 else {
+            throw LumixError.http(0, "camera returned an empty media response")
+        }
+
+        if validatesJPEG {
+            // Some Image App-era cameras advertise a larger X-File_Size than
+            // the JPEG payload they actually send. A structurally complete JPEG
+            // ending at its real EOI marker is safe to import even when that
+            // legacy size header does not match the payload byte count.
+            guard jpegComplete else {
+                throw LumixError.http(0, "camera closed an incomplete JPEG response (\(bodyCount) bytes)")
+            }
+            return
+        }
+
+        if let expectedLength, bodyCount != expectedLength {
+            throw LumixError.http(
+                0,
+                "camera closed an incomplete media response (\(bodyCount) of \(expectedLength) bytes)"
+            )
+        }
+    }
+}
+
+enum LumixMediaDownloadRetryPolicy {
+    static func shouldRetry(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+
+        if case let LumixError.http(statusCode, message) = error {
+            guard statusCode == 0 else { return false }
+            let normalized = message.lowercased()
+            return normalized.contains("incomplete") || normalized.contains("empty media response")
+        }
+
+        if let error = error as? POSIXDownloadError {
+            return error.operation == "connect" || error.operation == "receive" || error.operation == "send"
+        }
+
+        return false
+    }
 }
 
 private final class LegacyLumixDownloadOperation: @unchecked Sendable {
@@ -1259,13 +1338,21 @@ final class CameraCapabilityParser: NSObject, XMLParserDelegate {
 }
 
 final class DIDLParser: NSObject, XMLParserDelegate {
+    private struct PendingResource {
+        let url: URL
+        let protocolInfo: String
+        let attributes: [String: String]
+    }
+
     private var itemID: String?
     private var title: String?
     private var itemClass: String?
+    private var captureDate: Date?
     private var currentElement = ""
     private var currentText = ""
     private var currentProtocol = ""
     private var currentResourceAttributes: [String: String] = [:]
+    private var pendingResources: [PendingResource] = []
     private var resources: [LumixResource] = []
 
     static func parse(_ xml: String) -> [LumixResource] {
@@ -1285,6 +1372,8 @@ final class DIDLParser: NSObject, XMLParserDelegate {
             itemID = attributeDict["id"]
             title = nil
             itemClass = nil
+            captureDate = nil
+            pendingResources = []
         }
         if elementName == "res" {
             currentProtocol = attributeDict["protocolInfo"] ?? ""
@@ -1298,31 +1387,63 @@ final class DIDLParser: NSObject, XMLParserDelegate {
         let value = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
         if elementName.hasSuffix("title") { title = value }
         if elementName.hasSuffix("class") { itemClass = value }
+        if elementName.hasSuffix("date") { captureDate = Self.parseCaptureDate(value) }
         if elementName == "res", let url = URL(string: value) {
-            let duration = Self.parseDuration(currentResourceAttributes["duration"])
-            let resolution = Self.parseResolution(currentResourceAttributes["resolution"])
-            let chapterList = currentResourceAttributes.first { key, _ in
-                key.lowercased().hasSuffix("chapterlist")
-            }?.value
-            resources.append(
-                LumixResource(
-                    itemID: itemID,
-                    title: title,
+            pendingResources.append(
+                PendingResource(
                     url: url,
                     protocolInfo: currentProtocol,
-                    upnpClass: itemClass,
-                    duration: duration,
-                    resolutionWidth: resolution?.width,
-                    resolutionHeight: resolution?.height,
-                    size: currentResourceAttributes["size"].flatMap(Int64.init),
-                    bitrate: currentResourceAttributes["bitrate"].flatMap(Int.init),
-                    chapterList: chapterList
+                    attributes: currentResourceAttributes
                 )
             )
             currentResourceAttributes = [:]
         }
+        if elementName == "item" {
+            resources.append(contentsOf: pendingResources.map { pending in
+                let duration = Self.parseDuration(pending.attributes["duration"])
+                let resolution = Self.parseResolution(pending.attributes["resolution"])
+                let chapterList = pending.attributes.first { key, _ in
+                    key.lowercased().hasSuffix("chapterlist")
+                }?.value
+                return LumixResource(
+                    itemID: itemID,
+                    title: title,
+                    url: pending.url,
+                    protocolInfo: pending.protocolInfo,
+                    upnpClass: itemClass,
+                    duration: duration,
+                    resolutionWidth: resolution?.width,
+                    resolutionHeight: resolution?.height,
+                    size: pending.attributes["size"].flatMap(Int64.init),
+                    bitrate: pending.attributes["bitrate"].flatMap(Int.init),
+                    chapterList: chapterList,
+                    captureDate: captureDate
+                )
+            })
+            pendingResources = []
+        }
         currentElement = ""
         currentText = ""
+    }
+
+    private static func parseCaptureDate(_ value: String) -> Date? {
+        guard value.contains("T") || value.contains(":") else { return nil }
+
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = isoFormatter.date(from: value) { return date }
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        if let date = isoFormatter.date(from: value) { return date }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = .autoupdatingCurrent
+        for format in ["yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss", "yyyy:MM:dd HH:mm:ss"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: value) { return date }
+        }
+        return nil
     }
 
     private static func parseDuration(_ value: String?) -> TimeInterval? {

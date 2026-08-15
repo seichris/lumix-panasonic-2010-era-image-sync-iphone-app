@@ -39,18 +39,10 @@ struct ContentView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        AppSettingsView(model: model) {
-                            Task {
-                                await galleryStore.resetForReconnect()
-                                await model.refreshConnectionStatus()
-                            }
-                        }
-                    } label: {
-                        Label("Settings", systemImage: "gearshape")
+                if model.isCameraConnected {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        settingsLink
                     }
-                    .accessibilityIdentifier("app-settings-link")
                 }
             }
             .task { await model.refreshConnectionStatus(waitingForRememberedCamera: true) }
@@ -95,27 +87,48 @@ struct ContentView: View {
         }
     }
 
+    private var settingsLink: some View {
+        NavigationLink {
+            AppSettingsView(model: model) {
+                Task {
+                    await galleryStore.resetForReconnect()
+                    await model.refreshConnectionStatus()
+                }
+            }
+        } label: {
+            Label("Settings", systemImage: "gearshape")
+        }
+        .accessibilityIdentifier("app-settings-link")
+    }
+
     private var disconnectedHome: some View {
         List {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("GM1 Sync")
-                        .font(.largeTitle.bold())
-                    Text("& other 2010-era Lumix cams")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("GM1 Sync")
+                            .font(.largeTitle.bold())
+                        Text("& other 2010-era Lumix cams")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("landing-title")
+
+                    Spacer(minLength: 8)
+
+                    settingsLink
+                        .labelStyle(.iconOnly)
+                        .font(.title3)
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("landing-title")
 
                 Text("An independent alternative to Panasonic Image App for compatible older cameras.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("image-app-alternative-text")
             }
-            .padding(.vertical, 4)
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
 
@@ -140,6 +153,8 @@ struct ContentView: View {
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
+        .contentMargins(.top, 0, for: .scrollContent)
     }
 }
 
@@ -445,7 +460,7 @@ private struct DownloadedPhotoGeotagPreview: View {
     }
 }
 
-private struct MatchedLocationMap: View {
+struct MatchedLocationMap: View {
     let match: GeotagMatch
 
     var body: some View {

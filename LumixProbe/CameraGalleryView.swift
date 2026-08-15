@@ -484,6 +484,14 @@ private struct CameraPhotoDetailPage: View {
     private var availablePhotoModes: [CameraPhotoImportMode] {
         CameraPhotoImportMode.allCases.filter(photo.supports)
     }
+    private var previewGeotagMatch: GeotagMatch? {
+        guard let captureDate = photo.captureDate else { return nil }
+        return LocationTrackMatcher.match(
+            captureDate: captureDate,
+            samples: model.locationLogger.samples,
+            cameraClockOffset: model.cameraClockOffsetMinutes * 60
+        )
+    }
 
     var body: some View {
         ScrollView {
@@ -551,19 +559,42 @@ private struct CameraPhotoDetailPage: View {
 
                     VStack(alignment: .leading, spacing: 7) {
                         Text("Geotagging").font(.headline)
-                        if model.locationLogger.samples.isEmpty {
-                            Label("No saved location samples", systemImage: "location.slash")
+                        if let match = previewGeotagMatch {
+                            MatchedLocationMap(match: match)
+                            Label("Location match available", systemImage: "mappin.circle.fill")
+                                .foregroundStyle(.green)
+                            LabeledContent("Camera listing time") {
+                                Text(match.captureDate.formatted(date: .abbreviated, time: .standard))
+                            }
+                            LabeledContent("Position") {
+                                Text(String(format: "%.5f, %.5f", match.latitude, match.longitude))
+                                    .font(.caption.monospaced())
+                            }
+                            Text("This is a preview based on the time advertised by the camera. Import confirms the match using the original JPEG's EXIF capture time.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if model.locationLogger.samples.isEmpty {
+                            Label("No GPS track points recorded", systemImage: "location.slash")
+                                .foregroundStyle(.secondary)
+                            Text("No location can be matched to this image until the location log contains a nearby track point.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if let captureDate = photo.captureDate {
+                            Label("No nearby location match", systemImage: "location.slash")
+                                .foregroundStyle(.orange)
+                            LabeledContent("Camera listing time") {
+                                Text(captureDate.formatted(date: .abbreviated, time: .standard))
+                            }
+                            Text("The camera supplied a capture time, but none of the recorded GPS track points are within 15 minutes. Import will verify this using the JPEG's EXIF time.")
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
-                            Label(
-                                "\(model.locationLogger.samples.count) location \(model.locationLogger.samples.count == 1 ? "sample" : "samples") available",
-                                systemImage: "location.fill"
-                            )
-                            .foregroundStyle(.green)
+                            Label("Download required to verify", systemImage: "arrow.down.circle")
+                                .foregroundStyle(.orange)
+                            Text("\(model.locationLogger.samples.count) GPS track \(model.locationLogger.samples.count == 1 ? "point is" : "points are") recorded, but this camera item has no trustworthy capture time. Import must read the original JPEG's EXIF time before it can determine a match.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        Text("The original's EXIF time is matched during import. If no nearby track point exists, the unchanged original is saved without a location.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                 }
 
