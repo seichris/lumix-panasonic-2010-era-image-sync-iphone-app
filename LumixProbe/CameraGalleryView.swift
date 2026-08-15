@@ -536,7 +536,6 @@ private struct CameraPhotoDetailPager: View {
             ForEach(photos) { photo in
                 CameraPhotoDetailPage(
                     photo: photo,
-                    isActive: selectedPhotoID == photo.id,
                     store: store,
                     model: model
                 )
@@ -547,12 +546,25 @@ private struct CameraPhotoDetailPager: View {
         .navigationTitle(selectedPhoto.title)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("camera-media-detail-pager")
+        .task(id: selectedPhotoID) {
+            guard selectedPhoto.kind == .photo else { return }
+            await inspectSelectedPhoto()
+        }
+    }
+
+    private func inspectSelectedPhoto(force: Bool = false) async {
+        _ = await store.inspectOriginalMetadata(
+            for: selectedPhoto,
+            force: force,
+            onDiagnostic: { message in
+                model.recordDiagnostic(message)
+            }
+        )
     }
 }
 
 private struct CameraPhotoDetailPage: View {
     let photo: LumixPhoto
-    let isActive: Bool
     @ObservedObject var store: CameraGalleryStore
     @ObservedObject var model: ProbeViewModel
     @State private var importMode: CameraPhotoImportMode = .jpeg
@@ -628,7 +640,6 @@ private struct CameraPhotoDetailPage: View {
 
                     CameraPhotoGeotaggingDetail(
                         photo: photo,
-                        isActive: isActive,
                         store: store,
                         model: model
                     )
@@ -727,7 +738,6 @@ private struct CameraPhotoDetailPage: View {
 
 private struct CameraPhotoGeotaggingDetail: View {
     let photo: LumixPhoto
-    let isActive: Bool
     @ObservedObject var store: CameraGalleryStore
     @ObservedObject var model: ProbeViewModel
 
@@ -773,10 +783,6 @@ private struct CameraPhotoGeotaggingDetail: View {
             locationResult
             metadataDetails
         }
-        .task(id: isActive) {
-            guard isActive else { return }
-            await inspectOriginal()
-        }
         .accessibilityIdentifier("camera-photo-geotagging")
     }
 
@@ -821,11 +827,18 @@ private struct CameraPhotoGeotaggingDetail: View {
                 }
                 .foregroundStyle(.secondary)
             case nil:
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Preparing metadata check…")
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Metadata check has not started", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                        .foregroundStyle(.orange)
+                    Text("The app normally checks the selected photo automatically. You can start it here if that did not happen.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Start metadata check") {
+                        Task { await inspectOriginal(force: true) }
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("start-photo-metadata-check")
                 }
-                .foregroundStyle(.secondary)
             case .resolved:
                 if captureDate == nil {
                     Label("No usable capture time", systemImage: "clock.badge.exclamationmark")
@@ -879,41 +892,39 @@ private struct CameraPhotoGeotaggingDetail: View {
                     }
                 }
             }
-            DisclosureGroup("Metadata diagnostic") {
-                Text(inspection.diagnosticSummary)
+        }
+
+        DisclosureGroup("Metadata diagnostic") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(metadataDiagnosticText)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 4)
-            }
-            .font(.caption)
-        } else if inspectionState != nil {
-            DisclosureGroup("Metadata diagnostic") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(metadataDiagnosticText)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    Button {
-                        UIPasteboard.general.string = metadataDiagnosticText
-                    } label: {
-                        Label("Copy metadata diagnostics", systemImage: "doc.on.doc")
-                    }
-                    .buttonStyle(.bordered)
+                    .textSelection(.enabled)
+                Button {
+                    UIPasteboard.general.string = metadataDiagnosticText
+                } label: {
+                    Label("Copy metadata diagnostics", systemImage: "doc.on.doc")
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 4)
+                .buttonStyle(.bordered)
             }
-            .font(.caption)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
         }
+        .font(.caption)
+        .accessibilityIdentifier("photo-metadata-diagnostic")
     }
 
     private var metadataDiagnosticText: String {
         let matchingLines = model.log
             .components(separatedBy: .newlines)
             .filter { $0.localizedCaseInsensitiveContains(photo.displayFilename) }
-        guard !matchingLines.isEmpty else { return "No per-image diagnostic has been recorded yet." }
-        return matchingLines.suffix(8).joined(separator: "\n")
+        if !matchingLines.isEmpty {
+            return matchingLines.suffix(8).joined(separator: "\n")
+        }
+        if let inspection {
+            return inspection.diagnosticSummary
+        }
+        return "No per-image diagnostic has been recorded yet. Tap Start metadata check if the automatic check did not begin."
     }
 
     private func position(_ location: PhotoGeotagLocation) -> some View {

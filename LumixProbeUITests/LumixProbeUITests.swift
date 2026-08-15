@@ -78,6 +78,9 @@ final class LumixProbeUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["save-camera-photo"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.navigationBars["Demo scene 0025"].exists)
+        XCTAssertTrue(app.staticTexts["Could not verify geotag"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Preparing metadata check…"].exists)
+        XCTAssertTrue(app.buttons["photo-metadata-diagnostic"].exists)
         app.swipeLeft()
         XCTAssertTrue(app.navigationBars["Demo scene 0024"].waitForExistence(timeout: 5))
         app.swipeRight()

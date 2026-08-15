@@ -408,6 +408,43 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertLessThan(elapsed, 0.3)
     }
 
+    func testGalleryRefreshLeavesInterruptedMetadataCheckVisibleForRetry() async throws {
+        let client = MockGalleryClient(total: 1, downloadDelay: .seconds(30))
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 1,
+            metadataInspectionDownloadTimeout: .seconds(60)
+        )
+        var diagnostics: [String] = []
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        let inspectionTask = Task {
+            await store.inspectOriginalMetadata(
+                for: photo,
+                onDiagnostic: { diagnostics.append($0) }
+            )
+        }
+
+        for _ in 0..<20 {
+            if store.metadataInspectionState(for: photo) == .checking(.downloadingOriginalJPEG) {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(store.metadataInspectionState(for: photo), .checking(.downloadingOriginalJPEG))
+
+        await store.loadInitial()
+        _ = await inspectionTask.value
+
+        guard case let .failed(message) = store.metadataInspectionState(for: photo) else {
+            return XCTFail("Expected an interrupted check to remain visible")
+        }
+        XCTAssertTrue(message.contains("gallery refreshed"))
+        XCTAssertTrue(diagnostics.contains { $0.contains("was interrupted") })
+    }
+
     func testImportPersistsVerifiedCaptureTimeAndMatchedLocation() async throws {
         let captureDate = Date(timeIntervalSince1970: 1_786_692_600)
         let client = MockGalleryClient(total: 1)

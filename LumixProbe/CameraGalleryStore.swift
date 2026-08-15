@@ -175,6 +175,8 @@ final class CameraGalleryStore: ObservableObject {
     private var reconciledImportFilenames: Set<String> = []
     private struct MetadataInspectionTask {
         let id: UUID
+        let photo: LumixPhoto
+        let onDiagnostic: @MainActor (String) -> Void
         let task: Task<CameraPhotoMetadataInspectionState, Never>
     }
     private var metadataInspectionTasks: [LumixPhoto.ID: MetadataInspectionTask] = [:]
@@ -301,7 +303,9 @@ final class CameraGalleryStore: ObservableObject {
 
     func loadInitial() async {
         if let sessionResetTask { await sessionResetTask.value }
-        cancelMetadataInspections()
+        cancelMetadataInspections(
+            failureMessage: "The metadata check was interrupted when the camera gallery refreshed. Try again."
+        )
         let generation = UUID()
         let taskID = UUID()
         loadGeneration = generation
@@ -524,14 +528,26 @@ final class CameraGalleryStore: ObservableObject {
         selectedPhotoIDs = []
         importStates = [:]
         batchProgress = nil
-        cancelMetadataInspections()
+        cancelMetadataInspections(clearStates: true)
         await mediaCache.removeAll()
     }
 
-    private func cancelMetadataInspections() {
-        metadataInspectionTasks.values.forEach { $0.task.cancel() }
+    private func cancelMetadataInspections(
+        clearStates: Bool = false,
+        failureMessage: String? = nil
+    ) {
+        for (photoID, inspection) in metadataInspectionTasks {
+            inspection.task.cancel()
+            if let failureMessage {
+                metadataInspectionStates[photoID] = .failed(failureMessage)
+                recordMetadataDiagnostic(
+                    "Photo geotag check \(inspection.photo.displayFilename) was interrupted: \(failureMessage)",
+                    onDiagnostic: inspection.onDiagnostic
+                )
+            }
+        }
         metadataInspectionTasks = [:]
-        metadataInspectionStates = [:]
+        if clearStates { metadataInspectionStates = [:] }
     }
 
     func mediaData(for resource: LumixResource) async throws -> Data {
@@ -555,6 +571,13 @@ final class CameraGalleryStore: ObservableObject {
             }
         } else {
             if let existing = metadataInspectionTasks[photo.id] {
+                if metadataInspectionStates[photo.id] == nil {
+                    updateMetadataInspection(
+                        photo,
+                        stage: .requestingItemMetadata,
+                        onDiagnostic: onDiagnostic
+                    )
+                }
                 return await existing.task.value
             }
             if let cached = metadataInspectionStates[photo.id] {
@@ -567,6 +590,15 @@ final class CameraGalleryStore: ObservableObject {
             metadataInspectionStates[photo.id] = state
             return state
         }
+
+        // Publish the request before creating the shared task. This guarantees that
+        // the detail UI and diagnostic log leave their idle state immediately, even
+        // if SwiftUI cancels the view task before the camera operation is scheduled.
+        updateMetadataInspection(
+            photo,
+            stage: .requestingItemMetadata,
+            onDiagnostic: onDiagnostic
+        )
 
         let taskID = UUID()
         let generation = loadGeneration
@@ -582,7 +614,12 @@ final class CameraGalleryStore: ObservableObject {
                 onDiagnostic: onDiagnostic
             )
         }
-        metadataInspectionTasks[photo.id] = MetadataInspectionTask(id: taskID, task: task)
+        metadataInspectionTasks[photo.id] = MetadataInspectionTask(
+            id: taskID,
+            photo: photo,
+            onDiagnostic: onDiagnostic,
+            task: task
+        )
         let state = await task.value
         if metadataInspectionTasks[photo.id]?.id == taskID {
             metadataInspectionTasks[photo.id] = nil
