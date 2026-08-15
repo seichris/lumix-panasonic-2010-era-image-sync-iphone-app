@@ -91,7 +91,7 @@ struct CameraPhotoMetadataInspection: Equatable, Sendable {
 
     var captureDateSource: String? {
         if exifCaptureDate != nil { return "Original JPEG EXIF" }
-        if itemMetadataCaptureDate != nil { return "Camera item metadata" }
+        if itemMetadataCaptureDate != nil { return "Camera metadata" }
         if galleryCaptureDate != nil { return "Camera gallery listing" }
         return nil
     }
@@ -113,7 +113,7 @@ enum CameraPhotoMetadataInspectionStage: String, Equatable, Sendable {
 
     var title: String {
         switch self {
-        case .requestingItemMetadata: "Checking camera item metadata…"
+        case .requestingItemMetadata: "Checking photo metadata…"
         case .downloadingOriginalJPEG: "Downloading original JPEG metadata…"
         case .readingOriginalJPEG: "Reading original JPEG metadata…"
         }

@@ -546,6 +546,16 @@ private struct CameraPhotoDetailPager: View {
         .navigationTitle(selectedPhoto.title)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("camera-media-detail-pager")
+        .task(id: selectedPhotoID) {
+            let photo = selectedPhoto
+            guard photo.kind == .photo else { return }
+            _ = await store.inspectOriginalMetadata(
+                for: photo,
+                onDiagnostic: { message in
+                    model.recordDiagnostic(message)
+                }
+            )
+        }
     }
 }
 
@@ -584,22 +594,21 @@ private struct CameraPhotoDetailPage: View {
                 }
 
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(photo.title).font(.title3.bold())
-                    if let itemID = photo.itemID {
-                        LabeledContent("Camera item", value: itemID)
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(photo.title).font(.title3.bold())
+                        Spacer(minLength: 8)
+                        if photo.kind == .photo {
+                            Text(originalPhotoFormatSummary)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("original-photo-formats")
+                        }
                     }
                     if photo.kind == .video {
                         LabeledContent("Original video") {
                             Text(photo.videoResource?.downloadURL.lastPathComponent ?? "Unavailable")
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                        }
-                    } else {
-                        LabeledContent("Original JPEG") {
-                            Text(photo.originalJPEGResource?.profileName ?? "Unavailable")
-                        }
-                        LabeledContent("Original RAW") {
-                            Text(photo.rawResource?.url.pathExtension.uppercased() ?? "Unavailable")
                         }
                     }
                     if let historyRecord {
@@ -619,7 +628,7 @@ private struct CameraPhotoDetailPage: View {
                         .pickerStyle(.segmented)
                         .accessibilityIdentifier("detail-camera-import-format")
 
-                        Text("JPEG is the default. JPEG + RAW stays together as one Photos asset.")
+                        Text("JPEG + RAW stays together as one Photos asset.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -688,6 +697,13 @@ private struct CameraPhotoDetailPage: View {
 
     private var isAVCHDVideo: Bool {
         photo.kind == .video && photo.videoPlaybackResource?.isAVCHD == true
+    }
+
+    private var originalPhotoFormatSummary: String {
+        var formats: [String] = []
+        if photo.originalJPEGResource != nil { formats.append("JPEG") }
+        if photo.rawResource != nil { formats.append("RAW") }
+        return formats.isEmpty ? "Unavailable" : formats.joined(separator: " · ")
     }
 
     private var importButtonTitle: String {
@@ -765,11 +781,11 @@ private struct CameraPhotoGeotaggingDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text("Geotagging").font(.headline)
+            Text("Location").font(.headline)
             locationResult
             metadataDetails
         }
-        .accessibilityIdentifier("camera-photo-geotagging")
+        .accessibilityIdentifier("camera-photo-location")
     }
 
     @ViewBuilder
@@ -794,7 +810,7 @@ private struct CameraPhotoGeotaggingDetail: View {
             MatchedLocationMap(match: match)
             Label("Will be geotagged on import", systemImage: "mappin.and.ellipse")
                 .foregroundStyle(.green)
-            Text("The camera's capture time matches the recorded location track. Embedded GPS and the exact EXIF time will be verified during import.")
+            Text("The camera's capture time matches the recorded location track.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             position(PhotoGeotagLocation(match: match))
@@ -813,13 +829,7 @@ private struct CameraPhotoGeotaggingDetail: View {
                 }
                 .foregroundStyle(.secondary)
             case nil:
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Original metadata not verified", systemImage: "info.circle")
-                        .foregroundStyle(.secondary)
-                    Text("Embedded GPS and the exact EXIF time will be verified during import. You can check the original now, but older cameras may take a while to respond.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                EmptyView()
             case .resolved:
                 if captureDate == nil {
                     Label("No usable capture time", systemImage: "clock.badge.exclamationmark")
@@ -856,23 +866,6 @@ private struct CameraPhotoGeotaggingDetail: View {
 
     @ViewBuilder
     private var metadataDetails: some View {
-        if inspectionState == nil {
-            Button("Check original metadata") {
-                Task { await inspectOriginal(force: true) }
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("start-photo-metadata-check")
-
-            if let captureDate, let captureDateSource {
-                LabeledContent("Provisional capture time") {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(captureDate.formatted(date: .abbreviated, time: .standard))
-                        Text(captureDateSource).font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-
         if let inspection {
             LabeledContent("Original JPEG GPS", value: inspection.embeddedLocation == nil ? "Not embedded" : "Embedded")
             LabeledContent("Original JPEG time") {
@@ -891,38 +884,6 @@ private struct CameraPhotoGeotaggingDetail: View {
                 }
             }
         }
-
-        DisclosureGroup("Metadata diagnostic") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(metadataDiagnosticText)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                Button {
-                    UIPasteboard.general.string = metadataDiagnosticText
-                } label: {
-                    Label("Copy metadata diagnostics", systemImage: "doc.on.doc")
-                }
-                .buttonStyle(.bordered)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 4)
-        }
-        .font(.caption)
-        .accessibilityIdentifier("photo-metadata-diagnostic")
-    }
-
-    private var metadataDiagnosticText: String {
-        let matchingLines = model.log
-            .components(separatedBy: .newlines)
-            .filter { $0.localizedCaseInsensitiveContains(photo.displayFilename) }
-        if !matchingLines.isEmpty {
-            return matchingLines.suffix(8).joined(separator: "\n")
-        }
-        if let inspection {
-            return inspection.diagnosticSummary
-        }
-        return "No per-image diagnostic has been recorded yet. Tap Check original metadata to inspect the camera file now."
     }
 
     private func position(_ location: PhotoGeotagLocation) -> some View {

@@ -381,7 +381,7 @@ final class CameraGalleryStoreTests: XCTestCase {
             return XCTFail("Expected the inspection to time out")
         }
         XCTAssertTrue(message.contains("did not finish sending"))
-        XCTAssertTrue(diagnostics.contains { $0.contains("Checking camera item metadata") })
+        XCTAssertTrue(diagnostics.contains { $0.contains("Checking photo metadata") })
         XCTAssertTrue(diagnostics.contains { $0.contains("Downloading original JPEG metadata") })
         XCTAssertTrue(diagnostics.contains { $0.contains("failed") })
     }
