@@ -408,6 +408,31 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertLessThan(elapsed, 0.3)
     }
 
+    func testMetadataTimeoutPublishesBeforeBlockingCancellationHandlerReturns() async throws {
+        let client = MockGalleryClient(
+            total: 1,
+            cancellationHandlerBlockSeconds: 0.5
+        )
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 1,
+            metadataInspectionDownloadTimeout: .milliseconds(20)
+        )
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        let startedAt = Date()
+        let state = await store.inspectOriginalMetadata(for: photo)
+        let elapsed = Date().timeIntervalSince(startedAt)
+
+        guard case let .failed(message) = state else {
+            return XCTFail("Expected the inspection to time out")
+        }
+        XCTAssertTrue(message.contains("did not finish sending"))
+        XCTAssertLessThan(elapsed, 0.2)
+    }
+
     func testGalleryRefreshLeavesInterruptedMetadataCheckVisibleForRetry() async throws {
         let client = MockGalleryClient(total: 1, downloadDelay: .seconds(30))
         let store = CameraGalleryStore(
@@ -629,6 +654,7 @@ private actor MockGalleryClient: CameraGalleryClient {
     private let videoIndexes: Set<Int>
     private let downloadDelay: Duration
     private let ignoresDownloadCancellation: Bool
+    private let cancellationHandlerBlockSeconds: TimeInterval
     private var delayedBrowseStart: Int?
     private var delayedBrowseDuration: Duration = .milliseconds(250)
     private(set) var browseRequests: [BrowseRequest] = []
@@ -642,7 +668,8 @@ private actor MockGalleryClient: CameraGalleryClient {
         includesRAW: Bool = false,
         videoIndexes: Set<Int> = [],
         downloadDelay: Duration = .zero,
-        ignoresDownloadCancellation: Bool = false
+        ignoresDownloadCancellation: Bool = false,
+        cancellationHandlerBlockSeconds: TimeInterval = 0
     ) {
         self.total = total
         self.overlapsPages = overlapsPages
@@ -651,6 +678,7 @@ private actor MockGalleryClient: CameraGalleryClient {
         self.videoIndexes = videoIndexes
         self.downloadDelay = downloadDelay
         self.ignoresDownloadCancellation = ignoresDownloadCancellation
+        self.cancellationHandlerBlockSeconds = cancellationHandlerBlockSeconds
     }
 
     func setTotal(_ total: Int) {
@@ -698,6 +726,18 @@ private actor MockGalleryClient: CameraGalleryClient {
 
     func download(_ resource: LumixResource) async throws -> URL {
         downloadCount += 1
+        if cancellationHandlerBlockSeconds > 0 {
+            let blockSeconds = cancellationHandlerBlockSeconds
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
+                        continuation.resume(throwing: TestImportError.configuredFailure)
+                    }
+                }
+            } onCancel: {
+                Thread.sleep(forTimeInterval: blockSeconds)
+            }
+        }
         if ignoresDownloadCancellation {
             return try await withCheckedThrowingContinuation { continuation in
                 DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {

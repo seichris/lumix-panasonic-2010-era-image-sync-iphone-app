@@ -693,7 +693,10 @@ final class CameraGalleryStore: ObservableObject {
         )
         do {
             let timeout = metadataInspectionDownloadTimeout
-            let fileURL = try await withCameraMetadataTimeout(timeout) {
+            let fileURL = try await withCameraMetadataTimeout(
+                timeout,
+                label: photo.displayFilename
+            ) {
                 try await client.downloadMetadataPrefix(original)
             }
             defer { try? FileManager.default.removeItem(at: fileURL) }
@@ -1133,15 +1136,32 @@ private let cameraMetadataTimeoutQueue = DispatchQueue(
     qos: .userInitiated
 )
 
+private let cameraMetadataCancellationQueue = DispatchQueue(
+    label: "com.web3.gm1sync.metadata-cancellation",
+    qos: .userInitiated,
+    attributes: .concurrent
+)
+
 private func withCameraMetadataTimeout<Value: Sendable>(
     _ timeout: Duration,
+    label: String,
     operation: @escaping @Sendable () async throws -> Value
 ) async throws -> Value {
     let gate = CameraMetadataTimeoutGate<Value>()
     let operationTask = Task.detached(priority: .userInitiated, operation: operation)
     let timeoutWorkItem = DispatchWorkItem {
-        operationTask.cancel()
-        gate.resume(.failure(CameraPhotoMetadataInspectionError.downloadTimedOut))
+        print("[GM1Sync] [MetadataTimeout \(label)] timeout fired.")
+        let won = gate.resume(.failure(CameraPhotoMetadataInspectionError.downloadTimedOut))
+        print("[GM1Sync] [MetadataTimeout \(label)] gate resume source=timeout won=\(won).")
+
+        // Deliver the timeout before touching cancellation or socket teardown.
+        // Swift invokes a task's cancellation handler synchronously from cancel(),
+        // so cleanup must not sit on the timeout's critical wake-up path.
+        cameraMetadataCancellationQueue.async {
+            print("[GM1Sync] [MetadataTimeout \(label)] operationTask.cancel enter (timeout).")
+            operationTask.cancel()
+            print("[GM1Sync] [MetadataTimeout \(label)] operationTask.cancel exit (timeout).")
+        }
     }
     cameraMetadataTimeoutQueue.asyncAfter(
         deadline: .now() + max(0, timeout.timeInterval),
@@ -1155,13 +1175,19 @@ private func withCameraMetadataTimeout<Value: Sendable>(
             Task.detached {
                 let result = await operationTask.result
                 timeoutWorkItem.cancel()
-                gate.resume(result)
+                let won = gate.resume(result)
+                print("[GM1Sync] [MetadataTimeout \(label)] gate resume source=operation won=\(won).")
             }
         }
     } onCancel: {
         timeoutWorkItem.cancel()
-        operationTask.cancel()
-        gate.resume(.failure(CancellationError()))
+        let won = gate.resume(.failure(CancellationError()))
+        print("[GM1Sync] [MetadataTimeout \(label)] gate resume source=parent-cancellation won=\(won).")
+        cameraMetadataCancellationQueue.async {
+            print("[GM1Sync] [MetadataTimeout \(label)] operationTask.cancel enter (parent cancellation).")
+            operationTask.cancel()
+            print("[GM1Sync] [MetadataTimeout \(label)] operationTask.cancel exit (parent cancellation).")
+        }
     }
 }
 
@@ -1184,11 +1210,12 @@ private final class CameraMetadataTimeoutGate<Value: Sendable>: @unchecked Senda
         lock.unlock()
     }
 
-    func resume(_ result: Result<Value, Error>) {
+    @discardableResult
+    func resume(_ result: Result<Value, Error>) -> Bool {
         lock.lock()
         guard !isFinished else {
             lock.unlock()
-            return
+            return false
         }
         isFinished = true
         let continuation = continuation
@@ -1196,6 +1223,7 @@ private final class CameraMetadataTimeoutGate<Value: Sendable>: @unchecked Senda
         if continuation == nil { pendingResult = result }
         lock.unlock()
         continuation?.resume(with: result)
+        return true
     }
 }
 

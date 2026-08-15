@@ -546,20 +546,6 @@ private struct CameraPhotoDetailPager: View {
         .navigationTitle(selectedPhoto.title)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("camera-media-detail-pager")
-        .task(id: selectedPhotoID) {
-            guard selectedPhoto.kind == .photo else { return }
-            await inspectSelectedPhoto()
-        }
-    }
-
-    private func inspectSelectedPhoto(force: Bool = false) async {
-        _ = await store.inspectOriginalMetadata(
-            for: selectedPhoto,
-            force: force,
-            onDiagnostic: { message in
-                model.recordDiagnostic(message)
-            }
-        )
     }
 }
 
@@ -808,7 +794,7 @@ private struct CameraPhotoGeotaggingDetail: View {
             MatchedLocationMap(match: match)
             Label("Will be geotagged on import", systemImage: "mappin.and.ellipse")
                 .foregroundStyle(.green)
-            Text("The original has no embedded GPS, but its capture time matches the recorded location track.")
+            Text("The camera's capture time matches the recorded location track. Embedded GPS and the exact EXIF time will be verified during import.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             position(PhotoGeotagLocation(match: match))
@@ -828,16 +814,11 @@ private struct CameraPhotoGeotaggingDetail: View {
                 .foregroundStyle(.secondary)
             case nil:
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Metadata check has not started", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
-                        .foregroundStyle(.orange)
-                    Text("The app normally checks the selected photo automatically. You can start it here if that did not happen.")
+                    Label("Original metadata not verified", systemImage: "info.circle")
+                        .foregroundStyle(.secondary)
+                    Text("Embedded GPS and the exact EXIF time will be verified during import. You can check the original now, but older cameras may take a while to respond.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("Start metadata check") {
-                        Task { await inspectOriginal(force: true) }
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("start-photo-metadata-check")
                 }
             case .resolved:
                 if captureDate == nil {
@@ -875,6 +856,23 @@ private struct CameraPhotoGeotaggingDetail: View {
 
     @ViewBuilder
     private var metadataDetails: some View {
+        if inspectionState == nil {
+            Button("Check original metadata") {
+                Task { await inspectOriginal(force: true) }
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("start-photo-metadata-check")
+
+            if let captureDate, let captureDateSource {
+                LabeledContent("Provisional capture time") {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(captureDate.formatted(date: .abbreviated, time: .standard))
+                        Text(captureDateSource).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+
         if let inspection {
             LabeledContent("Original JPEG GPS", value: inspection.embeddedLocation == nil ? "Not embedded" : "Embedded")
             LabeledContent("Original JPEG time") {
@@ -924,7 +922,7 @@ private struct CameraPhotoGeotaggingDetail: View {
         if let inspection {
             return inspection.diagnosticSummary
         }
-        return "No per-image diagnostic has been recorded yet. Tap Start metadata check if the automatic check did not begin."
+        return "No per-image diagnostic has been recorded yet. Tap Check original metadata to inspect the camera file now."
     }
 
     private func position(_ location: PhotoGeotagLocation) -> some View {

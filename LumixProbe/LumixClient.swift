@@ -806,15 +806,19 @@ private enum LegacyLumixMediaDownloader {
         socketTimeoutSeconds: Int = 90
     ) async throws -> URL {
         let operation = LegacyLumixDownloadOperation()
+        let continuationGate = LegacyLumixDownloadContinuationGate()
+        let traceID = String(UUID().uuidString.prefix(8))
         let suggestedName = url.lastPathComponent.isEmpty ? "lumix-media" : url.lastPathComponent
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + "-" + suggestedName)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
+                continuationGate.install(continuation)
                 // recv(2) is intentionally blocking for compatibility with the
                 // camera's HTTP/1.0 server. Keep it off Swift's cooperative task
                 // pool so thumbnails cannot starve timers and cancellation.
                 DispatchQueue.global(qos: .userInitiated).async {
+                    logLegacyMedia(traceID, "GCD worker start for \(suggestedName).")
                     do {
                         let retryDelaysMicroseconds: [useconds_t] = maximumBodyBytes == nil
                             ? [0, 300_000, 800_000]
@@ -836,9 +840,13 @@ private enum LegacyLumixMediaDownloader {
                                     requestStyle: requestStyle,
                                     maximumBodyBytes: maximumBodyBytes,
                                     socketTimeoutSeconds: socketTimeoutSeconds,
-                                    operation: operation
+                                    operation: operation,
+                                    traceID: traceID
                                 )
-                                continuation.resume(returning: fileURL)
+                                let result: Result<URL, Error> = .success(fileURL)
+                                let won = continuationGate.resume(result)
+                                logLegacyMedia(traceID, "continuation resume source=worker success won=\(won).")
+                                if !won { try? FileManager.default.removeItem(at: fileURL) }
                                 return
                             } catch {
                                 lastError = error
@@ -855,11 +863,18 @@ private enum LegacyLumixMediaDownloader {
 
                         throw lastError ?? LumixError.http(0, "camera media download failed")
                     } catch {
-                        continuation.resume(throwing: error)
+                        let result: Result<URL, Error> = .failure(error)
+                        let won = continuationGate.resume(result)
+                        logLegacyMedia(
+                            traceID,
+                            "continuation resume source=worker failure won=\(won) error=\(error.localizedDescription)."
+                        )
                     }
                 }
             }
         } onCancel: {
+            let won = continuationGate.resume(.failure(CancellationError()))
+            logLegacyMedia(traceID, "continuation resume source=task cancellation won=\(won).")
             operation.cancel()
         }
     }
@@ -871,7 +886,8 @@ private enum LegacyLumixMediaDownloader {
         requestStyle: LumixMediaRequestStyle,
         maximumBodyBytes: Int?,
         socketTimeoutSeconds: Int,
-        operation: LegacyLumixDownloadOperation
+        operation: LegacyLumixDownloadOperation,
+        traceID: String
     ) throws -> URL {
         guard url.scheme == "http",
               let host = url.host,
@@ -880,19 +896,44 @@ private enum LegacyLumixMediaDownloader {
             throw LumixError.invalidURL
         }
 
+        logLegacyMedia(traceID, "socket creation enter.")
         let fileDescriptor = socket(AF_INET, SOCK_STREAM, 0)
-        guard fileDescriptor >= 0 else { throw POSIXDownloadError("socket", errno) }
+        guard fileDescriptor >= 0 else {
+            let socketError = errno
+            logLegacyMedia(traceID, "socket creation failed errno=\(socketError).")
+            throw POSIXDownloadError("socket", socketError)
+        }
+        logLegacyMedia(traceID, "socket creation exit fd=\(fileDescriptor).")
         defer { Darwin.close(fileDescriptor) }
         try operation.register(fileDescriptor)
+        logLegacyMedia(traceID, "descriptor registered fd=\(fileDescriptor).")
         defer { operation.unregister(fileDescriptor) }
         try operation.checkCancellation()
 
         var noSignal = Int32(1)
-        setsockopt(fileDescriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout.size(ofValue: noSignal)))
+        try setLegacySocketOption(
+            fileDescriptor,
+            name: SO_NOSIGPIPE,
+            value: &noSignal,
+            label: "SO_NOSIGPIPE",
+            traceID: traceID
+        )
 
         var timeout = timeval(tv_sec: max(1, socketTimeoutSeconds), tv_usec: 0)
-        setsockopt(fileDescriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
-        setsockopt(fileDescriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
+        try setLegacySocketOption(
+            fileDescriptor,
+            name: SO_RCVTIMEO,
+            value: &timeout,
+            label: "SO_RCVTIMEO",
+            traceID: traceID
+        )
+        try setLegacySocketOption(
+            fileDescriptor,
+            name: SO_SNDTIMEO,
+            value: &timeout,
+            label: "SO_SNDTIMEO",
+            traceID: traceID
+        )
 
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -900,19 +941,21 @@ private enum LegacyLumixMediaDownloader {
         address.sin_port = in_port_t(port).bigEndian
         guard inet_pton(AF_INET, host, &address.sin_addr) == 1 else { throw LumixError.invalidURL }
 
-        let connectResult = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(fileDescriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        guard connectResult == 0 else {
-            try operation.checkCancellation()
-            throw POSIXDownloadError("connect", errno)
-        }
-        try operation.checkCancellation()
+        try connectLegacySocket(
+            fileDescriptor,
+            address: &address,
+            timeoutSeconds: socketTimeoutSeconds,
+            operation: operation,
+            traceID: traceID
+        )
 
         let request = try LumixMediaHTTPRequest.make(for: url, style: requestStyle)
-        try sendAll(Data(request.utf8), to: fileDescriptor, operation: operation)
+        try sendAll(
+            Data(request.utf8),
+            to: fileDescriptor,
+            operation: operation,
+            traceID: traceID
+        )
 
         guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
             throw POSIXDownloadError("create file", EIO)
@@ -931,6 +974,7 @@ private enum LegacyLumixMediaDownloader {
         var expectedLength: Int?
         var parsedHeaders = false
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        var receiveCount = 0
 
         func appendBody(_ chunk: Data) throws -> Bool {
             var data: Data
@@ -971,15 +1015,25 @@ private enum LegacyLumixMediaDownloader {
 
         receiveLoop: while true {
             try operation.checkCancellation()
+            receiveCount += 1
+            if maximumBodyBytes != nil || receiveCount == 1 {
+                logLegacyMedia(traceID, "recv #\(receiveCount) enter; bodyBytes=\(bodyCount).")
+            }
             let count = Darwin.recv(fileDescriptor, &buffer, buffer.count, 0)
             if count == 0 {
+                logLegacyMedia(traceID, "recv #\(receiveCount) returned EOF; bodyBytes=\(bodyCount).")
                 try operation.checkCancellation()
                 break
             }
             if count < 0 {
-                if errno == EINTR { continue }
+                let receiveError = errno
+                logLegacyMedia(traceID, "recv #\(receiveCount) failed errno=\(receiveError).")
+                if receiveError == EINTR { continue }
                 try operation.checkCancellation()
-                throw POSIXDownloadError("receive", errno)
+                throw POSIXDownloadError("receive", receiveError)
+            }
+            if maximumBodyBytes != nil || receiveCount == 1 {
+                logLegacyMedia(traceID, "recv #\(receiveCount) exit bytes=\(count).")
             }
 
             let chunk = Data(buffer.prefix(count))
@@ -1011,6 +1065,10 @@ private enum LegacyLumixMediaDownloader {
                 }
 
                 parsedHeaders = true
+                logLegacyMedia(
+                    traceID,
+                    "headers parsed status=\(statusCode) expectedLength=\(expectedLength.map(String.init) ?? "unknown")."
+                )
                 let initialBody = Data(received[boundary.upperBound...])
                 if try appendBody(initialBody) { break receiveLoop }
                 received.removeAll(keepingCapacity: false)
@@ -1019,6 +1077,10 @@ private enum LegacyLumixMediaDownloader {
             }
         }
 
+        logLegacyMedia(
+            traceID,
+            "receive complete bodyBytes=\(bodyCount) limit=\(maximumBodyBytes.map(String.init) ?? "none")."
+        )
         if maximumBodyBytes != nil {
             guard parsedHeaders, bodyCount > 0 else {
                 throw LumixError.http(0, "camera returned an empty JPEG metadata prefix")
@@ -1040,8 +1102,10 @@ private enum LegacyLumixMediaDownloader {
     private static func sendAll(
         _ data: Data,
         to fileDescriptor: Int32,
-        operation: LegacyLumixDownloadOperation
+        operation: LegacyLumixDownloadOperation,
+        traceID: String
     ) throws {
+        logLegacyMedia(traceID, "send request enter bytes=\(data.count).")
         try data.withUnsafeBytes { rawBuffer in
             guard let base = rawBuffer.baseAddress else { return }
             var sent = 0
@@ -1049,16 +1113,183 @@ private enum LegacyLumixMediaDownloader {
                 try operation.checkCancellation()
                 let count = Darwin.send(fileDescriptor, base.advanced(by: sent), rawBuffer.count - sent, 0)
                 if count < 0 {
-                    if errno == EINTR { continue }
+                    let sendError = errno
+                    if sendError == EINTR { continue }
                     try operation.checkCancellation()
-                    throw POSIXDownloadError("send", errno)
+                    throw POSIXDownloadError("send", sendError)
                 }
                 guard count > 0 else { throw POSIXDownloadError("send", EPIPE) }
                 sent += count
             }
         }
+        logLegacyMedia(traceID, "send request exit.")
     }
 
+    private static func setLegacySocketOption<Value>(
+        _ fileDescriptor: Int32,
+        name: Int32,
+        value: inout Value,
+        label: String,
+        traceID: String
+    ) throws {
+        let result = withUnsafeBytes(of: &value) { bytes in
+            setsockopt(
+                fileDescriptor,
+                SOL_SOCKET,
+                name,
+                bytes.baseAddress,
+                socklen_t(bytes.count)
+            )
+        }
+        let optionError = result == 0 ? 0 : errno
+        logLegacyMedia(traceID, "\(label) result=\(result) errno=\(optionError).")
+        guard result == 0 else {
+            throw POSIXDownloadError("setsockopt \(label)", optionError)
+        }
+    }
+
+    private static func connectLegacySocket(
+        _ fileDescriptor: Int32,
+        address: inout sockaddr_in,
+        timeoutSeconds: Int,
+        operation: LegacyLumixDownloadOperation,
+        traceID: String
+    ) throws {
+        let originalFlags = fcntl(fileDescriptor, F_GETFL, 0)
+        guard originalFlags >= 0 else {
+            throw POSIXDownloadError("fcntl F_GETFL", errno)
+        }
+        guard fcntl(fileDescriptor, F_SETFL, originalFlags | O_NONBLOCK) == 0 else {
+            throw POSIXDownloadError("fcntl F_SETFL", errno)
+        }
+        defer {
+            let restoreResult = fcntl(fileDescriptor, F_SETFL, originalFlags)
+            if restoreResult != 0 {
+                let restoreError = errno
+                logLegacyMedia(traceID, "restore blocking mode failed errno=\(restoreError).")
+            }
+        }
+
+        try operation.checkCancellation()
+        logLegacyMedia(traceID, "connect enter with \(max(1, timeoutSeconds))-second deadline.")
+        let connectResult = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fileDescriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        if connectResult == 0 {
+            logLegacyMedia(traceID, "connect complete immediately.")
+            return
+        }
+
+        let connectError = errno
+        guard connectError == EINPROGRESS else {
+            try operation.checkCancellation()
+            logLegacyMedia(traceID, "connect failed immediately errno=\(connectError).")
+            throw POSIXDownloadError("connect", connectError)
+        }
+
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        let deadlineNanoseconds = UInt64(max(1, timeoutSeconds)) * 1_000_000_000
+        var descriptor = pollfd(fd: fileDescriptor, events: Int16(POLLOUT), revents: 0)
+        var pollCount = 0
+
+        while true {
+            try operation.checkCancellation()
+            let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt
+            guard elapsed < deadlineNanoseconds else {
+                logLegacyMedia(traceID, "connect deadline expired after \(pollCount) polls.")
+                throw POSIXDownloadError("connect", ETIMEDOUT)
+            }
+
+            let remainingMilliseconds = Int32(
+                min(UInt64(250), max(UInt64(1), (deadlineNanoseconds - elapsed) / 1_000_000))
+            )
+            descriptor.revents = 0
+            pollCount += 1
+            let pollResult = Darwin.poll(&descriptor, 1, remainingMilliseconds)
+            if pollResult == 0 {
+                logLegacyMedia(traceID, "connect poll #\(pollCount) pending.")
+                continue
+            }
+            if pollResult < 0 {
+                let pollError = errno
+                if pollError == EINTR { continue }
+                logLegacyMedia(traceID, "connect poll failed errno=\(pollError).")
+                throw POSIXDownloadError("connect poll", pollError)
+            }
+
+            var socketError: Int32 = 0
+            var socketErrorLength = socklen_t(MemoryLayout.size(ofValue: socketError))
+            let socketErrorResult = getsockopt(
+                fileDescriptor,
+                SOL_SOCKET,
+                SO_ERROR,
+                &socketError,
+                &socketErrorLength
+            )
+            if socketErrorResult != 0 {
+                let optionError = errno
+                logLegacyMedia(traceID, "connect SO_ERROR lookup failed errno=\(optionError).")
+                throw POSIXDownloadError("getsockopt SO_ERROR", optionError)
+            }
+            guard socketError == 0 else {
+                logLegacyMedia(traceID, "connect completed with errno=\(socketError).")
+                throw POSIXDownloadError("connect", socketError)
+            }
+
+            try operation.checkCancellation()
+            logLegacyMedia(traceID, "connect complete after \(pollCount) polls.")
+            return
+        }
+    }
+
+}
+
+private func logLegacyMedia(_ traceID: String, _ message: String) {
+    print("[GM1Sync] [LegacyMedia \(traceID)] \(message)")
+}
+
+private let legacyLumixCancellationQueue = DispatchQueue(
+    label: "com.web3.gm1sync.legacy-media-cancellation",
+    qos: .userInitiated,
+    attributes: .concurrent
+)
+
+private final class LegacyLumixDownloadContinuationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<URL, Error>?
+    private var pendingResult: Result<URL, Error>?
+    private var isFinished = false
+
+    func install(_ continuation: CheckedContinuation<URL, Error>) {
+        lock.lock()
+        if isFinished {
+            let result = pendingResult
+            pendingResult = nil
+            lock.unlock()
+            if let result { continuation.resume(with: result) }
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    @discardableResult
+    func resume(_ result: Result<URL, Error>) -> Bool {
+        lock.lock()
+        guard !isFinished else {
+            lock.unlock()
+            return false
+        }
+        isFinished = true
+        let continuation = continuation
+        self.continuation = nil
+        if continuation == nil { pendingResult = result }
+        lock.unlock()
+        continuation?.resume(with: result)
+        return true
+    }
 }
 
 enum LumixMediaDownloadCompletion {
@@ -1130,12 +1361,36 @@ private final class LegacyLumixDownloadOperation: @unchecked Sendable {
     }
 
     func cancel() {
+        let shutdownDescriptor: Int32
+
+        print("[GM1Sync] [LegacyMedia cancellation] operation.cancel enter.")
         lock.lock()
-        isCancelled = true
-        if fileDescriptor >= 0 {
-            Darwin.shutdown(fileDescriptor, SHUT_RDWR)
+        guard !isCancelled else {
+            lock.unlock()
+            print("[GM1Sync] [LegacyMedia cancellation] operation.cancel exit; already cancelled.")
+            return
         }
+        isCancelled = true
+        shutdownDescriptor = fileDescriptor >= 0 ? Darwin.dup(fileDescriptor) : -1
         lock.unlock()
+
+        guard shutdownDescriptor >= 0 else {
+            print("[GM1Sync] [LegacyMedia cancellation] operation.cancel exit; no active descriptor.")
+            return
+        }
+        print(
+            "[GM1Sync] [LegacyMedia cancellation] operation.cancel exit; " +
+                "shutdown scheduled for duplicate fd=\(shutdownDescriptor)."
+        )
+        legacyLumixCancellationQueue.async {
+            let shutdownResult = Darwin.shutdown(shutdownDescriptor, SHUT_RDWR)
+            let shutdownError = shutdownResult == 0 ? 0 : errno
+            print(
+                "[GM1Sync] [LegacyMedia cancellation] shutdown completed " +
+                    "fd=\(shutdownDescriptor) result=\(shutdownResult) errno=\(shutdownError)."
+            )
+            Darwin.close(shutdownDescriptor)
+        }
     }
 
     func checkCancellation() throws {
