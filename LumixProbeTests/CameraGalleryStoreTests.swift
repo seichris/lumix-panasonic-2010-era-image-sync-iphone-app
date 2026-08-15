@@ -307,6 +307,69 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertTrue(store.isPreviouslyImported(photo))
     }
 
+    func testOriginalMetadataInspectionDownloadsOnceAndCachesTheResult() async throws {
+        let captureDate = Date(timeIntervalSince1970: 1_786_692_600)
+        let embeddedLocation = PhotoGeotagLocation(latitude: 1.3521, longitude: 103.8198)
+        let client = MockGalleryClient(total: 1)
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 1,
+            photoMetadataReader: { _ in
+                PhotoOriginalMetadata(captureDate: captureDate, embeddedLocation: embeddedLocation)
+            }
+        )
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        let first = await store.inspectOriginalMetadata(for: photo)
+        let second = await store.inspectOriginalMetadata(for: photo)
+
+        guard case let .resolved(inspection) = first else {
+            return XCTFail("Expected original metadata to resolve")
+        }
+        XCTAssertEqual(inspection.exifCaptureDate, captureDate)
+        XCTAssertEqual(inspection.embeddedLocation, embeddedLocation)
+        XCTAssertEqual(second, first)
+        let downloadCount = await client.downloadCount
+        XCTAssertEqual(downloadCount, 1)
+    }
+
+    func testImportPersistsVerifiedCaptureTimeAndMatchedLocation() async throws {
+        let captureDate = Date(timeIntervalSince1970: 1_786_692_600)
+        let client = MockGalleryClient(total: 1)
+        let importer = RecordingImporter()
+        let store = CameraGalleryStore(
+            client: client,
+            importer: importer,
+            importHistoryStore: InMemoryCameraImportHistoryStore(),
+            sourceIdentifier: "GM1S-TEST",
+            pageSize: 1,
+            photoMetadataReader: { _ in
+                PhotoOriginalMetadata(captureDate: captureDate, embeddedLocation: nil)
+            }
+        )
+        let sample = LocationSample(
+            timestamp: captureDate,
+            latitude: 1.3521,
+            longitude: 103.8198,
+            altitude: 12,
+            horizontalAccuracy: 8
+        )
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        await store.importPhoto(photo, samples: [sample], cameraClockOffset: 0)
+
+        let history = try XCTUnwrap(store.importHistoryRecord(for: photo))
+        XCTAssertEqual(history.verifiedCaptureDate, captureDate)
+        XCTAssertEqual(history.appliedLocation?.latitude, sample.latitude)
+        XCTAssertEqual(history.appliedLocation?.longitude, sample.longitude)
+        let packages = await importer.packages
+        XCTAssertEqual(packages.first?.geotag?.latitude, sample.latitude)
+        XCTAssertNil(packages.first?.embeddedLocation)
+    }
+
     func testSelectUnimportedExcludesPreviouslyImportedItemsAfterReload() async throws {
         let client = MockGalleryClient(total: 3)
         let historyStore = InMemoryCameraImportHistoryStore()
@@ -392,6 +455,7 @@ private actor MockGalleryClient: CameraGalleryClient {
     private var delayedBrowseDuration: Duration = .milliseconds(250)
     private(set) var browseRequests: [BrowseRequest] = []
     private(set) var browseCancellationCount = 0
+    private(set) var downloadCount = 0
 
     init(
         total: Int,
@@ -451,6 +515,7 @@ private actor MockGalleryClient: CameraGalleryClient {
     }
 
     func download(_ resource: LumixResource) async throws -> URL {
+        downloadCount += 1
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + "-" + resource.url.lastPathComponent)
         try Data([0xff, 0xd8, 0xff, 0xd9]).write(to: destination)
@@ -524,6 +589,8 @@ private actor RecordingImporter: CameraMediaImporting {
         let variant: CameraImportVariant
         let filenames: [String]
         let roles: [CameraImportPlan.Resource.Role]
+        let geotag: GeotagMatch?
+        let embeddedLocation: PhotoGeotagLocation?
     }
 
     private(set) var filenames: [String] = []
@@ -541,7 +608,9 @@ private actor RecordingImporter: CameraMediaImporting {
             Package(
                 variant: media.variant,
                 filenames: mediaFilenames,
-                roles: media.resources.map(\.role)
+                roles: media.resources.map(\.role),
+                geotag: geotag,
+                embeddedLocation: media.embeddedLocation
             )
         )
         if !failingFilenames.isDisjoint(with: mediaFilenames) {

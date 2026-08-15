@@ -420,6 +420,8 @@ final class ProbeViewModel: ObservableObject {
     }
 
     private func setResources(_ value: [LumixResource]) { resources = value }
+    func recordDiagnostic(_ text: String) { append(text) }
+
     private func append(_ text: String) {
         log += text + "\n"
         print("[GM1Sync] \(text)")

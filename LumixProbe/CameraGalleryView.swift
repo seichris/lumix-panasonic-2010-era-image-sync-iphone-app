@@ -462,7 +462,12 @@ private struct CameraPhotoDetailPager: View {
     var body: some View {
         TabView(selection: $selectedPhotoID) {
             ForEach(photos) { photo in
-                CameraPhotoDetailPage(photo: photo, store: store, model: model)
+                CameraPhotoDetailPage(
+                    photo: photo,
+                    isActive: selectedPhotoID == photo.id,
+                    store: store,
+                    model: model
+                )
                     .tag(photo.id)
             }
         }
@@ -475,6 +480,7 @@ private struct CameraPhotoDetailPager: View {
 
 private struct CameraPhotoDetailPage: View {
     let photo: LumixPhoto
+    let isActive: Bool
     @ObservedObject var store: CameraGalleryStore
     @ObservedObject var model: ProbeViewModel
     @State private var importMode: CameraPhotoImportMode = .jpeg
@@ -484,15 +490,6 @@ private struct CameraPhotoDetailPage: View {
     private var availablePhotoModes: [CameraPhotoImportMode] {
         CameraPhotoImportMode.allCases.filter(photo.supports)
     }
-    private var previewGeotagMatch: GeotagMatch? {
-        guard let captureDate = photo.captureDate else { return nil }
-        return LocationTrackMatcher.match(
-            captureDate: captureDate,
-            samples: model.locationLogger.samples,
-            cameraClockOffset: model.cameraClockOffsetMinutes * 60
-        )
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -557,45 +554,12 @@ private struct CameraPhotoDetailPage: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("Geotagging").font(.headline)
-                        if let match = previewGeotagMatch {
-                            MatchedLocationMap(match: match)
-                            Label("Location match available", systemImage: "mappin.circle.fill")
-                                .foregroundStyle(.green)
-                            LabeledContent("Camera listing time") {
-                                Text(match.captureDate.formatted(date: .abbreviated, time: .standard))
-                            }
-                            LabeledContent("Position") {
-                                Text(String(format: "%.5f, %.5f", match.latitude, match.longitude))
-                                    .font(.caption.monospaced())
-                            }
-                            Text("This is a preview based on the time advertised by the camera. Import confirms the match using the original JPEG's EXIF capture time.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if model.locationLogger.samples.isEmpty {
-                            Label("No GPS track points recorded", systemImage: "location.slash")
-                                .foregroundStyle(.secondary)
-                            Text("No location can be matched to this image until the location log contains a nearby track point.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if let captureDate = photo.captureDate {
-                            Label("No nearby location match", systemImage: "location.slash")
-                                .foregroundStyle(.orange)
-                            LabeledContent("Camera listing time") {
-                                Text(captureDate.formatted(date: .abbreviated, time: .standard))
-                            }
-                            Text("The camera supplied a capture time, but none of the recorded GPS track points are within 15 minutes. Import will verify this using the JPEG's EXIF time.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Label("Download required to verify", systemImage: "arrow.down.circle")
-                                .foregroundStyle(.orange)
-                            Text("\(model.locationLogger.samples.count) GPS track \(model.locationLogger.samples.count == 1 ? "point is" : "points are") recorded, but this camera item has no trustworthy capture time. Import must read the original JPEG's EXIF time before it can determine a match.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    CameraPhotoGeotaggingDetail(
+                        photo: photo,
+                        isActive: isActive,
+                        store: store,
+                        model: model
+                    )
                 }
 
                 importStatus
@@ -685,6 +649,181 @@ private struct CameraPhotoDetailPage: View {
             }
         case nil:
             EmptyView()
+        }
+    }
+}
+
+private struct CameraPhotoGeotaggingDetail: View {
+    let photo: LumixPhoto
+    let isActive: Bool
+    @ObservedObject var store: CameraGalleryStore
+    @ObservedObject var model: ProbeViewModel
+
+    private var historyRecord: CameraImportHistoryRecord? {
+        store.importHistoryRecord(for: photo)
+    }
+
+    private var inspectionState: CameraPhotoMetadataInspectionState? {
+        store.metadataInspectionState(for: photo)
+    }
+
+    private var inspection: CameraPhotoMetadataInspection? {
+        guard case let .resolved(value) = inspectionState else { return nil }
+        return value
+    }
+
+    private var captureDate: Date? {
+        inspection?.exifCaptureDate
+            ?? historyRecord?.verifiedCaptureDate
+            ?? inspection?.itemMetadataCaptureDate
+            ?? inspection?.galleryCaptureDate
+            ?? photo.captureDate
+    }
+
+    private var captureDateSource: String? {
+        if inspection?.exifCaptureDate != nil { return "Original JPEG EXIF" }
+        if historyRecord?.verifiedCaptureDate != nil { return "Verified during import" }
+        return inspection?.captureDateSource ?? (photo.captureDate == nil ? nil : "Camera gallery listing")
+    }
+
+    private var trackMatch: GeotagMatch? {
+        guard let captureDate else { return nil }
+        return LocationTrackMatcher.match(
+            captureDate: captureDate,
+            samples: model.locationLogger.samples,
+            cameraClockOffset: model.cameraClockOffsetMinutes * 60
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Geotagging").font(.headline)
+            locationResult
+            metadataDetails
+        }
+        .task(id: isActive) {
+            guard isActive else { return }
+            await inspectOriginal()
+        }
+        .accessibilityIdentifier("camera-photo-geotagging")
+    }
+
+    @ViewBuilder
+    private var locationResult: some View {
+        if let location = historyRecord?.appliedLocation {
+            MatchedLocationMap(location: location, markerTitle: "Imported location")
+            Label("Imported with location", systemImage: "mappin.circle.fill")
+                .foregroundStyle(.green)
+            Text("A previous import from this app was saved to Photos with this location.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            position(location)
+        } else if let location = inspection?.embeddedLocation {
+            MatchedLocationMap(location: location, markerTitle: "Embedded photo location")
+            Label("Original JPEG is geotagged", systemImage: "mappin.circle.fill")
+                .foregroundStyle(.green)
+            Text("This location is embedded in the original file and will be kept when it is imported.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            position(location)
+        } else if let match = trackMatch {
+            MatchedLocationMap(match: match)
+            Label("Will be geotagged on import", systemImage: "mappin.and.ellipse")
+                .foregroundStyle(.green)
+            Text("The original has no embedded GPS, but its capture time matches the recorded location track.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            position(PhotoGeotagLocation(match: match))
+        } else {
+            switch inspectionState {
+            case .checking, nil:
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Checking original JPEG metadata…")
+                }
+                .foregroundStyle(.secondary)
+            case .resolved:
+                if captureDate == nil {
+                    Label("No usable capture time", systemImage: "clock.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                    Text("The original JPEG did not expose a usable EXIF capture time, so it cannot be matched to the recorded location track.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if model.locationLogger.samples.isEmpty {
+                    Label("Original JPEG has no GPS", systemImage: "location.slash")
+                        .foregroundStyle(.secondary)
+                    Text("The original JPEG has no embedded GPS, and no location track points are recorded for a time-based match.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Label("No nearby location match", systemImage: "location.slash")
+                        .foregroundStyle(.orange)
+                    Text("The original JPEG has a capture time, but no recorded GPS point is within 15 minutes after the camera clock adjustment.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            case let .failed(message):
+                Label("Could not verify geotag", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Try metadata check again") {
+                    Task { await inspectOriginal(force: true) }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var metadataDetails: some View {
+        if let inspection {
+            LabeledContent("Original JPEG GPS", value: inspection.embeddedLocation == nil ? "Not embedded" : "Embedded")
+            LabeledContent("Original JPEG time") {
+                if let captureDate = inspection.exifCaptureDate {
+                    Text(captureDate.formatted(date: .abbreviated, time: .standard))
+                } else {
+                    Text("Not found").foregroundStyle(.secondary)
+                }
+            }
+            if let captureDate, let captureDateSource {
+                LabeledContent("Time used for matching") {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(captureDate.formatted(date: .abbreviated, time: .standard))
+                        Text(captureDateSource).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            DisclosureGroup("Metadata diagnostic") {
+                Text(inspection.diagnosticSummary)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+            }
+            .font(.caption)
+        }
+    }
+
+    private func position(_ location: PhotoGeotagLocation) -> some View {
+        LabeledContent("Position") {
+            Text(String(format: "%.5f, %.5f", location.latitude, location.longitude))
+                .font(.caption.monospaced())
+        }
+    }
+
+    private func inspectOriginal(force: Bool = false) async {
+        let shouldLog = force || inspectionState == nil
+        let state = await store.inspectOriginalMetadata(for: photo, force: force)
+        guard !Task.isCancelled, shouldLog else { return }
+        switch state {
+        case let .resolved(inspection):
+            model.recordDiagnostic("Photo geotag check \(photo.displayFilename): \(inspection.diagnosticSummary)")
+        case let .failed(message) where message != "Metadata inspection cancelled.":
+            model.recordDiagnostic("Photo geotag check \(photo.displayFilename) failed: \(message)")
+        case .checking, .failed:
+            break
         }
     }
 }

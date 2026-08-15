@@ -159,6 +159,19 @@ struct DownloadedCameraMedia: Sendable {
     let variant: CameraImportVariant
     let resources: [Resource]
     let captureDate: Date?
+    let embeddedLocation: PhotoGeotagLocation?
+
+    init(
+        variant: CameraImportVariant,
+        resources: [Resource],
+        captureDate: Date?,
+        embeddedLocation: PhotoGeotagLocation? = nil
+    ) {
+        self.variant = variant
+        self.resources = resources
+        self.captureDate = captureDate
+        self.embeddedLocation = embeddedLocation
+    }
 }
 
 protocol CameraMediaImporting: Sendable {
@@ -180,7 +193,7 @@ struct SystemCameraMediaImporter: CameraMediaImporting {
         try await PHPhotoLibrary.shared().performChanges {
             let request = PHAssetCreationRequest.forAsset()
             request.creationDate = media.captureDate
-            request.location = geotag?.location
+            request.location = geotag?.location ?? media.embeddedLocation?.location
 
             for resource in media.resources {
                 let options = PHAssetResourceCreationOptions()
@@ -242,6 +255,8 @@ enum CameraMediaImportError: LocalizedError {
 struct CameraImportHistoryRecord: Codable, Equatable, Sendable {
     var variants: Set<CameraImportVariant>
     var lastImportedAt: Date
+    var verifiedCaptureDate: Date? = nil
+    var appliedLocation: PhotoGeotagLocation? = nil
 
     var summary: String {
         variants

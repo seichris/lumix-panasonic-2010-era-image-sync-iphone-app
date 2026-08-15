@@ -1,4 +1,5 @@
 import CoreLocation
+import ImageIO
 import XCTest
 @testable import GM1Sync
 
@@ -71,6 +72,25 @@ final class GeotaggingTests: XCTestCase {
         ))
 
         XCTAssertEqual(parsed.timeIntervalSince1970, 1_786_692_600, accuracy: 0.1)
+    }
+
+    func testParsesEmbeddedGPSReferencesAltitudeAndAccuracy() throws {
+        let gps: NSDictionary = [
+            kCGImagePropertyGPSLatitude: 33.8688,
+            kCGImagePropertyGPSLatitudeRef: "S",
+            kCGImagePropertyGPSLongitude: 151.2093,
+            kCGImagePropertyGPSLongitudeRef: "W",
+            kCGImagePropertyGPSAltitude: 12.5,
+            kCGImagePropertyGPSAltitudeRef: 1,
+            kCGImagePropertyGPSHPositioningError: 6
+        ]
+
+        let location = try XCTUnwrap(PhotoOriginalMetadataReader.location(from: gps))
+
+        XCTAssertEqual(location.latitude, -33.8688, accuracy: 0.000_001)
+        XCTAssertEqual(location.longitude, -151.2093, accuracy: 0.000_001)
+        XCTAssertEqual(location.altitude, -12.5, accuracy: 0.001)
+        XCTAssertEqual(location.horizontalAccuracy, 6, accuracy: 0.001)
     }
 
     @MainActor

@@ -474,21 +474,32 @@ private struct DownloadedPhotoGeotagPreview: View {
 }
 
 struct MatchedLocationMap: View {
-    let match: GeotagMatch
+    private let location: PhotoGeotagLocation
+    private let markerTitle: String
+
+    init(match: GeotagMatch) {
+        location = PhotoGeotagLocation(match: match)
+        markerTitle = "Matched location"
+    }
+
+    init(location: PhotoGeotagLocation, markerTitle: String = "Photo location") {
+        self.location = location
+        self.markerTitle = markerTitle
+    }
 
     var body: some View {
         Map(initialPosition: .region(region)) {
-            Marker("Matched location", coordinate: match.location.coordinate)
+            Marker(markerTitle, coordinate: location.location.coordinate)
         }
         .frame(height: 180)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .accessibilityLabel("Map preview of the matched photo location")
-        .id("\(match.latitude)-\(match.longitude)")
+        .id("\(location.latitude)-\(location.longitude)")
     }
 
     private var region: MKCoordinateRegion {
         MKCoordinateRegion(
-            center: match.location.coordinate,
+            center: location.location.coordinate,
             span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
         )
     }
