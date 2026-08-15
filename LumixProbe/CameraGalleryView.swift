@@ -736,10 +736,16 @@ private struct CameraPhotoGeotaggingDetail: View {
             position(PhotoGeotagLocation(match: match))
         } else {
             switch inspectionState {
-            case .checking, nil:
+            case let .checking(stage):
                 HStack(spacing: 8) {
                     ProgressView()
-                    Text("Checking original JPEG metadata…")
+                    Text(stage.title)
+                }
+                .foregroundStyle(.secondary)
+            case nil:
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Preparing metadata check…")
                 }
                 .foregroundStyle(.secondary)
             case .resolved:
@@ -814,17 +820,13 @@ private struct CameraPhotoGeotaggingDetail: View {
     }
 
     private func inspectOriginal(force: Bool = false) async {
-        let shouldLog = force || inspectionState == nil
-        let state = await store.inspectOriginalMetadata(for: photo, force: force)
-        guard !Task.isCancelled, shouldLog else { return }
-        switch state {
-        case let .resolved(inspection):
-            model.recordDiagnostic("Photo geotag check \(photo.displayFilename): \(inspection.diagnosticSummary)")
-        case let .failed(message) where message != "Metadata inspection cancelled.":
-            model.recordDiagnostic("Photo geotag check \(photo.displayFilename) failed: \(message)")
-        case .checking, .failed:
-            break
-        }
+        _ = await store.inspectOriginalMetadata(
+            for: photo,
+            force: force,
+            onDiagnostic: { message in
+                model.recordDiagnostic(message)
+            }
+        )
     }
 }
 

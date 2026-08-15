@@ -101,10 +101,32 @@ struct CameraPhotoMetadataInspection: Equatable, Sendable {
     }
 }
 
+enum CameraPhotoMetadataInspectionStage: String, Equatable, Sendable {
+    case requestingItemMetadata
+    case downloadingOriginalJPEG
+    case readingOriginalJPEG
+
+    var title: String {
+        switch self {
+        case .requestingItemMetadata: "Checking camera item metadata…"
+        case .downloadingOriginalJPEG: "Downloading original JPEG metadata…"
+        case .readingOriginalJPEG: "Reading original JPEG metadata…"
+        }
+    }
+}
+
 enum CameraPhotoMetadataInspectionState: Equatable, Sendable {
-    case checking
+    case checking(CameraPhotoMetadataInspectionStage)
     case resolved(CameraPhotoMetadataInspection)
     case failed(String)
+}
+
+private enum CameraPhotoMetadataInspectionError: LocalizedError {
+    case downloadTimedOut
+
+    var errorDescription: String? {
+        "The camera did not finish sending the original JPEG in time. Reconnect the camera Wi-Fi and try again."
+    }
 }
 
 @MainActor
@@ -133,6 +155,7 @@ final class CameraGalleryStore: ObservableObject {
     private let importer: any CameraMediaImporting
     private let importHistoryStore: any CameraImportHistoryStoring
     private let photoMetadataReader: @Sendable (URL) -> PhotoOriginalMetadata
+    private let metadataInspectionDownloadTimeout: Duration
     private let mediaCache: LumixMediaCache
     private let pageSize: Int
     private var nextPageRequest: PageRequest?
@@ -145,6 +168,11 @@ final class CameraGalleryStore: ObservableObject {
     private var importTaskID: UUID?
     private var sessionResetTask: Task<Void, Never>?
     private var sessionResetTaskID: UUID?
+    private struct MetadataInspectionTask {
+        let id: UUID
+        let task: Task<CameraPhotoMetadataInspectionState, Never>
+    }
+    private var metadataInspectionTasks: [LumixPhoto.ID: MetadataInspectionTask] = [:]
 
     init(
         client: any CameraGalleryClient = LumixClient(),
@@ -153,6 +181,7 @@ final class CameraGalleryStore: ObservableObject {
         sourceIdentifier: String = "camera",
         pageSize: Int = 20,
         mediaCacheByteLimit: Int = 24 * 1024 * 1024,
+        metadataInspectionDownloadTimeout: Duration = .seconds(45),
         photoMetadataReader: @escaping @Sendable (URL) -> PhotoOriginalMetadata = {
             PhotoOriginalMetadataReader.read(from: $0)
         }
@@ -163,6 +192,7 @@ final class CameraGalleryStore: ObservableObject {
         self.importer = importer
         self.importHistoryStore = importHistoryStore
         self.photoMetadataReader = photoMetadataReader
+        self.metadataInspectionDownloadTimeout = metadataInspectionDownloadTimeout
         self.pageSize = max(1, pageSize)
         mediaCache = LumixMediaCache(byteLimit: mediaCacheByteLimit)
         loadImportHistory()
@@ -175,6 +205,7 @@ final class CameraGalleryStore: ObservableObject {
         importHistoryStore: any CameraImportHistoryStoring = UserDefaultsCameraImportHistoryStore(),
         pageSize: Int = 20,
         mediaCacheByteLimit: Int = 24 * 1024 * 1024,
+        metadataInspectionDownloadTimeout: Duration = .seconds(45),
         photoMetadataReader: @escaping @Sendable (URL) -> PhotoOriginalMetadata = {
             PhotoOriginalMetadataReader.read(from: $0)
         }
@@ -185,6 +216,7 @@ final class CameraGalleryStore: ObservableObject {
         self.importer = importer
         self.importHistoryStore = importHistoryStore
         self.photoMetadataReader = photoMetadataReader
+        self.metadataInspectionDownloadTimeout = metadataInspectionDownloadTimeout
         self.pageSize = max(1, pageSize)
         mediaCache = LumixMediaCache(byteLimit: mediaCacheByteLimit)
         loadImportHistory()
@@ -202,6 +234,7 @@ final class CameraGalleryStore: ObservableObject {
         importer = SystemCameraMediaImporter()
         importHistoryStore = InMemoryCameraImportHistoryStore()
         photoMetadataReader = { PhotoOriginalMetadataReader.read(from: $0) }
+        metadataInspectionDownloadTimeout = .seconds(45)
         pageSize = 20
         mediaCache = LumixMediaCache(byteLimit: 1 * 1024 * 1024)
         phase = previewPhase
@@ -255,6 +288,7 @@ final class CameraGalleryStore: ObservableObject {
 
     func loadInitial() async {
         if let sessionResetTask { await sessionResetTask.value }
+        cancelMetadataInspections()
         let generation = UUID()
         let taskID = UUID()
         loadGeneration = generation
@@ -271,7 +305,6 @@ final class CameraGalleryStore: ObservableObject {
         totalCount = 0
         capabilities = nil
         selectedPhotoIDs = []
-        metadataInspectionStates = [:]
         let client = self.client
 
         let task = Task { @MainActor [weak self] in
@@ -440,8 +473,14 @@ final class CameraGalleryStore: ObservableObject {
         selectedPhotoIDs = []
         importStates = [:]
         batchProgress = nil
-        metadataInspectionStates = [:]
+        cancelMetadataInspections()
         await mediaCache.removeAll()
+    }
+
+    private func cancelMetadataInspections() {
+        metadataInspectionTasks.values.forEach { $0.task.cancel() }
+        metadataInspectionTasks = [:]
+        metadataInspectionStates = [:]
     }
 
     func mediaData(for resource: LumixResource) async throws -> Data {
@@ -454,10 +493,22 @@ final class CameraGalleryStore: ObservableObject {
     @discardableResult
     func inspectOriginalMetadata(
         for photo: LumixPhoto,
-        force: Bool = false
+        force: Bool = false,
+        onDiagnostic: @escaping @MainActor (String) -> Void = { _ in }
     ) async -> CameraPhotoMetadataInspectionState {
-        if !force, let cached = metadataInspectionStates[photo.id] {
-            return cached
+        if force, let existing = metadataInspectionTasks[photo.id] {
+            existing.task.cancel()
+            _ = await existing.task.value
+            if metadataInspectionTasks[photo.id]?.id == existing.id {
+                metadataInspectionTasks[photo.id] = nil
+            }
+        } else {
+            if let existing = metadataInspectionTasks[photo.id] {
+                return await existing.task.value
+            }
+            if let cached = metadataInspectionStates[photo.id] {
+                return cached
+            }
         }
 
         guard photo.kind == .photo else {
@@ -466,43 +517,89 @@ final class CameraGalleryStore: ObservableObject {
             return state
         }
 
-        metadataInspectionStates[photo.id] = .checking
+        let taskID = UUID()
         let generation = loadGeneration
         let client = self.client
+        let task = Task { @MainActor [weak self] in
+            guard let self else {
+                return CameraPhotoMetadataInspectionState.failed("Metadata inspection stopped.")
+            }
+            return await performOriginalMetadataInspection(
+                for: photo,
+                generation: generation,
+                client: client,
+                onDiagnostic: onDiagnostic
+            )
+        }
+        metadataInspectionTasks[photo.id] = MetadataInspectionTask(id: taskID, task: task)
+        let state = await task.value
+        if metadataInspectionTasks[photo.id]?.id == taskID {
+            metadataInspectionTasks[photo.id] = nil
+        }
+        return state
+    }
+
+    private func performOriginalMetadataInspection(
+        for photo: LumixPhoto,
+        generation: UUID,
+        client: any CameraGalleryClient,
+        onDiagnostic: @escaping @MainActor (String) -> Void
+    ) async -> CameraPhotoMetadataInspectionState {
         var itemMetadataCaptureDate: Date?
         var itemMetadataError: String?
         var detailedPhoto: LumixPhoto?
 
         if let itemID = photo.itemID {
+            updateMetadataInspection(
+                photo,
+                stage: .requestingItemMetadata,
+                onDiagnostic: onDiagnostic
+            )
             do {
                 detailedPhoto = try await client.browseMetadata(itemID: itemID)
                 try Task.checkCancellation()
                 itemMetadataCaptureDate = detailedPhoto?.captureDate
             } catch is CancellationError {
-                metadataInspectionStates[photo.id] = nil
-                return .failed("Metadata inspection cancelled.")
+                return cancelMetadataInspection(photo, generation: generation)
             } catch {
                 itemMetadataError = error.localizedDescription
+                recordMetadataDiagnostic(
+                    "Photo geotag check \(photo.displayFilename): camera item metadata unavailable: \(error.localizedDescription)",
+                    onDiagnostic: onDiagnostic
+                )
             }
         }
 
         guard loadGeneration == generation else {
-            metadataInspectionStates[photo.id] = nil
-            return .failed("Metadata inspection cancelled.")
+            return cancelMetadataInspection(photo, generation: generation)
         }
 
         guard let original = detailedPhoto?.originalJPEGResource ?? photo.originalJPEGResource else {
-            let state = CameraPhotoMetadataInspectionState.failed("The camera did not advertise an original JPEG for this item.")
-            metadataInspectionStates[photo.id] = state
-            return state
+            return failMetadataInspection(
+                photo,
+                message: "The camera did not advertise an original JPEG for this item.",
+                onDiagnostic: onDiagnostic
+            )
         }
 
-        var temporaryFile: URL?
+        updateMetadataInspection(
+            photo,
+            stage: .downloadingOriginalJPEG,
+            onDiagnostic: onDiagnostic
+        )
         do {
-            let fileURL = try await client.download(original)
-            temporaryFile = fileURL
+            let timeout = metadataInspectionDownloadTimeout
+            let fileURL = try await withCameraMetadataTimeout(timeout) {
+                try await client.download(original)
+            }
+            defer { try? FileManager.default.removeItem(at: fileURL) }
             try Task.checkCancellation()
             guard loadGeneration == generation else { throw CancellationError() }
+            updateMetadataInspection(
+                photo,
+                stage: .readingOriginalJPEG,
+                onDiagnostic: onDiagnostic
+            )
             let reader = photoMetadataReader
             let originalMetadata = await Task.detached(priority: .userInitiated) {
                 reader(fileURL)
@@ -519,21 +616,64 @@ final class CameraGalleryStore: ObservableObject {
             )
             let state = CameraPhotoMetadataInspectionState.resolved(inspection)
             metadataInspectionStates[photo.id] = state
-            print("[GM1Sync] Photo metadata item=\(photo.itemID ?? "unknown"): \(inspection.diagnosticSummary)")
-            if let temporaryFile { try? FileManager.default.removeItem(at: temporaryFile) }
+            recordMetadataDiagnostic(
+                "Photo geotag check \(photo.displayFilename): \(inspection.diagnosticSummary)",
+                onDiagnostic: onDiagnostic
+            )
             return state
         } catch is CancellationError {
-            if let temporaryFile { try? FileManager.default.removeItem(at: temporaryFile) }
-            metadataInspectionStates[photo.id] = nil
-            return .failed("Metadata inspection cancelled.")
+            return cancelMetadataInspection(photo, generation: generation)
         } catch {
-            if let temporaryFile { try? FileManager.default.removeItem(at: temporaryFile) }
-            let message = "Could not inspect the original JPEG: \(error.localizedDescription)"
-            let state = CameraPhotoMetadataInspectionState.failed(message)
-            metadataInspectionStates[photo.id] = state
-            print("[GM1Sync] Photo metadata item=\(photo.itemID ?? "unknown") failed: \(message)")
-            return state
+            return failMetadataInspection(
+                photo,
+                message: "Could not inspect the original JPEG: \(error.localizedDescription)",
+                onDiagnostic: onDiagnostic
+            )
         }
+    }
+
+    private func updateMetadataInspection(
+        _ photo: LumixPhoto,
+        stage: CameraPhotoMetadataInspectionStage,
+        onDiagnostic: @MainActor (String) -> Void
+    ) {
+        metadataInspectionStates[photo.id] = .checking(stage)
+        recordMetadataDiagnostic(
+            "Photo geotag check \(photo.displayFilename): \(stage.title)",
+            onDiagnostic: onDiagnostic
+        )
+    }
+
+    private func failMetadataInspection(
+        _ photo: LumixPhoto,
+        message: String,
+        onDiagnostic: @MainActor (String) -> Void
+    ) -> CameraPhotoMetadataInspectionState {
+        let state = CameraPhotoMetadataInspectionState.failed(message)
+        metadataInspectionStates[photo.id] = state
+        recordMetadataDiagnostic(
+            "Photo geotag check \(photo.displayFilename) failed: \(message)",
+            onDiagnostic: onDiagnostic
+        )
+        return state
+    }
+
+    private func cancelMetadataInspection(
+        _ photo: LumixPhoto,
+        generation: UUID
+    ) -> CameraPhotoMetadataInspectionState {
+        if loadGeneration == generation {
+            metadataInspectionStates[photo.id] = nil
+        }
+        return .failed("Metadata inspection cancelled.")
+    }
+
+    private func recordMetadataDiagnostic(
+        _ message: String,
+        onDiagnostic: @MainActor (String) -> Void
+    ) {
+        print("[GM1Sync] \(message)")
+        onDiagnostic(message)
     }
 
     func videoPlaybackSession(_ photo: LumixPhoto) async throws -> any CameraPlaybackSession {
@@ -828,6 +968,24 @@ final class CameraGalleryStore: ObservableObject {
             }
         }
         selectedPhotoIDs.formIntersection(existingIDs)
+    }
+}
+
+private func withCameraMetadataTimeout<Value: Sendable>(
+    _ timeout: Duration,
+    operation: @escaping @Sendable () async throws -> Value
+) async throws -> Value {
+    try await withThrowingTaskGroup(of: Value.self) { group in
+        defer { group.cancelAll() }
+        group.addTask(operation: operation)
+        group.addTask {
+            try await Task.sleep(for: timeout)
+            throw CameraPhotoMetadataInspectionError.downloadTimedOut
+        }
+        guard let result = try await group.next() else {
+            throw CameraPhotoMetadataInspectionError.downloadTimedOut
+        }
+        return result
     }
 }
 

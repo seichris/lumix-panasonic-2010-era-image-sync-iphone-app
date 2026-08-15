@@ -346,7 +346,14 @@ private struct GeotaggingControls: View {
     var body: some View {
         Section("Geotagging") {
             if logger.isLogging {
-                Label("Location log running", systemImage: "location.fill")
+                HStack {
+                    Label("Location log running", systemImage: "location.fill")
+                    Spacer()
+                    if let accuracyLabel {
+                        Text(accuracyLabel)
+                            .monospacedDigit()
+                    }
+                }
                     .foregroundStyle(.green)
                 Button("Stop location log", role: .destructive) { logger.stop() }
                     .accessibilityIdentifier("stop-location-log")
@@ -357,9 +364,11 @@ private struct GeotaggingControls: View {
                 .accessibilityIdentifier("start-location-log")
             }
 
-            Text(logger.statusMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if !logger.isLogging, logger.statusMessage != "Location logging is off." {
+                Text(logger.statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             Toggle(isOn: $autoStartGeotagging) {
                 Label("Start geotagging on app start", systemImage: "location.fill.viewfinder")
@@ -382,6 +391,12 @@ private struct GeotaggingControls: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var accuracyLabel: String? {
+        guard let accuracy = logger.latestSample?.horizontalAccuracy,
+              accuracy >= 0 else { return nil }
+        return "±\(Int(accuracy.rounded())) m"
     }
 
     private var clockOffsetLabel: String {

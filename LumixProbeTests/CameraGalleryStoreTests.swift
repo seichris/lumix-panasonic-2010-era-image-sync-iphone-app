@@ -335,6 +335,57 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertEqual(downloadCount, 1)
     }
 
+    func testConcurrentMetadataInspectionsShareOneCameraDownload() async throws {
+        let client = MockGalleryClient(total: 1, downloadDelay: .milliseconds(100))
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 1,
+            photoMetadataReader: { _ in
+                PhotoOriginalMetadata(captureDate: nil, embeddedLocation: nil)
+            }
+        )
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        async let first = store.inspectOriginalMetadata(for: photo)
+        async let second = store.inspectOriginalMetadata(for: photo)
+        let (firstResult, secondResult) = await (first, second)
+
+        XCTAssertEqual(firstResult, secondResult)
+        guard case .resolved = firstResult else {
+            return XCTFail("Expected the shared inspection to resolve")
+        }
+        let downloadCount = await client.downloadCount
+        XCTAssertEqual(downloadCount, 1)
+    }
+
+    func testMetadataInspectionTimesOutAndRecordsItsStages() async throws {
+        let client = MockGalleryClient(total: 1, downloadDelay: .seconds(30))
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 1,
+            metadataInspectionDownloadTimeout: .milliseconds(20)
+        )
+        var diagnostics: [String] = []
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        let state = await store.inspectOriginalMetadata(
+            for: photo,
+            onDiagnostic: { diagnostics.append($0) }
+        )
+
+        guard case let .failed(message) = state else {
+            return XCTFail("Expected the inspection to time out")
+        }
+        XCTAssertTrue(message.contains("did not finish sending"))
+        XCTAssertTrue(diagnostics.contains { $0.contains("Checking camera item metadata") })
+        XCTAssertTrue(diagnostics.contains { $0.contains("Downloading original JPEG metadata") })
+        XCTAssertTrue(diagnostics.contains { $0.contains("failed") })
+    }
+
     func testImportPersistsVerifiedCaptureTimeAndMatchedLocation() async throws {
         let captureDate = Date(timeIntervalSince1970: 1_786_692_600)
         let client = MockGalleryClient(total: 1)
@@ -451,6 +502,7 @@ private actor MockGalleryClient: CameraGalleryClient {
     private let preparationDelay: Duration
     private let includesRAW: Bool
     private let videoIndexes: Set<Int>
+    private let downloadDelay: Duration
     private var delayedBrowseStart: Int?
     private var delayedBrowseDuration: Duration = .milliseconds(250)
     private(set) var browseRequests: [BrowseRequest] = []
@@ -462,13 +514,15 @@ private actor MockGalleryClient: CameraGalleryClient {
         overlapsPages: Bool = false,
         preparationDelay: Duration = .zero,
         includesRAW: Bool = false,
-        videoIndexes: Set<Int> = []
+        videoIndexes: Set<Int> = [],
+        downloadDelay: Duration = .zero
     ) {
         self.total = total
         self.overlapsPages = overlapsPages
         self.preparationDelay = preparationDelay
         self.includesRAW = includesRAW
         self.videoIndexes = videoIndexes
+        self.downloadDelay = downloadDelay
     }
 
     func setTotal(_ total: Int) {
@@ -516,6 +570,7 @@ private actor MockGalleryClient: CameraGalleryClient {
 
     func download(_ resource: LumixResource) async throws -> URL {
         downloadCount += 1
+        if downloadDelay > .zero { try await Task.sleep(for: downloadDelay) }
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + "-" + resource.url.lastPathComponent)
         try Data([0xff, 0xd8, 0xff, 0xd9]).write(to: destination)
