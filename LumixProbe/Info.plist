@@ -37,6 +37,8 @@
 	<string>GM1 Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>GM1 Sync can save original photos and videos downloaded from your camera to your photo library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>GM1 Sync checks which original camera photos and videos are already in your library so it can avoid downloading duplicates.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

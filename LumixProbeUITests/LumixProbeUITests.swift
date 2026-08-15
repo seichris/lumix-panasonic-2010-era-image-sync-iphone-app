@@ -68,6 +68,7 @@ final class LumixProbeUITests: XCTestCase {
         let mediaCount = app.staticTexts["camera-gallery-count"]
         XCTAssertTrue(mediaCount.exists)
         XCTAssertEqual(mediaCount.label, "25 images · 0 videos")
+        XCTAssertTrue(app.buttons["download-all-new-camera-media"].exists)
 
         let firstPhoto = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "open-camera-photo-")

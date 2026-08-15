@@ -96,6 +96,17 @@ struct CameraMediaPolicy: Hashable, Sendable {
 }
 
 extension LumixPhoto {
+    var importFilenames: Set<String> {
+        Set(
+            resources
+                .filter { resource in
+                    !resource.isPreview && (resource.isOriginalJPEG || resource.isRAW || resource.isVideo)
+                }
+                .map { CameraImportFilename.normalized($0.downloadURL.lastPathComponent) }
+                .filter { !$0.isEmpty }
+        )
+    }
+
     func supports(_ mode: CameraPhotoImportMode) -> Bool {
         guard kind == .photo else { return isImportable }
         switch mode {
@@ -252,11 +263,86 @@ enum CameraMediaImportError: LocalizedError {
     }
 }
 
+enum CameraImportFilename {
+    static func normalized(_ filename: String) -> String {
+        filename.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    }
+}
+
+struct CameraImportReconciliationResult: Sendable {
+    let matchedFilenames: Set<String>
+    let hasCompleteLibraryAccess: Bool
+}
+
+protocol CameraImportReconciling: Sendable {
+    func importedFilenames(matching filenames: Set<String>) async throws -> CameraImportReconciliationResult
+}
+
+struct NoopCameraImportReconciler: CameraImportReconciling {
+    func importedFilenames(matching filenames: Set<String>) async throws -> CameraImportReconciliationResult {
+        CameraImportReconciliationResult(matchedFilenames: [], hasCompleteLibraryAccess: true)
+    }
+}
+
+struct SystemCameraImportReconciler: CameraImportReconciling {
+    func importedFilenames(matching filenames: Set<String>) async throws -> CameraImportReconciliationResult {
+        let targets = Set(filenames.map(CameraImportFilename.normalized).filter { !$0.isEmpty })
+        guard !targets.isEmpty else {
+            return CameraImportReconciliationResult(matchedFilenames: [], hasCompleteLibraryAccess: true)
+        }
+
+        let currentStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        let status = currentStatus == .notDetermined
+            ? await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+            : currentStatus
+        guard status == .authorized || status == .limited else {
+            throw CameraImportReconciliationError.permissionDenied
+        }
+
+        let matchedFilenames = await Task.detached(priority: .utility) {
+            let options = PHFetchOptions()
+            options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            let assets = PHAsset.fetchAssets(with: options)
+            var matches: Set<String> = []
+
+            assets.enumerateObjects { asset, _, stop in
+                for resource in PHAssetResource.assetResources(for: asset) {
+                    let filename = CameraImportFilename.normalized(resource.originalFilename)
+                    if targets.contains(filename) { matches.insert(filename) }
+                }
+                if matches.count == targets.count { stop.pointee = true }
+            }
+            return matches
+        }.value
+
+        return CameraImportReconciliationResult(
+            matchedFilenames: matchedFilenames,
+            hasCompleteLibraryAccess: status == .authorized
+        )
+    }
+}
+
+enum CameraImportReconciliationError: LocalizedError {
+    case permissionDenied
+
+    var errorDescription: String? {
+        "Full Photos access is required to identify camera media that is already in your library."
+    }
+}
+
+enum CameraImportEvidence: String, Codable, Equatable, Sendable {
+    case appImport
+    case photosLibrary
+}
+
 struct CameraImportHistoryRecord: Codable, Equatable, Sendable {
     var variants: Set<CameraImportVariant>
     var lastImportedAt: Date
     var verifiedCaptureDate: Date? = nil
     var appliedLocation: PhotoGeotagLocation? = nil
+    var evidence: CameraImportEvidence? = nil
+
+    var effectiveEvidence: CameraImportEvidence { evidence ?? .appImport }
 
     var summary: String {
         variants

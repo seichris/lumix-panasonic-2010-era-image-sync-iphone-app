@@ -25,7 +25,7 @@ struct ContentView: View {
                 }, sourceIdentifierProvider: {
                     model.rememberedCameraNetwork?.ssid
                         ?? model.host.trimmingCharacters(in: .whitespacesAndNewlines)
-                })
+                }, importReconciler: SystemCameraImportReconciler())
             )
         }
     }

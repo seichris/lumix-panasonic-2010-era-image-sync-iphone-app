@@ -141,6 +141,9 @@ final class CameraGalleryStore: ObservableObject {
     @Published private(set) var batchProgress: CameraBatchProgress?
     @Published private(set) var isImporting = false
     @Published private(set) var importHistory: [String: CameraImportHistoryRecord] = [:]
+    @Published private(set) var isReconcilingImportHistory = false
+    @Published private(set) var importHistoryReconciliationError: String?
+    @Published private(set) var hasCompletePhotoLibraryImportHistory = false
     @Published private(set) var capabilities: CameraCapabilities?
     @Published private(set) var metadataInspectionStates: [LumixPhoto.ID: CameraPhotoMetadataInspectionState] = [:]
 
@@ -154,6 +157,7 @@ final class CameraGalleryStore: ObservableObject {
     private var client: any CameraGalleryClient
     private let importer: any CameraMediaImporting
     private let importHistoryStore: any CameraImportHistoryStoring
+    private let importReconciler: any CameraImportReconciling
     private let photoMetadataReader: @Sendable (URL) -> PhotoOriginalMetadata
     private let metadataInspectionDownloadTimeout: Duration
     private let mediaCache: LumixMediaCache
@@ -168,6 +172,7 @@ final class CameraGalleryStore: ObservableObject {
     private var importTaskID: UUID?
     private var sessionResetTask: Task<Void, Never>?
     private var sessionResetTaskID: UUID?
+    private var reconciledImportFilenames: Set<String> = []
     private struct MetadataInspectionTask {
         let id: UUID
         let task: Task<CameraPhotoMetadataInspectionState, Never>
@@ -178,6 +183,7 @@ final class CameraGalleryStore: ObservableObject {
         client: any CameraGalleryClient = LumixClient(),
         importer: any CameraMediaImporting = SystemCameraMediaImporter(),
         importHistoryStore: any CameraImportHistoryStoring = UserDefaultsCameraImportHistoryStore(),
+        importReconciler: any CameraImportReconciling = NoopCameraImportReconciler(),
         sourceIdentifier: String = "camera",
         pageSize: Int = 20,
         mediaCacheByteLimit: Int = 24 * 1024 * 1024,
@@ -191,6 +197,7 @@ final class CameraGalleryStore: ObservableObject {
         self.client = client
         self.importer = importer
         self.importHistoryStore = importHistoryStore
+        self.importReconciler = importReconciler
         self.photoMetadataReader = photoMetadataReader
         self.metadataInspectionDownloadTimeout = metadataInspectionDownloadTimeout
         self.pageSize = max(1, pageSize)
@@ -203,6 +210,7 @@ final class CameraGalleryStore: ObservableObject {
         sourceIdentifierProvider: @escaping @MainActor () -> String = { "camera" },
         importer: any CameraMediaImporting = SystemCameraMediaImporter(),
         importHistoryStore: any CameraImportHistoryStoring = UserDefaultsCameraImportHistoryStore(),
+        importReconciler: any CameraImportReconciling = NoopCameraImportReconciler(),
         pageSize: Int = 20,
         mediaCacheByteLimit: Int = 24 * 1024 * 1024,
         metadataInspectionDownloadTimeout: Duration = .seconds(45),
@@ -215,6 +223,7 @@ final class CameraGalleryStore: ObservableObject {
         client = clientProvider()
         self.importer = importer
         self.importHistoryStore = importHistoryStore
+        self.importReconciler = importReconciler
         self.photoMetadataReader = photoMetadataReader
         self.metadataInspectionDownloadTimeout = metadataInspectionDownloadTimeout
         self.pageSize = max(1, pageSize)
@@ -233,6 +242,7 @@ final class CameraGalleryStore: ObservableObject {
         client = previewClient
         importer = SystemCameraMediaImporter()
         importHistoryStore = InMemoryCameraImportHistoryStore()
+        importReconciler = NoopCameraImportReconciler()
         photoMetadataReader = { PhotoOriginalMetadataReader.read(from: $0) }
         metadataInspectionDownloadTimeout = .seconds(45)
         pageSize = 20
@@ -250,6 +260,9 @@ final class CameraGalleryStore: ObservableObject {
 
     var imageCount: Int { photos.lazy.filter { $0.kind == .photo }.count }
     var videoCount: Int { photos.lazy.filter { $0.kind == .video }.count }
+    var metadataInspectionTimeoutSeconds: Int {
+        max(1, Int(metadataInspectionDownloadTimeout.timeInterval.rounded(.up)))
+    }
 
     var failedPhotos: [LumixPhoto] {
         photos.filter { photo in
@@ -417,12 +430,50 @@ final class CameraGalleryStore: ObservableObject {
             await loadNextPage()
             if paginationError != nil || nextPageRequest == requestBeforeLoad { return }
         }
+        if paginationError == nil { await reconcileImportHistoryWithPhotos() }
     }
 
     func reloadAllMedia() async {
         await loadInitial()
         guard phase == .loaded else { return }
         await loadAllPages()
+    }
+
+    func reconcileImportHistoryWithPhotos() async {
+        guard !isReconcilingImportHistory else { return }
+
+        let candidates = photos.filter { !isPreviouslyImported($0) }
+        let candidateFilenames = candidates.reduce(into: Set<String>()) { result, photo in
+            result.formUnion(photo.importFilenames)
+        }
+        let uncheckedFilenames = candidateFilenames.subtracting(reconciledImportFilenames)
+        guard !uncheckedFilenames.isEmpty else {
+            if candidateFilenames.isSubset(of: reconciledImportFilenames) {
+                hasCompletePhotoLibraryImportHistory = importHistoryReconciliationError == nil
+            }
+            return
+        }
+
+        isReconcilingImportHistory = true
+        importHistoryReconciliationError = nil
+        defer { isReconcilingImportHistory = false }
+
+        do {
+            let result = try await importReconciler.importedFilenames(matching: uncheckedFilenames)
+            recoverImportHistory(for: candidates, matchedFilenames: result.matchedFilenames)
+            if result.hasCompleteLibraryAccess {
+                reconciledImportFilenames.formUnion(uncheckedFilenames)
+                hasCompletePhotoLibraryImportHistory = true
+            } else {
+                hasCompletePhotoLibraryImportHistory = false
+                importHistoryReconciliationError =
+                    "GM1 Sync has limited Photos access. Allow Full Access so it can reliably identify every new camera item."
+            }
+        } catch {
+            hasCompletePhotoLibraryImportHistory = false
+            importHistoryReconciliationError = error.localizedDescription
+            print("[GM1Sync] Photos import-history reconciliation failed: \(error.localizedDescription)")
+        }
     }
 
     func cancelLoading() {
@@ -587,6 +638,14 @@ final class CameraGalleryStore: ObservableObject {
             stage: .downloadingOriginalJPEG,
             onDiagnostic: onDiagnostic
         )
+        let downloadStartedAt = Date()
+        let advertisedSize = original.size.map { "\($0) bytes" } ?? "unknown size"
+        recordMetadataDiagnostic(
+            "Photo geotag check \(photo.displayFilename): starting original JPEG transfer " +
+                "from \(original.downloadURL.absoluteString), advertised \(advertisedSize), " +
+                "timeout \(metadataInspectionTimeoutSeconds) seconds.",
+            onDiagnostic: onDiagnostic
+        )
         do {
             let timeout = metadataInspectionDownloadTimeout
             let fileURL = try await withCameraMetadataTimeout(timeout) {
@@ -595,6 +654,14 @@ final class CameraGalleryStore: ObservableObject {
             defer { try? FileManager.default.removeItem(at: fileURL) }
             try Task.checkCancellation()
             guard loadGeneration == generation else { throw CancellationError() }
+            let elapsed = Date().timeIntervalSince(downloadStartedAt)
+            let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+            let downloadedSize = (attributes?[.size] as? NSNumber)?.int64Value
+            recordMetadataDiagnostic(
+                "Photo geotag check \(photo.displayFilename): original JPEG transfer completed " +
+                    "with \(downloadedSize.map(String.init) ?? "unknown") bytes in \(elapsed.secondsLabel).",
+                onDiagnostic: onDiagnostic
+            )
             updateMetadataInspection(
                 photo,
                 stage: .readingOriginalJPEG,
@@ -624,9 +691,10 @@ final class CameraGalleryStore: ObservableObject {
         } catch is CancellationError {
             return cancelMetadataInspection(photo, generation: generation)
         } catch {
+            let elapsed = Date().timeIntervalSince(downloadStartedAt)
             return failMetadataInspection(
                 photo,
-                message: "Could not inspect the original JPEG: \(error.localizedDescription)",
+                message: "Could not inspect the original JPEG after \(elapsed.secondsLabel): \(error.localizedDescription)",
                 onDiagnostic: onDiagnostic
             )
         }
@@ -932,6 +1000,7 @@ final class CameraGalleryStore: ObservableObject {
         )
         record.variants.insert(variant)
         record.lastImportedAt = .now
+        record.evidence = .appImport
         if let verifiedCaptureDate { record.verifiedCaptureDate = verifiedCaptureDate }
         if let appliedLocation { record.appliedLocation = appliedLocation }
         importHistory[key] = record
@@ -940,6 +1009,49 @@ final class CameraGalleryStore: ObservableObject {
             try importHistoryStore.save(importHistory)
         } catch {
             print("[GM1Sync] Import history could not be saved: \(error.localizedDescription)")
+        }
+    }
+
+    private func recoverImportHistory(
+        for candidates: [LumixPhoto],
+        matchedFilenames: Set<String>
+    ) {
+        let matches = Set(matchedFilenames.map(CameraImportFilename.normalized))
+        guard !matches.isEmpty else { return }
+        var recoveredCount = 0
+
+        for photo in candidates {
+            let photoMatches = photo.importFilenames.intersection(matches)
+            guard !photoMatches.isEmpty else { continue }
+            let variant: CameraImportVariant
+            if photo.kind == .video {
+                variant = .video
+            } else {
+                let jpegFilename = photo.originalJPEGResource.map {
+                    CameraImportFilename.normalized($0.downloadURL.lastPathComponent)
+                }
+                let rawFilename = photo.rawResource.map {
+                    CameraImportFilename.normalized($0.downloadURL.lastPathComponent)
+                }
+                let hasJPEG = jpegFilename.map(photoMatches.contains) ?? false
+                let hasRAW = rawFilename.map(photoMatches.contains) ?? false
+                variant = hasJPEG && hasRAW ? .jpegAndRAW : (hasRAW ? .raw : .jpeg)
+            }
+
+            importHistory[historyKey(for: photo)] = CameraImportHistoryRecord(
+                variants: [variant],
+                lastImportedAt: .now,
+                evidence: .photosLibrary
+            )
+            recoveredCount += 1
+        }
+
+        guard recoveredCount > 0 else { return }
+        do {
+            try importHistoryStore.save(importHistory)
+            print("[GM1Sync] Recovered \(recoveredCount) camera imports from the Photos library.")
+        } catch {
+            print("[GM1Sync] Recovered import history could not be saved: \(error.localizedDescription)")
         }
     }
 
@@ -975,17 +1087,79 @@ private func withCameraMetadataTimeout<Value: Sendable>(
     _ timeout: Duration,
     operation: @escaping @Sendable () async throws -> Value
 ) async throws -> Value {
-    try await withThrowingTaskGroup(of: Value.self) { group in
-        defer { group.cancelAll() }
-        group.addTask(operation: operation)
-        group.addTask {
-            try await Task.sleep(for: timeout)
-            throw CameraPhotoMetadataInspectionError.downloadTimedOut
+    let gate = CameraMetadataTimeoutGate<Value>()
+    let operationTask = Task.detached(priority: .userInitiated, operation: operation)
+
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            gate.install(continuation)
+
+            let timeoutTask = Task.detached {
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    return
+                }
+                operationTask.cancel()
+                gate.resume(.failure(CameraPhotoMetadataInspectionError.downloadTimedOut))
+            }
+
+            Task.detached {
+                let result = await operationTask.result
+                timeoutTask.cancel()
+                gate.resume(result)
+            }
         }
-        guard let result = try await group.next() else {
-            throw CameraPhotoMetadataInspectionError.downloadTimedOut
+    } onCancel: {
+        operationTask.cancel()
+        gate.resume(.failure(CancellationError()))
+    }
+}
+
+private final class CameraMetadataTimeoutGate<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var pendingResult: Result<Value, Error>?
+    private var isFinished = false
+
+    func install(_ continuation: CheckedContinuation<Value, Error>) {
+        lock.lock()
+        if isFinished {
+            let result = pendingResult
+            pendingResult = nil
+            lock.unlock()
+            if let result { continuation.resume(with: result) }
+            return
         }
-        return result
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func resume(_ result: Result<Value, Error>) {
+        lock.lock()
+        guard !isFinished else {
+            lock.unlock()
+            return
+        }
+        isFinished = true
+        let continuation = continuation
+        self.continuation = nil
+        if continuation == nil { pendingResult = result }
+        lock.unlock()
+        continuation?.resume(with: result)
+    }
+}
+
+private extension Duration {
+    var timeInterval: TimeInterval {
+        let components = self.components
+        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
+    }
+}
+
+private extension TimeInterval {
+    var secondsLabel: String {
+        String(format: "%.1f seconds", self)
     }
 }
 

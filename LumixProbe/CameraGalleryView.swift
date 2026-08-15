@@ -9,7 +9,9 @@ struct CameraGalleryView: View {
     @State private var isSelecting = false
     @State private var importMode: CameraPhotoImportMode = .jpeg
     @State private var showNoNewMediaAlert = false
+    @State private var showPhotosAccessAlert = false
     @State private var showFailedOnly = false
+    @State private var isDownloadingAllNew = false
 
     private let columns = [
         GridItem(.flexible(), spacing: 3),
@@ -50,8 +52,18 @@ struct CameraGalleryView: View {
         .navigationTitle("Camera Media")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { galleryToolbar }
-        .safeAreaInset(edge: .bottom) {
-            if isSelecting || store.isImporting { importBar }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if isSelecting || store.isImporting {
+                importBar
+            } else if store.phase == .loaded {
+                HStack {
+                    Spacer()
+                    downloadAllNewButton
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.horizontal)
+                .padding(.vertical, 10)
+            }
         }
         .task {
             if store.phase == .idle {
@@ -76,7 +88,19 @@ struct CameraGalleryView: View {
         .alert("No new camera media", isPresented: $showNoNewMediaAlert) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Everything currently advertised by this camera has already been imported by GM1 Sync.")
+            Text("Every downloadable item currently advertised by this camera is already in Photos.")
+        }
+        .alert("Full Photos access required", isPresented: $showPhotosAccessAlert) {
+            Button("Open Settings") {
+                guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                UIApplication.shared.open(url)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                store.importHistoryReconciliationError
+                    ?? "Allow Full Access to Photos so GM1 Sync can identify already downloaded media without creating duplicates."
+            )
         }
     }
 
@@ -158,7 +182,7 @@ struct CameraGalleryView: View {
             }
 
             if !store.importHistory.isEmpty {
-                Text("Green checks mark media imported by GM1 Sync on this iPhone.")
+                Text("Green checks mark camera originals already found in Photos.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -248,15 +272,6 @@ struct CameraGalleryView: View {
             Menu {
                 Button("Load all media") { Task { await store.loadAllPages() } }
                     .disabled(!store.canLoadMore)
-                Button("Import new only") {
-                    Task {
-                        await store.loadAllPages()
-                        let selectedCount = store.selectUnimported()
-                        isSelecting = selectedCount > 0
-                        showNoNewMediaAlert = selectedCount == 0 && store.paginationError == nil
-                    }
-                }
-                .disabled(store.photos.isEmpty || store.isImporting)
                 Button("Select all items") {
                     Task {
                         await store.loadAllPages()
@@ -269,6 +284,63 @@ struct CameraGalleryView: View {
                 Label("Gallery actions", systemImage: "ellipsis.circle")
             }
         }
+    }
+
+    private var downloadAllNewButton: some View {
+        Button {
+            Task { await downloadAllNewMedia() }
+        } label: {
+            HStack(spacing: 8) {
+                if isDownloadingAllNew || store.isReconcilingImportHistory {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: "arrow.down.circle.fill")
+                }
+                Text("Download all new images & videos")
+                    .lineLimit(1)
+            }
+            .font(.subheadline.weight(.semibold))
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
+        .disabled(
+            store.photos.isEmpty
+                || store.isImporting
+                || store.isLoadingNextPage
+                || store.isReconcilingImportHistory
+                || isDownloadingAllNew
+        )
+        .accessibilityIdentifier("download-all-new-camera-media")
+    }
+
+    @MainActor
+    private func downloadAllNewMedia() async {
+        guard !isDownloadingAllNew else { return }
+        isDownloadingAllNew = true
+        defer { isDownloadingAllNew = false }
+
+        await store.loadAllPages()
+        guard store.paginationError == nil else { return }
+        guard store.hasCompletePhotoLibraryImportHistory else {
+            showPhotosAccessAlert = true
+            return
+        }
+
+        let selectedCount = store.selectUnimported()
+        guard selectedCount > 0 else {
+            showNoNewMediaAlert = true
+            return
+        }
+
+        await store.importSelected(
+            photoMode: importMode,
+            samples: model.locationLogger.samples,
+            cameraClockOffset: model.cameraClockOffsetMinutes * 60
+        )
+        isSelecting = !store.selectedPhotoIDs.isEmpty
     }
 
     private var importBar: some View {
@@ -737,9 +809,15 @@ private struct CameraPhotoGeotaggingDetail: View {
         } else {
             switch inspectionState {
             case let .checking(stage):
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text(stage.title)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text(stage.title)
+                    }
+                    if stage == .downloadingOriginalJPEG {
+                        Text("The camera transfer will stop after \(store.metadataInspectionTimeoutSeconds) seconds if it does not complete.")
+                            .font(.caption)
+                    }
                 }
                 .foregroundStyle(.secondary)
             case nil:
@@ -809,7 +887,33 @@ private struct CameraPhotoGeotaggingDetail: View {
                     .padding(.top, 4)
             }
             .font(.caption)
+        } else if inspectionState != nil {
+            DisclosureGroup("Metadata diagnostic") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(metadataDiagnosticText)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Button {
+                        UIPasteboard.general.string = metadataDiagnosticText
+                    } label: {
+                        Label("Copy metadata diagnostics", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 4)
+            }
+            .font(.caption)
         }
+    }
+
+    private var metadataDiagnosticText: String {
+        let matchingLines = model.log
+            .components(separatedBy: .newlines)
+            .filter { $0.localizedCaseInsensitiveContains(photo.displayFilename) }
+        guard !matchingLines.isEmpty else { return "No per-image diagnostic has been recorded yet." }
+        return matchingLines.suffix(8).joined(separator: "\n")
     }
 
     private func position(_ location: PhotoGeotagLocation) -> some View {

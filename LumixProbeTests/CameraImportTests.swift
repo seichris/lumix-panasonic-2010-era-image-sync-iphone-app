@@ -3,6 +3,29 @@ import XCTest
 @testable import GM1Sync
 
 final class CameraImportTests: XCTestCase {
+    func testLegacyHistoryWithoutEvidenceStillDecodesAsAnAppImport() throws {
+        let data = Data(#"{"variants":["jpeg"],"lastImportedAt":0}"#.utf8)
+
+        let record = try JSONDecoder().decode(CameraImportHistoryRecord.self, from: data)
+
+        XCTAssertEqual(record.variants, [.jpeg])
+        XCTAssertEqual(record.effectiveEvidence, .appImport)
+    }
+
+    func testImportFilenamesIncludeOriginalsButExcludeThumbnails() {
+        let photo = LumixPhoto(
+            itemID: "1280475",
+            title: "128-0475",
+            resources: [
+                resource(filename: "DT1280475.JPG", profile: "CAM_TN", mimeType: "image/jpeg"),
+                resource(filename: "DO1280475.JPG", profile: "CAM_RAW_JPG", mimeType: "image/jpeg"),
+                resource(filename: "DO1280475.RW2", profile: "CAM_RAW", mimeType: "application/octet-stream")
+            ]
+        )
+
+        XCTAssertEqual(photo.importFilenames, ["DO1280475.JPG", "DO1280475.RW2"])
+    }
+
     func testPhotoPlansExposeJPEGPairedAndRAWImports() throws {
         let photo = LumixPhoto(
             itemID: "1280475",
