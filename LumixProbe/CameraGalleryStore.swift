@@ -638,11 +638,13 @@ final class CameraGalleryStore: ObservableObject {
         var detailedPhoto: LumixPhoto?
 
         if let itemID = photo.itemID {
-            updateMetadataInspection(
-                photo,
-                stage: .requestingItemMetadata,
-                onDiagnostic: onDiagnostic
-            )
+            if metadataInspectionStates[photo.id] != .checking(.requestingItemMetadata) {
+                updateMetadataInspection(
+                    photo,
+                    stage: .requestingItemMetadata,
+                    onDiagnostic: onDiagnostic
+                )
+            }
             do {
                 detailedPhoto = try await client.browseMetadata(itemID: itemID)
                 try Task.checkCancellation()
@@ -1120,34 +1122,38 @@ final class CameraGalleryStore: ObservableObject {
     }
 }
 
+private let cameraMetadataTimeoutQueue = DispatchQueue(
+    label: "com.web3.gm1sync.metadata-timeout",
+    qos: .userInitiated
+)
+
 private func withCameraMetadataTimeout<Value: Sendable>(
     _ timeout: Duration,
     operation: @escaping @Sendable () async throws -> Value
 ) async throws -> Value {
     let gate = CameraMetadataTimeoutGate<Value>()
     let operationTask = Task.detached(priority: .userInitiated, operation: operation)
+    let timeoutWorkItem = DispatchWorkItem {
+        operationTask.cancel()
+        gate.resume(.failure(CameraPhotoMetadataInspectionError.downloadTimedOut))
+    }
+    cameraMetadataTimeoutQueue.asyncAfter(
+        deadline: .now() + max(0, timeout.timeInterval),
+        execute: timeoutWorkItem
+    )
 
     return try await withTaskCancellationHandler {
         try await withCheckedThrowingContinuation { continuation in
             gate.install(continuation)
 
-            let timeoutTask = Task.detached {
-                do {
-                    try await Task.sleep(for: timeout)
-                } catch {
-                    return
-                }
-                operationTask.cancel()
-                gate.resume(.failure(CameraPhotoMetadataInspectionError.downloadTimedOut))
-            }
-
             Task.detached {
                 let result = await operationTask.result
-                timeoutTask.cancel()
+                timeoutWorkItem.cancel()
                 gate.resume(result)
             }
         }
     } onCancel: {
+        timeoutWorkItem.cancel()
         operationTask.cancel()
         gate.resume(.failure(CancellationError()))
     }

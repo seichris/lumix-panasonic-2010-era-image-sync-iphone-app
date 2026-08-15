@@ -798,44 +798,53 @@ private enum LegacyLumixMediaDownloader {
         let suggestedName = url.lastPathComponent.isEmpty ? "lumix-media" : url.lastPathComponent
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + "-" + suggestedName)
-        let task = Task.detached(priority: .userInitiated) {
-            let retryDelaysMicroseconds: [useconds_t] = [0, 300_000, 800_000]
-            var lastError: Error?
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                // recv(2) is intentionally blocking for compatibility with the
+                // camera's HTTP/1.0 server. Keep it off Swift's cooperative task
+                // pool so thumbnails cannot starve timers and cancellation.
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        let retryDelaysMicroseconds: [useconds_t] = [0, 300_000, 800_000]
+                        var lastError: Error?
 
-            for (attempt, delay) in retryDelaysMicroseconds.enumerated() {
-                try operation.checkCancellation()
-                if delay > 0 {
-                    usleep(delay)
-                    try operation.checkCancellation()
-                }
+                        for (attempt, delay) in retryDelaysMicroseconds.enumerated() {
+                            try operation.checkCancellation()
+                            if delay > 0 {
+                                usleep(delay)
+                                try operation.checkCancellation()
+                            }
 
-                do {
-                    return try downloadBlocking(
-                        from: url,
-                        to: destination,
-                        validatesJPEG: validatesJPEG,
-                        requestStyle: requestStyle,
-                        operation: operation
-                    )
-                } catch {
-                    lastError = error
-                    let hasAnotherAttempt = attempt + 1 < retryDelaysMicroseconds.count
-                    guard hasAnotherAttempt, LumixMediaDownloadRetryPolicy.shouldRetry(error) else {
-                        throw error
+                            do {
+                                let fileURL = try downloadBlocking(
+                                    from: url,
+                                    to: destination,
+                                    validatesJPEG: validatesJPEG,
+                                    requestStyle: requestStyle,
+                                    operation: operation
+                                )
+                                continuation.resume(returning: fileURL)
+                                return
+                            } catch {
+                                lastError = error
+                                let hasAnotherAttempt = attempt + 1 < retryDelaysMicroseconds.count
+                                guard hasAnotherAttempt, LumixMediaDownloadRetryPolicy.shouldRetry(error) else {
+                                    throw error
+                                }
+                                print(
+                                    "[GM1Sync] Camera media transfer ended early for \(suggestedName); " +
+                                        "retrying attempt \(attempt + 2) of \(retryDelaysMicroseconds.count)."
+                                )
+                            }
+                        }
+
+                        throw lastError ?? LumixError.http(0, "camera media download failed")
+                    } catch {
+                        continuation.resume(throwing: error)
                     }
-                    print(
-                        "[GM1Sync] Camera media transfer ended early for \(suggestedName); " +
-                            "retrying attempt \(attempt + 2) of \(retryDelaysMicroseconds.count)."
-                    )
                 }
             }
-
-            throw lastError ?? LumixError.http(0, "camera media download failed")
-        }
-        return try await withTaskCancellationHandler {
-            try await task.value
         } onCancel: {
-            task.cancel()
             operation.cancel()
         }
     }
