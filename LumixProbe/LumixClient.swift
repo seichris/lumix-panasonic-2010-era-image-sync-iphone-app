@@ -660,6 +660,15 @@ actor LumixClient {
         )
     }
 
+    func downloadMetadataPrefix(_ resource: LumixResource) async throws -> URL {
+        try await LegacyLumixMediaDownloader.downloadFile(
+            from: resource.downloadURL,
+            requestStyle: .legacy,
+            maximumBodyBytes: 512 * 1024,
+            socketTimeoutSeconds: 12
+        )
+    }
+
     private static func validateJPEG(_ data: Data) throws {
         guard data.count >= 4,
               data[0] == 0xff,
@@ -792,7 +801,9 @@ private enum LegacyLumixMediaDownloader {
     static func downloadFile(
         from url: URL,
         validatesJPEG: Bool = false,
-        requestStyle: LumixMediaRequestStyle = .legacy
+        requestStyle: LumixMediaRequestStyle = .legacy,
+        maximumBodyBytes: Int? = nil,
+        socketTimeoutSeconds: Int = 90
     ) async throws -> URL {
         let operation = LegacyLumixDownloadOperation()
         let suggestedName = url.lastPathComponent.isEmpty ? "lumix-media" : url.lastPathComponent
@@ -805,7 +816,9 @@ private enum LegacyLumixMediaDownloader {
                 // pool so thumbnails cannot starve timers and cancellation.
                 DispatchQueue.global(qos: .userInitiated).async {
                     do {
-                        let retryDelaysMicroseconds: [useconds_t] = [0, 300_000, 800_000]
+                        let retryDelaysMicroseconds: [useconds_t] = maximumBodyBytes == nil
+                            ? [0, 300_000, 800_000]
+                            : [0]
                         var lastError: Error?
 
                         for (attempt, delay) in retryDelaysMicroseconds.enumerated() {
@@ -821,6 +834,8 @@ private enum LegacyLumixMediaDownloader {
                                     to: destination,
                                     validatesJPEG: validatesJPEG,
                                     requestStyle: requestStyle,
+                                    maximumBodyBytes: maximumBodyBytes,
+                                    socketTimeoutSeconds: socketTimeoutSeconds,
                                     operation: operation
                                 )
                                 continuation.resume(returning: fileURL)
@@ -854,6 +869,8 @@ private enum LegacyLumixMediaDownloader {
         to destination: URL,
         validatesJPEG: Bool,
         requestStyle: LumixMediaRequestStyle,
+        maximumBodyBytes: Int?,
+        socketTimeoutSeconds: Int,
         operation: LegacyLumixDownloadOperation
     ) throws -> URL {
         guard url.scheme == "http",
@@ -873,7 +890,7 @@ private enum LegacyLumixMediaDownloader {
         var noSignal = Int32(1)
         setsockopt(fileDescriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout.size(ofValue: noSignal)))
 
-        var timeout = timeval(tv_sec: 90, tv_usec: 0)
+        var timeout = timeval(tv_sec: max(1, socketTimeoutSeconds), tv_usec: 0)
         setsockopt(fileDescriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
         setsockopt(fileDescriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
 
@@ -924,6 +941,11 @@ private enum LegacyLumixMediaDownloader {
                 data = chunk
             }
 
+            if let maximumBodyBytes {
+                let remaining = max(0, maximumBodyBytes - bodyCount)
+                data = Data(data.prefix(remaining))
+            }
+
             guard !data.isEmpty else {
                 return expectedLength.map { bodyCount >= $0 } ?? false
             }
@@ -942,6 +964,7 @@ private enum LegacyLumixMediaDownloader {
             try file.write(contentsOf: data)
             bodyCount += data.count
 
+            if let maximumBodyBytes, bodyCount >= maximumBodyBytes { return true }
             if let expectedLength, bodyCount >= expectedLength { return true }
             return validatesJPEG && jpegComplete
         }
@@ -996,13 +1019,19 @@ private enum LegacyLumixMediaDownloader {
             }
         }
 
-        try LumixMediaDownloadCompletion.validate(
-            parsedHeaders: parsedHeaders,
-            bodyCount: bodyCount,
-            expectedLength: expectedLength,
-            validatesJPEG: validatesJPEG,
-            jpegComplete: jpegComplete
-        )
+        if maximumBodyBytes != nil {
+            guard parsedHeaders, bodyCount > 0 else {
+                throw LumixError.http(0, "camera returned an empty JPEG metadata prefix")
+            }
+        } else {
+            try LumixMediaDownloadCompletion.validate(
+                parsedHeaders: parsedHeaders,
+                bodyCount: bodyCount,
+                expectedLength: expectedLength,
+                validatesJPEG: validatesJPEG,
+                jpegComplete: jpegComplete
+            )
+        }
 
         keepFile = true
         return destination

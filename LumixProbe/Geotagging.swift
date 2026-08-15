@@ -211,6 +211,13 @@ enum PhotoCaptureDateReader {
             return nil
         }
 
+        return read(from: properties, fallbackTimeZone: fallbackTimeZone)
+    }
+
+    static func read(
+        from properties: NSDictionary,
+        fallbackTimeZone: TimeZone = .autoupdatingCurrent
+    ) -> Date? {
         let exif = properties[kCGImagePropertyExifDictionary] as? NSDictionary
         let tiff = properties[kCGImagePropertyTIFFDictionary] as? NSDictionary
         let dateString = exif?[kCGImagePropertyExifDateTimeOriginal] as? String ??
@@ -259,13 +266,28 @@ enum PhotoCaptureDateReader {
 
 enum PhotoOriginalMetadataReader {
     static func read(from fileURL: URL) -> PhotoOriginalMetadata {
-        guard let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as NSDictionary? else {
+        if let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil),
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as NSDictionary? {
+            return metadata(from: properties)
+        }
+
+        guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else {
             return PhotoOriginalMetadata(captureDate: nil, embeddedLocation: nil)
         }
 
+        let source = CGImageSourceCreateIncremental(nil)
+        let isCompleteJPEG = data.count >= 2 && data.suffix(2).elementsEqual([0xff, 0xd9])
+        CGImageSourceUpdateData(source, data as CFData, isCompleteJPEG)
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as NSDictionary? else {
+            return PhotoOriginalMetadata(captureDate: nil, embeddedLocation: nil)
+        }
+
+        return metadata(from: properties)
+    }
+
+    private static func metadata(from properties: NSDictionary) -> PhotoOriginalMetadata {
         return PhotoOriginalMetadata(
-            captureDate: PhotoCaptureDateReader.read(from: fileURL),
+            captureDate: PhotoCaptureDateReader.read(from: properties),
             embeddedLocation: location(from: properties[kCGImagePropertyGPSDictionary] as? NSDictionary)
         )
     }

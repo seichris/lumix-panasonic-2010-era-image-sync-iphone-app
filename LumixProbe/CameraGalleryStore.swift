@@ -13,6 +13,7 @@ protocol CameraGalleryClient: Sendable {
     func browseMetadata(itemID: String) async throws -> LumixPhoto
     func downloadJPEGData(_ resource: LumixResource) async throws -> Data
     func download(_ resource: LumixResource) async throws -> URL
+    func downloadMetadataPrefix(_ resource: LumixResource) async throws -> URL
     func makeAVCHDPlaybackSession(
         for resource: LumixResource,
         availableResources: [LumixResource]
@@ -28,6 +29,10 @@ extension CameraGalleryClient {
 
     func browseMetadata(itemID: String) async throws -> LumixPhoto {
         throw LumixError.missingBrowseResult
+    }
+
+    func downloadMetadataPrefix(_ resource: LumixResource) async throws -> URL {
+        try await download(resource)
     }
 
     func makeAVCHDPlaybackSession(
@@ -680,7 +685,8 @@ final class CameraGalleryStore: ObservableObject {
         let downloadStartedAt = Date()
         let advertisedSize = original.size.map { "\($0) bytes" } ?? "unknown size"
         recordMetadataDiagnostic(
-            "Photo geotag check \(photo.displayFilename): starting original JPEG transfer " +
+            "Photo geotag check \(photo.displayFilename): starting bounded JPEG metadata-prefix transfer " +
+                "(up to 512 KiB; 12-second socket inactivity timeout) " +
                 "from \(original.downloadURL.absoluteString), advertised \(advertisedSize), " +
                 "timeout \(metadataInspectionTimeoutSeconds) seconds.",
             onDiagnostic: onDiagnostic
@@ -688,7 +694,7 @@ final class CameraGalleryStore: ObservableObject {
         do {
             let timeout = metadataInspectionDownloadTimeout
             let fileURL = try await withCameraMetadataTimeout(timeout) {
-                try await client.download(original)
+                try await client.downloadMetadataPrefix(original)
             }
             defer { try? FileManager.default.removeItem(at: fileURL) }
             try Task.checkCancellation()
@@ -697,7 +703,7 @@ final class CameraGalleryStore: ObservableObject {
             let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
             let downloadedSize = (attributes?[.size] as? NSNumber)?.int64Value
             recordMetadataDiagnostic(
-                "Photo geotag check \(photo.displayFilename): original JPEG transfer completed " +
+                "Photo geotag check \(photo.displayFilename): JPEG metadata-prefix transfer completed " +
                     "with \(downloadedSize.map(String.init) ?? "unknown") bytes in \(elapsed.secondsLabel).",
                 onDiagnostic: onDiagnostic
             )
