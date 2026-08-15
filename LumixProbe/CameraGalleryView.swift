@@ -652,6 +652,7 @@ private struct CameraVideoPreview: View {
     @State private var player: AVPlayer?
     @State private var activePlayback: ActivePlayback?
     @State private var errorMessage: String?
+    @State private var diagnosticReport: String?
 
     var body: some View {
         ZStack {
@@ -701,13 +702,26 @@ private struct CameraVideoPreview: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(alignment: .bottom) {
             if let errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-                    .padding(8)
-                    .frame(maxWidth: .infinity)
-                    .background(Color.red.opacity(0.9))
+                VStack(spacing: 6) {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .multilineTextAlignment(.center)
+                    if let diagnosticReport {
+                        Button {
+                            UIPasteboard.general.string = diagnosticReport
+                        } label: {
+                            Label("Copy playback diagnostics", systemImage: "doc.on.doc")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.white)
+                        .accessibilityIdentifier("copy-playback-diagnostics")
+                    }
+                }
+                .foregroundStyle(.white)
+                .padding(8)
+                .frame(maxWidth: .infinity)
+                .background(Color.red.opacity(0.9))
             }
         }
         .task(id: playbackRequest) {
@@ -722,6 +736,7 @@ private struct CameraVideoPreview: View {
         player?.pause()
         player = nil
         errorMessage = nil
+        diagnosticReport = nil
         isLoading = true
         loadingMessage = photo.videoPlaybackResource?.isAVCHD == true
             ? "Connecting to camera…"
@@ -756,7 +771,9 @@ private struct CameraVideoPreview: View {
             }
         } catch {
             isLoading = false
-            errorMessage = error.localizedDescription
+            let diagnostics = await startedPlayback?.session.diagnostics()
+            errorMessage = diagnostics?.failureSummary ?? error.localizedDescription
+            diagnosticReport = diagnostics?.report
             if let startedPlayback {
                 await startedPlayback.session.stop()
                 if activePlayback?.id == startedPlayback.id { activePlayback = nil }

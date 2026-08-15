@@ -1,9 +1,19 @@
 import Foundation
 import Network
 
+struct CameraPlaybackDiagnosticSnapshot: Sendable {
+    let failureSummary: String?
+    let report: String
+}
+
 protocol CameraPlaybackSession: Sendable {
     func start() async throws -> URL
     func stop() async
+    func diagnostics() async -> CameraPlaybackDiagnosticSnapshot?
+}
+
+extension CameraPlaybackSession {
+    func diagnostics() async -> CameraPlaybackDiagnosticSnapshot? { nil }
 }
 
 actor DownloadedCameraPlaybackSession: CameraPlaybackSession {
@@ -35,16 +45,21 @@ actor DownloadedCameraPlaybackSession: CameraPlaybackSession {
 }
 
 actor PanasonicAVCHDPlaybackSession: CameraPlaybackSession {
-    private let remoteURL: URL
+    private let resource: LumixResource
+    private let availableResources: [LumixResource]
     private var proxy: PanasonicLoopbackProxy?
 
-    init(remoteURL: URL) {
-        self.remoteURL = remoteURL
+    init(resource: LumixResource, availableResources: [LumixResource]) {
+        self.resource = resource
+        self.availableResources = availableResources
     }
 
     func start() async throws -> URL {
         if let proxy, let localURL = proxy.localURL { return localURL }
-        let proxy = PanasonicLoopbackProxy(remoteURL: remoteURL)
+        let proxy = PanasonicLoopbackProxy(
+            resource: resource,
+            availableResources: availableResources
+        )
         let localURL = try await proxy.start()
         self.proxy = proxy
         return localURL
@@ -55,18 +70,41 @@ actor PanasonicAVCHDPlaybackSession: CameraPlaybackSession {
         self.proxy = nil
         await proxy.stop()
     }
+
+    func diagnostics() async -> CameraPlaybackDiagnosticSnapshot? {
+        guard let proxy else { return nil }
+        return await proxy.diagnostics()
+    }
 }
 
 private final class PanasonicLoopbackProxy: @unchecked Sendable {
+    private let resource: LumixResource
     private let remoteURL: URL
     private let queue = DispatchQueue(label: "com.web3.gm1sync.avchd-loopback")
     private var listener: NWListener?
     private var startContinuation: CheckedContinuation<URL, Error>?
     private var connections: [UUID: NWConnection] = [:]
     private(set) var localURL: URL?
+    private var diagnosticEvents: [String]
+    private var lastCameraStatusLine: String?
 
-    init(remoteURL: URL) {
-        self.remoteURL = remoteURL
+    init(resource: LumixResource, availableResources: [LumixResource]) {
+        self.resource = resource
+        remoteURL = resource.url
+        diagnosticEvents = [
+            "GM1 Sync AVCHD playback diagnostic",
+            "Profile: \(resource.profileName ?? "unknown")",
+            "Role: \(resource.role.rawValue)",
+            "Resolution: \(resource.resolutionWidth.map(String.init) ?? "?")x\(resource.resolutionHeight.map(String.init) ?? "?")",
+            "Duration: \(resource.duration.map { String(format: "%.3f", $0) } ?? "unknown") seconds",
+            "Advertised URL: \(resource.url.absoluteString)",
+            "Available item resources: \(availableResources.count)"
+        ]
+        diagnosticEvents.append(contentsOf: availableResources.enumerated().map { index, candidate in
+            "  [\(index)] profile=\(candidate.profileName ?? "unknown") role=\(candidate.role.rawValue) " +
+                "resolution=\(candidate.resolutionWidth.map(String.init) ?? "?")x\(candidate.resolutionHeight.map(String.init) ?? "?") " +
+                "url=\(candidate.url.absoluteString)"
+        })
     }
 
     func start() async throws -> URL {
@@ -106,6 +144,32 @@ private final class PanasonicLoopbackProxy: @unchecked Sendable {
             queue.async { [weak self] in
                 self?.stopLocked(error: CancellationError())
                 continuation.resume()
+            }
+        }
+    }
+
+    func diagnostics() async -> CameraPlaybackDiagnosticSnapshot {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self else {
+                    continuation.resume(returning: CameraPlaybackDiagnosticSnapshot(
+                        failureSummary: nil,
+                        report: "Playback diagnostics are no longer available."
+                    ))
+                    return
+                }
+                let summary: String?
+                if self.lastCameraStatusLine?.contains(" 404 ") == true {
+                    summary = "The camera returned HTTP 404 for the selected \(self.resource.role == .avchdPlayback360 ? "360p playback stream" : "video stream")."
+                } else if let status = self.lastCameraStatusLine {
+                    summary = "The camera returned \(status)."
+                } else {
+                    summary = nil
+                }
+                continuation.resume(returning: CameraPlaybackDiagnosticSnapshot(
+                    failureSummary: summary,
+                    report: self.diagnosticEvents.joined(separator: "\n")
+                ))
             }
         }
     }
@@ -226,6 +290,9 @@ private final class PanasonicLoopbackProxy: @unchecked Sendable {
             sendError(502, reason: "Bad Gateway", to: local, id: localID)
             return
         }
+        diagnosticEvents.append("Local AVPlayer range: \(range ?? "none")")
+        diagnosticEvents.append("Camera request: \(request.components(separatedBy: "\r\n").first ?? "GET")")
+        diagnosticEvents.append("Camera request mode: \(range == nil ? "Panasonic initial plain GET" : "Panasonic byte range")")
 
         let remote = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
         let remoteID = UUID()
@@ -243,7 +310,13 @@ private final class PanasonicLoopbackProxy: @unchecked Sendable {
                             self.finish(remote, id: remoteID, error: error)
                             self.sendError(502, reason: "Bad Gateway", to: local, id: localID)
                         } else {
-                            self.relay(from: remote, remoteID: remoteID, to: local, localID: localID)
+                            self.receiveRemoteHeader(
+                                from: remote,
+                                remoteID: remoteID,
+                                to: local,
+                                localID: localID,
+                                buffer: Data()
+                            )
                         }
                     }
                 )
@@ -257,6 +330,96 @@ private final class PanasonicLoopbackProxy: @unchecked Sendable {
             }
         }
         remote.start(queue: queue)
+    }
+
+    private func receiveRemoteHeader(
+        from remote: NWConnection,
+        remoteID: UUID,
+        to local: NWConnection,
+        localID: UUID,
+        buffer: Data
+    ) {
+        remote.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self, weak remote, weak local] data, _, isComplete, error in
+            guard let self, let remote, let local else { return }
+            if let error {
+                self.finish(remote, id: remoteID, error: error)
+                self.finish(local, id: localID, error: error)
+                return
+            }
+
+            var response = buffer
+            if let data { response.append(data) }
+            if let boundary = response.range(of: Data("\r\n\r\n".utf8)) {
+                let headerEnd = boundary.upperBound
+                let headerText = String(decoding: response[..<headerEnd], as: UTF8.self)
+                self.recordCameraResponse(headerText)
+                self.forward(
+                    response,
+                    remoteIsComplete: isComplete,
+                    from: remote,
+                    remoteID: remoteID,
+                    to: local,
+                    localID: localID
+                )
+                return
+            }
+            if response.count >= 64 * 1024 {
+                self.diagnosticEvents.append("Camera response header exceeded 64 KiB.")
+                self.finish(remote, id: remoteID)
+                self.sendError(502, reason: "Bad Gateway", to: local, id: localID)
+                return
+            }
+            if isComplete {
+                self.diagnosticEvents.append("Camera closed before completing an HTTP response header.")
+                self.finish(remote, id: remoteID)
+                self.sendError(502, reason: "Bad Gateway", to: local, id: localID)
+                return
+            }
+            self.receiveRemoteHeader(
+                from: remote,
+                remoteID: remoteID,
+                to: local,
+                localID: localID,
+                buffer: response
+            )
+        }
+    }
+
+    private func recordCameraResponse(_ headerText: String) {
+        let lines = headerText
+            .components(separatedBy: "\r\n")
+            .filter { !$0.isEmpty }
+        lastCameraStatusLine = lines.first
+        diagnosticEvents.append("Camera response headers:")
+        diagnosticEvents.append(contentsOf: lines)
+        print("[GM1Sync] AVCHD camera response: \(lines.first ?? "invalid response")")
+    }
+
+    private func forward(
+        _ data: Data,
+        remoteIsComplete: Bool,
+        from remote: NWConnection,
+        remoteID: UUID,
+        to local: NWConnection,
+        localID: UUID
+    ) {
+        local.send(
+            content: data,
+            contentContext: .defaultMessage,
+            isComplete: remoteIsComplete,
+            completion: .contentProcessed { [weak self, weak remote, weak local] error in
+                guard let self, let remote, let local else { return }
+                if let error {
+                    self.finish(remote, id: remoteID, error: error)
+                    self.finish(local, id: localID, error: error)
+                } else if remoteIsComplete {
+                    self.finish(remote, id: remoteID)
+                    self.finish(local, id: localID)
+                } else {
+                    self.relay(from: remote, remoteID: remoteID, to: local, localID: localID)
+                }
+            }
+        )
     }
 
     private func relay(

@@ -277,6 +277,19 @@ final class CameraImportTests: XCTestCase {
         )
     }
 
+    func testPanasonicRequestPreservesAdvertisedPercentEncodedTarget() throws {
+        let url = try XCTUnwrap(
+            URL(string: "http://192.168.54.1:50001/stream%20folder/video%2B1.TS?token=a%2Fb")
+        )
+
+        XCTAssertEqual(
+            try LumixMediaHTTPRequest.make(for: url, style: .panasonicDLNAInitial),
+            "GET /stream%20folder/video%2B1.TS?token=a%2Fb HTTP/1.1\r\n" +
+                "User-Agent: Panasonic Android/1 DM-CP\r\n" +
+                "Host: 192.168.54.1\r\n\r\n"
+        )
+    }
+
     func testOrdinaryJPEGKeepsItsAdvertisedDownloadURL() {
         let jpeg = resource(filename: "DO1280475.JPG", profile: "CAM_ORG", mimeType: "image/jpeg")
 

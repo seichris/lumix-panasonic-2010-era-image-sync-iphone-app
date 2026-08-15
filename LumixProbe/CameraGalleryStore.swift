@@ -13,7 +13,10 @@ protocol CameraGalleryClient: Sendable {
     func browseMetadata(itemID: String) async throws -> LumixPhoto
     func downloadJPEGData(_ resource: LumixResource) async throws -> Data
     func download(_ resource: LumixResource) async throws -> URL
-    func makeAVCHDPlaybackSession(for resource: LumixResource) async throws -> any CameraPlaybackSession
+    func makeAVCHDPlaybackSession(
+        for resource: LumixResource,
+        availableResources: [LumixResource]
+    ) async throws -> any CameraPlaybackSession
 }
 
 extension LumixClient: CameraGalleryClient {}
@@ -27,7 +30,10 @@ extension CameraGalleryClient {
         throw LumixError.missingBrowseResult
     }
 
-    func makeAVCHDPlaybackSession(for resource: LumixResource) async throws -> any CameraPlaybackSession {
+    func makeAVCHDPlaybackSession(
+        for resource: LumixResource,
+        availableResources: [LumixResource]
+    ) async throws -> any CameraPlaybackSession {
         throw LumixError.videoPlaybackNotSupported
     }
 }
@@ -400,10 +406,7 @@ final class CameraGalleryStore: ObservableObject {
 
     func videoPlaybackSession(_ photo: LumixPhoto) async throws -> any CameraPlaybackSession {
         var playbackPhoto = photo
-        if let directResource = photo.videoPlaybackResource,
-           directResource.isAVCHD,
-           (directResource.role != .avchdPlayback360 || directResource.duration == nil),
-           let itemID = photo.itemID {
+        if photo.videoPlaybackResource?.isAVCHD == true, let itemID = photo.itemID {
             do {
                 playbackPhoto = try await client.browseMetadata(itemID: itemID)
                 print("[GM1Sync] Loaded AVCHD metadata with \(playbackPhoto.resources.count) resources for item \(itemID).")
@@ -425,7 +428,10 @@ final class CameraGalleryStore: ObservableObject {
         )
         let client = self.client
         if resource.isAVCHD {
-            return try await client.makeAVCHDPlaybackSession(for: resource)
+            return try await client.makeAVCHDPlaybackSession(
+                for: resource,
+                availableResources: playbackPhoto.resources
+            )
         }
         return DownloadedCameraPlaybackSession {
             try await client.download(resource)

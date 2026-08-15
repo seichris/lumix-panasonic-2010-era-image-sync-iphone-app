@@ -561,9 +561,15 @@ actor LumixClient {
         return photo
     }
 
-    func makeAVCHDPlaybackSession(for resource: LumixResource) async throws -> any CameraPlaybackSession {
+    func makeAVCHDPlaybackSession(
+        for resource: LumixResource,
+        availableResources: [LumixResource]
+    ) async throws -> any CameraPlaybackSession {
         guard resource.isAVCHD else { throw LumixError.videoPlaybackNotSupported }
-        return PanasonicAVCHDPlaybackSession(remoteURL: resource.url)
+        return PanasonicAVCHDPlaybackSession(
+            resource: resource,
+            availableResources: availableResources
+        )
     }
 
     private func performBrowse(
@@ -715,8 +721,15 @@ enum LumixMediaHTTPRequest {
     ) throws -> String {
         guard let host = url.host else { throw LumixError.invalidURL }
 
-        var requestTarget = url.path.isEmpty ? "/" : url.path
-        if let query = url.query, !query.isEmpty { requestTarget += "?\(query)" }
+        // Panasonic's native transport copies the request target from the
+        // advertised URI byte-for-byte. URL.path decodes percent escapes, which
+        // can silently turn a valid DLNA URI into a different camera path.
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let encodedPath = components?.percentEncodedPath.nonEmpty ?? url.path
+        var requestTarget = encodedPath.isEmpty ? "/" : encodedPath
+        if let query = components?.percentEncodedQuery?.nonEmpty {
+            requestTarget += "?\(query)"
+        }
 
         switch style {
         case .legacy:
