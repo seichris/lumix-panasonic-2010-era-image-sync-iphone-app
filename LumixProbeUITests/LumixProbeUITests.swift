@@ -30,8 +30,9 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Leave its QR code on screen")).firstMatch.exists)
         XCTAssertTrue(app.staticTexts["Connect to the camera Wi-Fi by scanning the QR code, or manually."].exists)
         XCTAssertTrue(app.buttons["Scan camera QR code"].exists)
-        XCTAssertTrue(app.buttons["Enter network details"].exists)
+        XCTAssertTrue(app.buttons["Enter wi-fi name and password"].exists)
         XCTAssertTrue(app.buttons["start-location-log"].exists)
+        XCTAssertTrue(app.switches["auto-start-geotagging"].exists)
         XCTAssertFalse(app.staticTexts["Need help?"].exists)
         XCTAssertFalse(app.textFields["camera-ip-address"].exists)
 
@@ -48,7 +49,7 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Cancel"].exists)
         app.buttons["Cancel"].tap()
 
-        app.buttons["Enter network details"].tap()
+        app.buttons["Enter wi-fi name and password"].tap()
         XCTAssertTrue(app.navigationBars["Join Camera Wi-Fi"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.textFields["manual-wifi-ssid"].exists)
         XCTAssertTrue(app.secureTextFields["manual-wifi-password"].exists)

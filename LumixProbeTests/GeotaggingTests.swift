@@ -73,6 +73,23 @@ final class GeotaggingTests: XCTestCase {
         XCTAssertEqual(parsed.timeIntervalSince1970, 1_786_692_600, accuracy: 0.1)
     }
 
+    @MainActor
+    func testAutoStartGeotaggingPreferenceLoadsAndPersists() {
+        let suiteName = "GeotaggingTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "autoStartGeotagging")
+
+        let model = ProbeViewModel(
+            defaults: defaults,
+            cameraNetworkStore: EmptyCameraNetworkStore()
+        )
+
+        XCTAssertTrue(model.autoStartGeotagging)
+        model.autoStartGeotagging = false
+        XCTAssertFalse(defaults.bool(forKey: "autoStartGeotagging"))
+    }
+
     private func sample(
         at timestamp: TimeInterval,
         latitude: Double,
@@ -86,4 +103,10 @@ final class GeotaggingTests: XCTestCase {
             horizontalAccuracy: accuracy
         )
     }
+}
+
+private struct EmptyCameraNetworkStore: CameraNetworkStoring {
+    func load() throws -> RememberedCameraNetwork? { nil }
+    func save(_ network: RememberedCameraNetwork) throws {}
+    func remove() throws {}
 }

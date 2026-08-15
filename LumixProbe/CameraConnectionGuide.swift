@@ -47,8 +47,12 @@ struct CameraConnectionGuide: View {
                 .accessibilityIdentifier("scan-camera-qr-code")
             }
 
-            Button("Enter network details", action: joinManually)
-                .accessibilityIdentifier("join-camera-wifi-manually")
+            Button(action: joinManually) {
+                Label("Enter wi-fi name and password", systemImage: "keyboard")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("join-camera-wifi-manually")
 
             Label(statusMessage, systemImage: "wifi.exclamationmark")
                 .font(.caption)

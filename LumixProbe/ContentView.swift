@@ -45,13 +45,17 @@ struct ContentView: View {
                     }
                 }
             }
-            .task { await model.refreshConnectionStatus(waitingForRememberedCamera: true) }
+            .task {
+                model.startGeotaggingIfEnabled()
+                await model.refreshConnectionStatus(waitingForRememberedCamera: true)
+            }
             .onChange(of: model.isCameraConnected) { _, isConnected in
                 guard !isConnected else { return }
                 Task { await galleryStore.resetForReconnect() }
             }
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active else { return }
+                model.startGeotaggingIfEnabled()
                 Task {
                     if !model.isCameraConnected { await galleryStore.resetForReconnect() }
                     await model.refreshConnectionStatus(waitingForRememberedCamera: true)
@@ -147,6 +151,7 @@ struct ContentView: View {
 
             GeotaggingControls(
                 logger: model.locationLogger,
+                autoStartGeotagging: $model.autoStartGeotagging,
                 cameraClockOffsetMinutes: $model.cameraClockOffsetMinutes,
                 clearTrack: { isConfirmingTrackClear = true }
             )
@@ -328,6 +333,7 @@ private struct CameraDiagnosticsView: View {
 
 private struct GeotaggingControls: View {
     @ObservedObject var logger: GeotagLocationLogger
+    @Binding var autoStartGeotagging: Bool
     @Binding var cameraClockOffsetMinutes: Double
     let clearTrack: () -> Void
 
@@ -349,11 +355,12 @@ private struct GeotaggingControls: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            Toggle(isOn: $autoStartGeotagging) {
+                Label("Auto-start geotagging", systemImage: "location.fill.viewfinder")
+            }
+            .accessibilityIdentifier("auto-start-geotagging")
+
             if !logger.samples.isEmpty {
-                LabeledContent("Track samples", value: "\(logger.samples.count)")
-                if let latest = logger.latestSample {
-                    LabeledContent("Latest accuracy", value: "±\(Int(latest.horizontalAccuracy.rounded())) m")
-                }
                 Button("Clear saved location track", role: .destructive, action: clearTrack)
                     .disabled(logger.isLogging)
             }
