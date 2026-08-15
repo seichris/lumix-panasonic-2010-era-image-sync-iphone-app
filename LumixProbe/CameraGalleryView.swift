@@ -9,7 +9,9 @@ struct CameraGalleryView: View {
     @State private var isSelecting = false
     @State private var importMode: CameraPhotoImportMode = .jpeg
     @State private var showNoNewMediaAlert = false
+    @State private var showPhotosAccessAlert = false
     @State private var showFailedOnly = false
+    @State private var isDownloadingAllNew = false
 
     private let columns = [
         GridItem(.flexible(), spacing: 3),
@@ -50,8 +52,18 @@ struct CameraGalleryView: View {
         .navigationTitle("Camera Media")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { galleryToolbar }
-        .safeAreaInset(edge: .bottom) {
-            if isSelecting || store.isImporting { importBar }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if isSelecting || store.isImporting {
+                importBar
+            } else if store.phase == .loaded {
+                HStack {
+                    Spacer()
+                    downloadAllNewButton
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.horizontal)
+                .padding(.vertical, 10)
+            }
         }
         .task {
             if store.phase == .idle {
@@ -76,7 +88,19 @@ struct CameraGalleryView: View {
         .alert("No new camera media", isPresented: $showNoNewMediaAlert) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Everything currently advertised by this camera has already been imported by GM1 Sync.")
+            Text("Every downloadable item currently advertised by this camera is already in Photos.")
+        }
+        .alert("Full Photos access required", isPresented: $showPhotosAccessAlert) {
+            Button("Open Settings") {
+                guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                UIApplication.shared.open(url)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                store.importHistoryReconciliationError
+                    ?? "Allow Full Access to Photos so GM1 Sync can identify already downloaded media without creating duplicates."
+            )
         }
     }
 
@@ -158,7 +182,7 @@ struct CameraGalleryView: View {
             }
 
             if !store.importHistory.isEmpty {
-                Text("Green checks mark media imported by GM1 Sync on this iPhone.")
+                Text("Green checks mark camera originals already found in Photos.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -248,15 +272,6 @@ struct CameraGalleryView: View {
             Menu {
                 Button("Load all media") { Task { await store.loadAllPages() } }
                     .disabled(!store.canLoadMore)
-                Button("Import new only") {
-                    Task {
-                        await store.loadAllPages()
-                        let selectedCount = store.selectUnimported()
-                        isSelecting = selectedCount > 0
-                        showNoNewMediaAlert = selectedCount == 0 && store.paginationError == nil
-                    }
-                }
-                .disabled(store.photos.isEmpty || store.isImporting)
                 Button("Select all items") {
                     Task {
                         await store.loadAllPages()
@@ -269,6 +284,63 @@ struct CameraGalleryView: View {
                 Label("Gallery actions", systemImage: "ellipsis.circle")
             }
         }
+    }
+
+    private var downloadAllNewButton: some View {
+        Button {
+            Task { await downloadAllNewMedia() }
+        } label: {
+            HStack(spacing: 8) {
+                if isDownloadingAllNew || store.isReconcilingImportHistory {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: "arrow.down.circle.fill")
+                }
+                Text("Download all new images & videos")
+                    .lineLimit(1)
+            }
+            .font(.subheadline.weight(.semibold))
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
+        .disabled(
+            store.photos.isEmpty
+                || store.isImporting
+                || store.isLoadingNextPage
+                || store.isReconcilingImportHistory
+                || isDownloadingAllNew
+        )
+        .accessibilityIdentifier("download-all-new-camera-media")
+    }
+
+    @MainActor
+    private func downloadAllNewMedia() async {
+        guard !isDownloadingAllNew else { return }
+        isDownloadingAllNew = true
+        defer { isDownloadingAllNew = false }
+
+        await store.loadAllPages()
+        guard store.paginationError == nil else { return }
+        guard store.hasCompletePhotoLibraryImportHistory else {
+            showPhotosAccessAlert = true
+            return
+        }
+
+        let selectedCount = store.selectUnimported()
+        guard selectedCount > 0 else {
+            showNoNewMediaAlert = true
+            return
+        }
+
+        await store.importSelected(
+            photoMode: importMode,
+            samples: model.locationLogger.samples,
+            cameraClockOffset: model.cameraClockOffsetMinutes * 60
+        )
+        isSelecting = !store.selectedPhotoIDs.isEmpty
     }
 
     private var importBar: some View {
@@ -462,7 +534,11 @@ private struct CameraPhotoDetailPager: View {
     var body: some View {
         TabView(selection: $selectedPhotoID) {
             ForEach(photos) { photo in
-                CameraPhotoDetailPage(photo: photo, store: store, model: model)
+                CameraPhotoDetailPage(
+                    photo: photo,
+                    store: store,
+                    model: model
+                )
                     .tag(photo.id)
             }
         }
@@ -470,6 +546,39 @@ private struct CameraPhotoDetailPager: View {
         .navigationTitle(selectedPhoto.title)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("camera-media-detail-pager")
+        .task(id: selectedPhotoID) {
+            let photo = selectedPhoto
+            guard photo.kind == .photo else { return }
+
+            // The GM1S media server can stall when the preview and original JPEG
+            // are requested at the same time. The manual metadata button worked
+            // because people naturally tapped it after the preview appeared. Keep
+            // the automatic flow in that same order, including adjacent page
+            // previews that SwiftUI may start while preparing the pager.
+            if let preview = photo.previewResource {
+                do {
+                    _ = try await store.mediaData(for: preview)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // Metadata can still succeed when only the preview is missing.
+                }
+            }
+            await store.waitForMediaLoadsToFinish()
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, store.metadataInspectionState(for: photo) == nil else { return }
+
+            _ = await store.inspectOriginalMetadata(
+                for: photo,
+                onDiagnostic: { message in
+                    model.recordDiagnostic(message)
+                }
+            )
+        }
     }
 }
 
@@ -484,15 +593,6 @@ private struct CameraPhotoDetailPage: View {
     private var availablePhotoModes: [CameraPhotoImportMode] {
         CameraPhotoImportMode.allCases.filter(photo.supports)
     }
-    private var previewGeotagMatch: GeotagMatch? {
-        guard let captureDate = photo.captureDate else { return nil }
-        return LocationTrackMatcher.match(
-            captureDate: captureDate,
-            samples: model.locationLogger.samples,
-            cameraClockOffset: model.cameraClockOffsetMinutes * 60
-        )
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -517,22 +617,21 @@ private struct CameraPhotoDetailPage: View {
                 }
 
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(photo.title).font(.title3.bold())
-                    if let itemID = photo.itemID {
-                        LabeledContent("Camera item", value: itemID)
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(photo.title).font(.title3.bold())
+                        Spacer(minLength: 8)
+                        if photo.kind == .photo {
+                            Text(originalPhotoFormatSummary)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("original-photo-formats")
+                        }
                     }
                     if photo.kind == .video {
                         LabeledContent("Original video") {
                             Text(photo.videoResource?.downloadURL.lastPathComponent ?? "Unavailable")
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                        }
-                    } else {
-                        LabeledContent("Original JPEG") {
-                            Text(photo.originalJPEGResource?.profileName ?? "Unavailable")
-                        }
-                        LabeledContent("Original RAW") {
-                            Text(photo.rawResource?.url.pathExtension.uppercased() ?? "Unavailable")
                         }
                     }
                     if let historyRecord {
@@ -552,50 +651,16 @@ private struct CameraPhotoDetailPage: View {
                         .pickerStyle(.segmented)
                         .accessibilityIdentifier("detail-camera-import-format")
 
-                        Text("JPEG is the default. JPEG + RAW stays together as one Photos asset.")
+                        Text("JPEG + RAW stays together as one Photos asset.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
 
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("Geotagging").font(.headline)
-                        if let match = previewGeotagMatch {
-                            MatchedLocationMap(match: match)
-                            Label("Location match available", systemImage: "mappin.circle.fill")
-                                .foregroundStyle(.green)
-                            LabeledContent("Camera listing time") {
-                                Text(match.captureDate.formatted(date: .abbreviated, time: .standard))
-                            }
-                            LabeledContent("Position") {
-                                Text(String(format: "%.5f, %.5f", match.latitude, match.longitude))
-                                    .font(.caption.monospaced())
-                            }
-                            Text("This is a preview based on the time advertised by the camera. Import confirms the match using the original JPEG's EXIF capture time.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if model.locationLogger.samples.isEmpty {
-                            Label("No GPS track points recorded", systemImage: "location.slash")
-                                .foregroundStyle(.secondary)
-                            Text("No location can be matched to this image until the location log contains a nearby track point.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if let captureDate = photo.captureDate {
-                            Label("No nearby location match", systemImage: "location.slash")
-                                .foregroundStyle(.orange)
-                            LabeledContent("Camera listing time") {
-                                Text(captureDate.formatted(date: .abbreviated, time: .standard))
-                            }
-                            Text("The camera supplied a capture time, but none of the recorded GPS track points are within 15 minutes. Import will verify this using the JPEG's EXIF time.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Label("Download required to verify", systemImage: "arrow.down.circle")
-                                .foregroundStyle(.orange)
-                            Text("\(model.locationLogger.samples.count) GPS track \(model.locationLogger.samples.count == 1 ? "point is" : "points are") recorded, but this camera item has no trustworthy capture time. Import must read the original JPEG's EXIF time before it can determine a match.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    CameraPhotoGeotaggingDetail(
+                        photo: photo,
+                        store: store,
+                        model: model
+                    )
                 }
 
                 importStatus
@@ -657,6 +722,13 @@ private struct CameraPhotoDetailPage: View {
         photo.kind == .video && photo.videoPlaybackResource?.isAVCHD == true
     }
 
+    private var originalPhotoFormatSummary: String {
+        var formats: [String] = []
+        if photo.originalJPEGResource != nil { formats.append("JPEG") }
+        if photo.rawResource != nil { formats.append("RAW") }
+        return formats.isEmpty ? "Unavailable" : formats.joined(separator: " · ")
+    }
+
     private var importButtonTitle: String {
         let again = historyRecord != nil || importState == .saved
         if photo.kind == .video {
@@ -686,6 +758,172 @@ private struct CameraPhotoDetailPage: View {
         case nil:
             EmptyView()
         }
+    }
+}
+
+private struct CameraPhotoGeotaggingDetail: View {
+    let photo: LumixPhoto
+    @ObservedObject var store: CameraGalleryStore
+    @ObservedObject var model: ProbeViewModel
+
+    private var historyRecord: CameraImportHistoryRecord? {
+        store.importHistoryRecord(for: photo)
+    }
+
+    private var inspectionState: CameraPhotoMetadataInspectionState? {
+        store.metadataInspectionState(for: photo)
+    }
+
+    private var inspection: CameraPhotoMetadataInspection? {
+        guard case let .resolved(value) = inspectionState else { return nil }
+        return value
+    }
+
+    private var captureDate: Date? {
+        inspection?.exifCaptureDate
+            ?? historyRecord?.verifiedCaptureDate
+            ?? inspection?.itemMetadataCaptureDate
+            ?? inspection?.galleryCaptureDate
+            ?? photo.captureDate
+    }
+
+    private var captureDateSource: String? {
+        if inspection?.exifCaptureDate != nil { return "Original JPEG EXIF" }
+        if historyRecord?.verifiedCaptureDate != nil { return "Verified during import" }
+        return inspection?.captureDateSource ?? (photo.captureDate == nil ? nil : "Camera gallery listing")
+    }
+
+    private var trackMatch: GeotagMatch? {
+        guard let captureDate else { return nil }
+        return LocationTrackMatcher.match(
+            captureDate: captureDate,
+            samples: model.locationLogger.samples,
+            cameraClockOffset: model.cameraClockOffsetMinutes * 60
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Location").font(.headline)
+            locationResult
+            metadataDetails
+        }
+        .accessibilityIdentifier("camera-photo-location")
+    }
+
+    @ViewBuilder
+    private var locationResult: some View {
+        if let location = historyRecord?.appliedLocation {
+            MatchedLocationMap(location: location, markerTitle: "Imported location")
+            Label("Imported with location", systemImage: "mappin.circle.fill")
+                .foregroundStyle(.green)
+            Text("A previous import from this app was saved to Photos with this location.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            position(location)
+        } else if let location = inspection?.embeddedLocation {
+            MatchedLocationMap(location: location, markerTitle: "Embedded photo location")
+            Label("Original JPEG is geotagged", systemImage: "mappin.circle.fill")
+                .foregroundStyle(.green)
+            Text("This location is embedded in the original file and will be kept when it is imported.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            position(location)
+        } else if let match = trackMatch {
+            MatchedLocationMap(match: match)
+            Label("Will be geotagged on import", systemImage: "mappin.and.ellipse")
+                .foregroundStyle(.green)
+            Text("The camera's capture time matches the recorded location track.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            position(PhotoGeotagLocation(match: match))
+        } else {
+            switch inspectionState {
+            case let .checking(stage):
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text(stage.title)
+                    }
+                    if stage == .downloadingOriginalJPEG {
+                        Text("The camera transfer will stop after \(store.metadataInspectionTimeoutSeconds) seconds if it does not complete.")
+                            .font(.caption)
+                    }
+                }
+                .foregroundStyle(.secondary)
+            case nil:
+                EmptyView()
+            case .resolved:
+                if captureDate == nil {
+                    Label("No usable capture time", systemImage: "clock.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                    Text("The original JPEG did not expose a usable EXIF capture time, so it cannot be matched to the recorded location track.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if model.locationLogger.samples.isEmpty {
+                    Label("Original JPEG has no GPS", systemImage: "location.slash")
+                        .foregroundStyle(.secondary)
+                    Text("The original JPEG has no embedded GPS, and no location track points are recorded for a time-based match.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Label("No nearby location match", systemImage: "location.slash")
+                        .foregroundStyle(.orange)
+                    Text("The original JPEG has a capture time, but no recorded GPS point is within 15 minutes after the camera clock adjustment.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            case let .failed(message):
+                Label("Could not verify geotag", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Try metadata check again") {
+                    Task { await inspectOriginal(force: true) }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var metadataDetails: some View {
+        if let inspection {
+            LabeledContent("Original JPEG GPS", value: inspection.embeddedLocation == nil ? "Not embedded" : "Embedded")
+            LabeledContent("Original JPEG time") {
+                if let captureDate = inspection.exifCaptureDate {
+                    Text(captureDate.formatted(date: .abbreviated, time: .standard))
+                } else {
+                    Text("Not found").foregroundStyle(.secondary)
+                }
+            }
+            if let captureDate, let captureDateSource {
+                LabeledContent("Time used for matching") {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(captureDate.formatted(date: .abbreviated, time: .standard))
+                        Text(captureDateSource).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func position(_ location: PhotoGeotagLocation) -> some View {
+        LabeledContent("Position") {
+            Text(String(format: "%.5f, %.5f", location.latitude, location.longitude))
+                .font(.caption.monospaced())
+        }
+    }
+
+    private func inspectOriginal(force: Bool = false) async {
+        _ = await store.inspectOriginalMetadata(
+            for: photo,
+            force: force,
+            onDiagnostic: { message in
+                model.recordDiagnostic(message)
+            }
+        )
     }
 }
 

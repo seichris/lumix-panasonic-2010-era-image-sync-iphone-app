@@ -78,6 +78,49 @@ struct GeotagMatch: Hashable, Sendable {
     }
 }
 
+struct PhotoGeotagLocation: Codable, Equatable, Sendable {
+    let latitude: Double
+    let longitude: Double
+    let altitude: Double
+    let horizontalAccuracy: Double
+
+    init(
+        latitude: Double,
+        longitude: Double,
+        altitude: Double = 0,
+        horizontalAccuracy: Double = -1
+    ) {
+        self.latitude = latitude
+        self.longitude = longitude
+        self.altitude = altitude
+        self.horizontalAccuracy = horizontalAccuracy
+    }
+
+    init(match: GeotagMatch) {
+        self.init(
+            latitude: match.latitude,
+            longitude: match.longitude,
+            altitude: match.altitude,
+            horizontalAccuracy: match.horizontalAccuracy
+        )
+    }
+
+    var location: CLLocation {
+        CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+            altitude: altitude,
+            horizontalAccuracy: horizontalAccuracy,
+            verticalAccuracy: -1,
+            timestamp: .now
+        )
+    }
+}
+
+struct PhotoOriginalMetadata: Equatable, Sendable {
+    let captureDate: Date?
+    let embeddedLocation: PhotoGeotagLocation?
+}
+
 enum LocationTrackMatcher {
     static let defaultMaximumTimeDifference: TimeInterval = 15 * 60
     static let maximumUsableAccuracy: CLLocationAccuracy = 500
@@ -168,6 +211,13 @@ enum PhotoCaptureDateReader {
             return nil
         }
 
+        return read(from: properties, fallbackTimeZone: fallbackTimeZone)
+    }
+
+    static func read(
+        from properties: NSDictionary,
+        fallbackTimeZone: TimeZone = .autoupdatingCurrent
+    ) -> Date? {
         let exif = properties[kCGImagePropertyExifDictionary] as? NSDictionary
         let tiff = properties[kCGImagePropertyTIFFDictionary] as? NSDictionary
         let dateString = exif?[kCGImagePropertyExifDateTimeOriginal] as? String ??
@@ -211,6 +261,67 @@ enum PhotoCaptureDateReader {
               hours <= 23,
               minutes <= 59 else { return nil }
         return TimeZone(secondsFromGMT: sign * ((hours * 60 + minutes) * 60))
+    }
+}
+
+enum PhotoOriginalMetadataReader {
+    static func read(from fileURL: URL) -> PhotoOriginalMetadata {
+        if let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil),
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as NSDictionary? {
+            return metadata(from: properties)
+        }
+
+        guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else {
+            return PhotoOriginalMetadata(captureDate: nil, embeddedLocation: nil)
+        }
+
+        let source = CGImageSourceCreateIncremental(nil)
+        let isCompleteJPEG = data.count >= 2 && data.suffix(2).elementsEqual([0xff, 0xd9])
+        CGImageSourceUpdateData(source, data as CFData, isCompleteJPEG)
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as NSDictionary? else {
+            return PhotoOriginalMetadata(captureDate: nil, embeddedLocation: nil)
+        }
+
+        return metadata(from: properties)
+    }
+
+    private static func metadata(from properties: NSDictionary) -> PhotoOriginalMetadata {
+        return PhotoOriginalMetadata(
+            captureDate: PhotoCaptureDateReader.read(from: properties),
+            embeddedLocation: location(from: properties[kCGImagePropertyGPSDictionary] as? NSDictionary)
+        )
+    }
+
+    static func location(from gps: NSDictionary?) -> PhotoGeotagLocation? {
+        guard let gps,
+              let rawLatitude = number(gps[kCGImagePropertyGPSLatitude]),
+              let rawLongitude = number(gps[kCGImagePropertyGPSLongitude]) else {
+            return nil
+        }
+
+        let latitudeReference = (gps[kCGImagePropertyGPSLatitudeRef] as? String)?.uppercased()
+        let longitudeReference = (gps[kCGImagePropertyGPSLongitudeRef] as? String)?.uppercased()
+        let latitude = latitudeReference == "S" ? -abs(rawLatitude) : abs(rawLatitude)
+        let longitude = longitudeReference == "W" ? -abs(rawLongitude) : abs(rawLongitude)
+        guard abs(latitude) <= 90, abs(longitude) <= 180 else { return nil }
+
+        let rawAltitude = number(gps[kCGImagePropertyGPSAltitude]) ?? 0
+        let altitudeReference = Int(number(gps[kCGImagePropertyGPSAltitudeRef]) ?? 0)
+        let altitude = altitudeReference == 1 ? -abs(rawAltitude) : rawAltitude
+        let accuracy = number(gps[kCGImagePropertyGPSHPositioningError]) ?? -1
+
+        return PhotoGeotagLocation(
+            latitude: latitude,
+            longitude: longitude,
+            altitude: altitude,
+            horizontalAccuracy: accuracy
+        )
+    }
+
+    private static func number(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let value = value as? String { return Double(value) }
+        return nil
     }
 }
 

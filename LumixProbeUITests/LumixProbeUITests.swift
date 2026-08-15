@@ -15,6 +15,7 @@ final class LumixProbeUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["Reconnect to GM1S-90C7E0"].waitForExistence(timeout: 12))
         XCTAssertTrue(app.buttons["Scan another camera QR code"].exists)
+        XCTAssertTrue(app.staticTexts["Turn on your camera and reconnect Wi-Fi."].waitForExistence(timeout: 12))
         XCTAssertFalse(app.staticTexts["This camera is remembered securely. iPhone can also Auto-Join it whenever its Wi-Fi is available."].exists)
     }
 
@@ -30,8 +31,10 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Leave its QR code on screen")).firstMatch.exists)
         XCTAssertTrue(app.staticTexts["Connect to the camera Wi-Fi by scanning the QR code, or manually."].exists)
         XCTAssertTrue(app.buttons["Scan camera QR code"].exists)
-        XCTAssertTrue(app.buttons["Enter network details"].exists)
+        XCTAssertTrue(app.buttons["Enter wi-fi name and password"].exists)
         XCTAssertTrue(app.buttons["start-location-log"].exists)
+        XCTAssertTrue(app.switches["auto-start-geotagging"].exists)
+        XCTAssertTrue(app.staticTexts["Start geotagging on app start"].exists)
         XCTAssertFalse(app.staticTexts["Need help?"].exists)
         XCTAssertFalse(app.textFields["camera-ip-address"].exists)
 
@@ -48,7 +51,7 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Cancel"].exists)
         app.buttons["Cancel"].tap()
 
-        app.buttons["Enter network details"].tap()
+        app.buttons["Enter wi-fi name and password"].tap()
         XCTAssertTrue(app.navigationBars["Join Camera Wi-Fi"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.textFields["manual-wifi-ssid"].exists)
         XCTAssertTrue(app.secureTextFields["manual-wifi-password"].exists)
@@ -65,6 +68,7 @@ final class LumixProbeUITests: XCTestCase {
         let mediaCount = app.staticTexts["camera-gallery-count"]
         XCTAssertTrue(mediaCount.exists)
         XCTAssertEqual(mediaCount.label, "25 images · 0 videos")
+        XCTAssertTrue(app.buttons["download-all-new-camera-media"].exists)
 
         let firstPhoto = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "open-camera-photo-")
@@ -74,6 +78,14 @@ final class LumixProbeUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["save-camera-photo"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.navigationBars["Demo scene 0025"].exists)
+        XCTAssertTrue(app.staticTexts["JPEG · RAW"].exists)
+        XCTAssertTrue(app.staticTexts["Location"].exists)
+        XCTAssertFalse(app.staticTexts["Camera item"].exists)
+        XCTAssertTrue(app.staticTexts["Could not verify geotag"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Preparing metadata check…"].exists)
+        XCTAssertFalse(app.buttons["Check original metadata"].exists)
+        XCTAssertFalse(app.buttons["photo-metadata-diagnostic"].exists)
+        XCTAssertFalse(app.staticTexts["Original metadata not verified"].exists)
         app.swipeLeft()
         XCTAssertTrue(app.navigationBars["Demo scene 0024"].waitForExistence(timeout: 5))
         app.swipeRight()

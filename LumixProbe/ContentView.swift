@@ -7,6 +7,7 @@ struct ContentView: View {
     @StateObject private var galleryStore = CameraGalleryStore()
     @State private var presentedSheet: ConnectionSheet?
     @State private var isConfirmingTrackClear = false
+    @State private var isShowingSettings = false
 
     init() {
         let model = ProbeViewModel()
@@ -24,7 +25,7 @@ struct ContentView: View {
                 }, sourceIdentifierProvider: {
                     model.rememberedCameraNetwork?.ssid
                         ?? model.host.trimmingCharacters(in: .whitespacesAndNewlines)
-                })
+                }, importReconciler: SystemCameraImportReconciler())
             )
         }
     }
@@ -41,17 +42,29 @@ struct ContentView: View {
             .toolbar {
                 if model.isCameraConnected {
                     ToolbarItem(placement: .topBarTrailing) {
-                        settingsLink
+                        settingsButton
                     }
                 }
             }
-            .task { await model.refreshConnectionStatus(waitingForRememberedCamera: true) }
+            .navigationDestination(isPresented: $isShowingSettings) {
+                AppSettingsView(model: model) {
+                    Task {
+                        await galleryStore.resetForReconnect()
+                        await model.refreshConnectionStatus()
+                    }
+                }
+            }
+            .task {
+                model.startGeotaggingIfEnabled()
+                await model.refreshConnectionStatus(waitingForRememberedCamera: true)
+            }
             .onChange(of: model.isCameraConnected) { _, isConnected in
                 guard !isConnected else { return }
                 Task { await galleryStore.resetForReconnect() }
             }
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active else { return }
+                model.startGeotaggingIfEnabled()
                 Task {
                     if !model.isCameraConnected { await galleryStore.resetForReconnect() }
                     await model.refreshConnectionStatus(waitingForRememberedCamera: true)
@@ -87,14 +100,9 @@ struct ContentView: View {
         }
     }
 
-    private var settingsLink: some View {
-        NavigationLink {
-            AppSettingsView(model: model) {
-                Task {
-                    await galleryStore.resetForReconnect()
-                    await model.refreshConnectionStatus()
-                }
-            }
+    private var settingsButton: some View {
+        Button {
+            isShowingSettings = true
         } label: {
             Label("Settings", systemImage: "gearshape")
         }
@@ -103,31 +111,33 @@ struct ContentView: View {
 
     private var disconnectedHome: some View {
         List {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("GM1 Sync")
                             .font(.largeTitle.bold())
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                         Text("& other 2010-era Lumix cams")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.8)
+                            .minimumScaleFactor(0.65)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("landing-title")
 
-                    Spacer(minLength: 8)
-
-                    settingsLink
-                        .labelStyle(.iconOnly)
-                        .font(.title3)
+                    Text("An independent alternative to Panasonic Image App for compatible older cameras.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("image-app-alternative-text")
                 }
 
-                Text("An independent alternative to Panasonic Image App for compatible older cameras.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("image-app-alternative-text")
+                Spacer(minLength: 0)
+
+                settingsButton
+                    .labelStyle(.iconOnly)
+                    .font(.title2)
             }
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
@@ -147,6 +157,7 @@ struct ContentView: View {
 
             GeotaggingControls(
                 logger: model.locationLogger,
+                autoStartGeotagging: $model.autoStartGeotagging,
                 cameraClockOffsetMinutes: $model.cameraClockOffsetMinutes,
                 clearTrack: { isConfirmingTrackClear = true }
             )
@@ -328,13 +339,21 @@ private struct CameraDiagnosticsView: View {
 
 private struct GeotaggingControls: View {
     @ObservedObject var logger: GeotagLocationLogger
+    @Binding var autoStartGeotagging: Bool
     @Binding var cameraClockOffsetMinutes: Double
     let clearTrack: () -> Void
 
     var body: some View {
         Section("Geotagging") {
             if logger.isLogging {
-                Label("Location log running", systemImage: "location.fill")
+                HStack {
+                    Label("Location log running", systemImage: "location.fill")
+                    Spacer()
+                    if let accuracyLabel {
+                        Text(accuracyLabel)
+                            .monospacedDigit()
+                    }
+                }
                     .foregroundStyle(.green)
                 Button("Stop location log", role: .destructive) { logger.stop() }
                     .accessibilityIdentifier("stop-location-log")
@@ -345,15 +364,18 @@ private struct GeotaggingControls: View {
                 .accessibilityIdentifier("start-location-log")
             }
 
-            Text(logger.statusMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if !logger.isLogging, logger.statusMessage != "Location logging is off." {
+                Text(logger.statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Toggle(isOn: $autoStartGeotagging) {
+                Label("Start geotagging on app start", systemImage: "location.fill.viewfinder")
+            }
+            .accessibilityIdentifier("auto-start-geotagging")
 
             if !logger.samples.isEmpty {
-                LabeledContent("Track samples", value: "\(logger.samples.count)")
-                if let latest = logger.latestSample {
-                    LabeledContent("Latest accuracy", value: "±\(Int(latest.horizontalAccuracy.rounded())) m")
-                }
                 Button("Clear saved location track", role: .destructive, action: clearTrack)
                     .disabled(logger.isLogging)
             }
@@ -369,6 +391,12 @@ private struct GeotaggingControls: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var accuracyLabel: String? {
+        guard let accuracy = logger.latestSample?.horizontalAccuracy,
+              accuracy >= 0 else { return nil }
+        return "±\(Int(accuracy.rounded())) m"
     }
 
     private var clockOffsetLabel: String {
@@ -461,21 +489,32 @@ private struct DownloadedPhotoGeotagPreview: View {
 }
 
 struct MatchedLocationMap: View {
-    let match: GeotagMatch
+    private let location: PhotoGeotagLocation
+    private let markerTitle: String
+
+    init(match: GeotagMatch) {
+        location = PhotoGeotagLocation(match: match)
+        markerTitle = "Matched location"
+    }
+
+    init(location: PhotoGeotagLocation, markerTitle: String = "Photo location") {
+        self.location = location
+        self.markerTitle = markerTitle
+    }
 
     var body: some View {
         Map(initialPosition: .region(region)) {
-            Marker("Matched location", coordinate: match.location.coordinate)
+            Marker(markerTitle, coordinate: location.location.coordinate)
         }
         .frame(height: 180)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .accessibilityLabel("Map preview of the matched photo location")
-        .id("\(match.latitude)-\(match.longitude)")
+        .id("\(location.latitude)-\(location.longitude)")
     }
 
     private var region: MKCoordinateRegion {
         MKCoordinateRegion(
-            center: match.location.coordinate,
+            center: location.location.coordinate,
             span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
         )
     }

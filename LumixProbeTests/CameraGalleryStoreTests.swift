@@ -307,6 +307,204 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertTrue(store.isPreviouslyImported(photo))
     }
 
+    func testOriginalMetadataInspectionDownloadsOnceAndCachesTheResult() async throws {
+        let captureDate = Date(timeIntervalSince1970: 1_786_692_600)
+        let embeddedLocation = PhotoGeotagLocation(latitude: 1.3521, longitude: 103.8198)
+        let client = MockGalleryClient(total: 1)
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 1,
+            photoMetadataReader: { _ in
+                PhotoOriginalMetadata(captureDate: captureDate, embeddedLocation: embeddedLocation)
+            }
+        )
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        let first = await store.inspectOriginalMetadata(for: photo)
+        let second = await store.inspectOriginalMetadata(for: photo)
+
+        guard case let .resolved(inspection) = first else {
+            return XCTFail("Expected original metadata to resolve")
+        }
+        XCTAssertEqual(inspection.exifCaptureDate, captureDate)
+        XCTAssertEqual(inspection.embeddedLocation, embeddedLocation)
+        XCTAssertEqual(second, first)
+        let downloadCount = await client.downloadCount
+        XCTAssertEqual(downloadCount, 1)
+    }
+
+    func testConcurrentMetadataInspectionsShareOneCameraDownload() async throws {
+        let client = MockGalleryClient(total: 1, downloadDelay: .milliseconds(100))
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 1,
+            photoMetadataReader: { _ in
+                PhotoOriginalMetadata(captureDate: nil, embeddedLocation: nil)
+            }
+        )
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        async let first = store.inspectOriginalMetadata(for: photo)
+        async let second = store.inspectOriginalMetadata(for: photo)
+        let (firstResult, secondResult) = await (first, second)
+
+        XCTAssertEqual(firstResult, secondResult)
+        guard case .resolved = firstResult else {
+            return XCTFail("Expected the shared inspection to resolve")
+        }
+        let downloadCount = await client.downloadCount
+        XCTAssertEqual(downloadCount, 1)
+    }
+
+    func testMetadataInspectionTimesOutAndRecordsItsStages() async throws {
+        let client = MockGalleryClient(total: 1, downloadDelay: .seconds(30))
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 1,
+            metadataInspectionDownloadTimeout: .milliseconds(20)
+        )
+        var diagnostics: [String] = []
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        let state = await store.inspectOriginalMetadata(
+            for: photo,
+            onDiagnostic: { diagnostics.append($0) }
+        )
+
+        guard case let .failed(message) = state else {
+            return XCTFail("Expected the inspection to time out")
+        }
+        XCTAssertTrue(message.contains("did not finish sending"))
+        XCTAssertTrue(diagnostics.contains { $0.contains("Checking photo metadata") })
+        XCTAssertTrue(diagnostics.contains { $0.contains("Downloading original JPEG metadata") })
+        XCTAssertTrue(diagnostics.contains { $0.contains("failed") })
+    }
+
+    func testMetadataTimeoutDoesNotWaitForAnUncooperativeCameraDownload() async throws {
+        let client = MockGalleryClient(total: 1, ignoresDownloadCancellation: true)
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 1,
+            metadataInspectionDownloadTimeout: .milliseconds(20)
+        )
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        let startedAt = Date()
+        let state = await store.inspectOriginalMetadata(for: photo)
+        let elapsed = Date().timeIntervalSince(startedAt)
+
+        guard case let .failed(message) = state else {
+            return XCTFail("Expected the inspection to time out")
+        }
+        XCTAssertTrue(message.contains("did not finish sending"))
+        XCTAssertLessThan(elapsed, 0.3)
+    }
+
+    func testMetadataTimeoutPublishesBeforeBlockingCancellationHandlerReturns() async throws {
+        let client = MockGalleryClient(
+            total: 1,
+            cancellationHandlerBlockSeconds: 0.5
+        )
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 1,
+            metadataInspectionDownloadTimeout: .milliseconds(20)
+        )
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        let startedAt = Date()
+        let state = await store.inspectOriginalMetadata(for: photo)
+        let elapsed = Date().timeIntervalSince(startedAt)
+
+        guard case let .failed(message) = state else {
+            return XCTFail("Expected the inspection to time out")
+        }
+        XCTAssertTrue(message.contains("did not finish sending"))
+        XCTAssertLessThan(elapsed, 0.2)
+    }
+
+    func testGalleryRefreshLeavesInterruptedMetadataCheckVisibleForRetry() async throws {
+        let client = MockGalleryClient(total: 1, downloadDelay: .seconds(30))
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 1,
+            metadataInspectionDownloadTimeout: .seconds(60)
+        )
+        var diagnostics: [String] = []
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        let inspectionTask = Task {
+            await store.inspectOriginalMetadata(
+                for: photo,
+                onDiagnostic: { diagnostics.append($0) }
+            )
+        }
+
+        for _ in 0..<20 {
+            if store.metadataInspectionState(for: photo) == .checking(.downloadingOriginalJPEG) {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(store.metadataInspectionState(for: photo), .checking(.downloadingOriginalJPEG))
+
+        await store.loadInitial()
+        _ = await inspectionTask.value
+
+        guard case let .failed(message) = store.metadataInspectionState(for: photo) else {
+            return XCTFail("Expected an interrupted check to remain visible")
+        }
+        XCTAssertTrue(message.contains("gallery refreshed"))
+        XCTAssertTrue(diagnostics.contains { $0.contains("was interrupted") })
+    }
+
+    func testImportPersistsVerifiedCaptureTimeAndMatchedLocation() async throws {
+        let captureDate = Date(timeIntervalSince1970: 1_786_692_600)
+        let client = MockGalleryClient(total: 1)
+        let importer = RecordingImporter()
+        let store = CameraGalleryStore(
+            client: client,
+            importer: importer,
+            importHistoryStore: InMemoryCameraImportHistoryStore(),
+            sourceIdentifier: "GM1S-TEST",
+            pageSize: 1,
+            photoMetadataReader: { _ in
+                PhotoOriginalMetadata(captureDate: captureDate, embeddedLocation: nil)
+            }
+        )
+        let sample = LocationSample(
+            timestamp: captureDate,
+            latitude: 1.3521,
+            longitude: 103.8198,
+            altitude: 12,
+            horizontalAccuracy: 8
+        )
+
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        await store.importPhoto(photo, samples: [sample], cameraClockOffset: 0)
+
+        let history = try XCTUnwrap(store.importHistoryRecord(for: photo))
+        XCTAssertEqual(history.verifiedCaptureDate, captureDate)
+        XCTAssertEqual(history.appliedLocation?.latitude, sample.latitude)
+        XCTAssertEqual(history.appliedLocation?.longitude, sample.longitude)
+        let packages = await importer.packages
+        XCTAssertEqual(packages.first?.geotag?.latitude, sample.latitude)
+        XCTAssertNil(packages.first?.embeddedLocation)
+    }
+
     func testSelectUnimportedExcludesPreviouslyImportedItemsAfterReload() async throws {
         let client = MockGalleryClient(total: 3)
         let historyStore = InMemoryCameraImportHistoryStore()
@@ -335,6 +533,59 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertTrue(reloadedStore.isPreviouslyImported(importedPhoto))
         XCTAssertEqual(reloadedStore.selectedPhotoIDs.count, 2)
         XCTAssertFalse(reloadedStore.selectedPhotoIDs.contains(importedPhoto.id))
+    }
+
+    func testPhotosLibraryReconciliationRecoversMissingHistoryAndExcludesMatches() async throws {
+        let client = MockGalleryClient(total: 3, videoIndexes: [1])
+        let historyStore = InMemoryCameraImportHistoryStore()
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            importHistoryStore: historyStore,
+            importReconciler: StubImportReconciler(
+                matchedFilenames: ["PHOTO-2.JPG", "video-1.mp4"],
+                hasCompleteLibraryAccess: true
+            ),
+            sourceIdentifier: "GM1S-TEST",
+            pageSize: 3
+        )
+
+        await store.reloadAllMedia()
+
+        let recoveredPhoto = try XCTUnwrap(store.photos.first { $0.itemID == "2" })
+        let recoveredVideo = try XCTUnwrap(store.photos.first { $0.itemID == "1" })
+        let newPhoto = try XCTUnwrap(store.photos.first { $0.itemID == "0" })
+        XCTAssertEqual(store.importHistoryRecord(for: recoveredPhoto)?.effectiveEvidence, .photosLibrary)
+        XCTAssertEqual(store.importHistoryRecord(for: recoveredPhoto)?.variants, [.jpeg])
+        XCTAssertEqual(store.importHistoryRecord(for: recoveredVideo)?.variants, [.video])
+        XCTAssertNil(store.importHistoryRecord(for: newPhoto))
+        XCTAssertTrue(store.hasCompletePhotoLibraryImportHistory)
+
+        XCTAssertEqual(store.selectUnimported(), 1)
+        XCTAssertEqual(store.selectedPhotoIDs, [newPhoto.id])
+        XCTAssertEqual(try historyStore.load().count, 2)
+    }
+
+    func testLimitedPhotosAccessRecoversVisibleMatchesButIsNotSafeForDownloadAllNew() async throws {
+        let client = MockGalleryClient(total: 2)
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            importHistoryStore: InMemoryCameraImportHistoryStore(),
+            importReconciler: StubImportReconciler(
+                matchedFilenames: ["photo-1.jpg"],
+                hasCompleteLibraryAccess: false
+            ),
+            sourceIdentifier: "GM1S-TEST",
+            pageSize: 2
+        )
+
+        await store.reloadAllMedia()
+
+        let visibleMatch = try XCTUnwrap(store.photos.first { $0.itemID == "1" })
+        XCTAssertTrue(store.isPreviouslyImported(visibleMatch))
+        XCTAssertFalse(store.hasCompletePhotoLibraryImportHistory)
+        XCTAssertNotNil(store.importHistoryReconciliationError)
     }
 
     func testMediaLoadingIsBoundedAndCancellationReachesTheClient() async throws {
@@ -377,6 +628,19 @@ final class CameraGalleryStoreTests: XCTestCase {
     }
 }
 
+private struct StubImportReconciler: CameraImportReconciling {
+    let matchedFilenames: Set<String>
+    let hasCompleteLibraryAccess: Bool
+
+    func importedFilenames(matching filenames: Set<String>) async throws -> CameraImportReconciliationResult {
+        let normalizedMatches = Set(matchedFilenames.map(CameraImportFilename.normalized))
+        return CameraImportReconciliationResult(
+            matchedFilenames: normalizedMatches.intersection(filenames),
+            hasCompleteLibraryAccess: hasCompleteLibraryAccess
+        )
+    }
+}
+
 private actor MockGalleryClient: CameraGalleryClient {
     struct BrowseRequest: Sendable {
         let start: Int
@@ -388,23 +652,33 @@ private actor MockGalleryClient: CameraGalleryClient {
     private let preparationDelay: Duration
     private let includesRAW: Bool
     private let videoIndexes: Set<Int>
+    private let downloadDelay: Duration
+    private let ignoresDownloadCancellation: Bool
+    private let cancellationHandlerBlockSeconds: TimeInterval
     private var delayedBrowseStart: Int?
     private var delayedBrowseDuration: Duration = .milliseconds(250)
     private(set) var browseRequests: [BrowseRequest] = []
     private(set) var browseCancellationCount = 0
+    private(set) var downloadCount = 0
 
     init(
         total: Int,
         overlapsPages: Bool = false,
         preparationDelay: Duration = .zero,
         includesRAW: Bool = false,
-        videoIndexes: Set<Int> = []
+        videoIndexes: Set<Int> = [],
+        downloadDelay: Duration = .zero,
+        ignoresDownloadCancellation: Bool = false,
+        cancellationHandlerBlockSeconds: TimeInterval = 0
     ) {
         self.total = total
         self.overlapsPages = overlapsPages
         self.preparationDelay = preparationDelay
         self.includesRAW = includesRAW
         self.videoIndexes = videoIndexes
+        self.downloadDelay = downloadDelay
+        self.ignoresDownloadCancellation = ignoresDownloadCancellation
+        self.cancellationHandlerBlockSeconds = cancellationHandlerBlockSeconds
     }
 
     func setTotal(_ total: Int) {
@@ -451,6 +725,27 @@ private actor MockGalleryClient: CameraGalleryClient {
     }
 
     func download(_ resource: LumixResource) async throws -> URL {
+        downloadCount += 1
+        if cancellationHandlerBlockSeconds > 0 {
+            let blockSeconds = cancellationHandlerBlockSeconds
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
+                        continuation.resume(throwing: TestImportError.configuredFailure)
+                    }
+                }
+            } onCancel: {
+                Thread.sleep(forTimeInterval: blockSeconds)
+            }
+        }
+        if ignoresDownloadCancellation {
+            return try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+                    continuation.resume(throwing: TestImportError.configuredFailure)
+                }
+            }
+        }
+        if downloadDelay > .zero { try await Task.sleep(for: downloadDelay) }
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + "-" + resource.url.lastPathComponent)
         try Data([0xff, 0xd8, 0xff, 0xd9]).write(to: destination)
@@ -524,6 +819,8 @@ private actor RecordingImporter: CameraMediaImporting {
         let variant: CameraImportVariant
         let filenames: [String]
         let roles: [CameraImportPlan.Resource.Role]
+        let geotag: GeotagMatch?
+        let embeddedLocation: PhotoGeotagLocation?
     }
 
     private(set) var filenames: [String] = []
@@ -541,7 +838,9 @@ private actor RecordingImporter: CameraMediaImporting {
             Package(
                 variant: media.variant,
                 filenames: mediaFilenames,
-                roles: media.resources.map(\.role)
+                roles: media.resources.map(\.role),
+                geotag: geotag,
+                embeddedLocation: media.embeddedLocation
             )
         )
         if !failingFilenames.isDisjoint(with: mediaFilenames) {

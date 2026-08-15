@@ -11,6 +11,12 @@ final class ProbeViewModel: ObservableObject {
     @Published var cameraClockOffsetMinutes: Double {
         didSet { defaults.set(cameraClockOffsetMinutes, forKey: Self.cameraClockOffsetKey) }
     }
+    @Published var autoStartGeotagging: Bool {
+        didSet {
+            defaults.set(autoStartGeotagging, forKey: Self.autoStartGeotaggingKey)
+            if autoStartGeotagging { locationLogger.start() }
+        }
+    }
     @Published private(set) var isCameraConnected = false
     @Published private(set) var connectionStatusMessage = "Checking for the camera…"
     @Published private(set) var rememberedCameraNetwork: RememberedCameraNetwork?
@@ -24,6 +30,7 @@ final class ProbeViewModel: ObservableObject {
     let locationLogger: GeotagLocationLogger
     private var client: LumixClient { LumixClient(host: host.trimmingCharacters(in: .whitespacesAndNewlines)) }
     private static let cameraClockOffsetKey = "cameraClockOffsetMinutes"
+    private static let autoStartGeotaggingKey = "autoStartGeotagging"
 
     init(
         defaults: UserDefaults = .standard,
@@ -36,6 +43,7 @@ final class ProbeViewModel: ObservableObject {
         let launchArguments = ProcessInfo.processInfo.arguments
         usesConnectedUITestFixture = launchArguments.contains("-UITestConnectedGallery")
         cameraClockOffsetMinutes = defaults.object(forKey: Self.cameraClockOffsetKey) as? Double ?? 0
+        autoStartGeotagging = defaults.bool(forKey: Self.autoStartGeotaggingKey)
         logFileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("GM1Sync.log")
         persistLog()
@@ -64,6 +72,11 @@ final class ProbeViewModel: ObservableObject {
             isCameraConnected = true
             connectionStatusMessage = "Camera connected"
         }
+    }
+
+    func startGeotaggingIfEnabled() {
+        guard autoStartGeotagging else { return }
+        locationLogger.start()
     }
 
     func refreshConnectionStatus(waitingForRememberedCamera: Bool = false) async {
@@ -100,8 +113,8 @@ final class ProbeViewModel: ObservableObject {
         }
 
         isCameraConnected = false
-        if let rememberedCameraNetwork {
-            connectionStatusMessage = "Turn on \(rememberedCameraNetwork.ssid), or tap Reconnect."
+        if rememberedCameraNetwork != nil {
+            connectionStatusMessage = "Turn on your camera and reconnect Wi-Fi."
         } else {
             connectionStatusMessage = "Join the Wi-Fi network shown by the camera."
         }
@@ -407,6 +420,8 @@ final class ProbeViewModel: ObservableObject {
     }
 
     private func setResources(_ value: [LumixResource]) { resources = value }
+    func recordDiagnostic(_ text: String) { append(text) }
+
     private func append(_ text: String) {
         log += text + "\n"
         print("[GM1Sync] \(text)")
