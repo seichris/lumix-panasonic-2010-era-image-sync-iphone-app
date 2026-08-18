@@ -1,6 +1,9 @@
 import SwiftUI
+#if os(iOS)
 import VisionKit
+#endif
 
+#if os(iOS)
 struct QRCodeScannerSheet: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -42,7 +45,36 @@ struct QRCodeScannerSheet: View {
         }
     }
 }
+#else
+/// macOS has no camera-backed VisionKit scanner in this app. Camera Wi-Fi can
+/// be joined from the macOS Wi-Fi menu before probing the configured address.
+struct QRCodeScannerSheet: View {
+    @Environment(\.dismiss) private var dismiss
 
+    let onScanned: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "wifi")
+                .font(.system(size: 42))
+                .foregroundStyle(.tint)
+            Text("Join the camera Wi-Fi on your Mac")
+                .font(.title3.weight(.semibold))
+            Text("Use the Wi-Fi menu in the macOS menu bar to join the SSID shown on the camera, then return to GM1 Sync and probe the camera address.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 460)
+            Button("Close") { dismiss() }
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(32)
+        .frame(minWidth: 520, minHeight: 280)
+        .navigationTitle("Connect camera Wi-Fi")
+    }
+}
+#endif
+
+#if os(iOS)
 private struct QRCodeScannerView: UIViewControllerRepresentable {
     let onScanned: (String) -> Void
 
@@ -99,3 +131,4 @@ private struct QRCodeScannerView: UIViewControllerRepresentable {
         }
     }
 }
+#endif

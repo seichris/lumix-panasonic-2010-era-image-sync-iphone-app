@@ -44,7 +44,7 @@ final class LumixWiFiCredentialsTests: XCTestCase {
 
     func testParsesGM1SPlainPanasonicPayloadWithCRLF() throws {
         let payload = "CRYPT: PLANE\r\n\r\nSSID: GM1S-DEMO01\r\nPW: 12345678"
-        XCTAssertEqual(payload.utf8.count, 48)
+        XCTAssertEqual(payload.utf8.count, 47)
 
         let credentials = try LumixWiFiCredentials(qrPayload: payload)
 

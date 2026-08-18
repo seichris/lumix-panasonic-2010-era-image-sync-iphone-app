@@ -1,6 +1,8 @@
 import CryptoKit
 import Foundation
+#if os(iOS)
 import NetworkExtension
+#endif
 import Security
 
 struct LumixWiFiConnector {
@@ -14,6 +16,7 @@ struct LumixWiFiConnector {
     }
 
     func join(using credentials: LumixWiFiCredentials) async throws -> String {
+#if os(iOS)
         let configuration: NEHotspotConfiguration
 
         if let password = credentials.password, !password.isEmpty {
@@ -46,10 +49,18 @@ struct LumixWiFiConnector {
         }
 
         return credentials.ssid
+#else
+        _ = credentials
+        throw LumixWiFiError.macRequiresManualJoin
+#endif
     }
 
     func removeConfiguration(forSSID ssid: String) {
+#if os(iOS)
         NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
+#else
+        _ = ssid
+#endif
     }
 }
 
@@ -225,6 +236,7 @@ struct LumixWiFiCredentials {
 enum LumixWiFiError: LocalizedError {
     case missingSSID
     case unsupportedQRCode(reference: String)
+    case macRequiresManualJoin
 
     var errorDescription: String? {
         switch self {
@@ -232,6 +244,8 @@ enum LumixWiFiError: LocalizedError {
             return "Enter the Wi-Fi network name shown by the camera."
         case let .unsupportedQRCode(reference):
             return "This camera QR format is not recognized yet (reference \(reference)). Enter the displayed network details manually."
+        case .macRequiresManualJoin:
+            return "Join the camera Wi-Fi from the macOS menu bar, then return to GM1 Sync."
         }
     }
 }

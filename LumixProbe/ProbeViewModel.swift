@@ -44,8 +44,15 @@ final class ProbeViewModel: ObservableObject {
         usesConnectedUITestFixture = launchArguments.contains("-UITestConnectedGallery")
         cameraClockOffsetMinutes = defaults.object(forKey: Self.cameraClockOffsetKey) as? Double ?? 0
         autoStartGeotagging = defaults.bool(forKey: Self.autoStartGeotaggingKey)
+#if os(iOS)
         logFileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("GM1Sync.log")
+#else
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GM1Sync", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        logFileURL = directory.appendingPathComponent("GM1Sync.log")
+#endif
         persistLog()
         print("[GM1Sync] Diagnostic session started")
 

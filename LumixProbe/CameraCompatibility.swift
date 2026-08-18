@@ -28,7 +28,9 @@ struct CameraCompatibilityView: View {
             .foregroundStyle(.secondary)
         }
         .navigationTitle("Camera candidates")
+#if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+#endif
     }
 }
 

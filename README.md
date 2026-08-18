@@ -2,7 +2,7 @@
 
 [![Download GM1 Sync on the App Store](https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83)](https://geo.itunes.apple.com/app/id6801485290)
 
-GM1 Sync is an independent iPhone app for browsing, importing, and geotagging media from compatible Panasonic Wi-Fi cameras. It is an alternative to Panasonic's **Image App** for people who still use these cameras.
+GM1 Sync is an independent iPhone and Mac app for browsing, importing, and geotagging media from compatible Panasonic Wi-Fi cameras. It is an alternative to Panasonic's **Image App** for people who still use these cameras.
 
 The Panasonic Lumix DMC-GM1S is the primary camera validated on real hardware. The GM1, GM5, and other Image App-era Panasonic Lumix cameras from roughly the 2010s may use a compatible protocol, but model and firmware support must be verified individually. See [COMPATIBILITY.md](COMPATIBILITY.md).
 
@@ -13,10 +13,11 @@ GM1 Sync is not affiliated with or endorsed by Panasonic. Panasonic, LUMIX, Imag
 - Connect by scanning the camera's Wi-Fi QR code or entering its Wi-Fi name and password.
 - Browse photos and videos stored on the camera.
 - Preview photos and play camera-provided MP4 videos.
-- Import JPEG, JPEG + RAW, RAW-only, and supported MP4 originals into Apple Photos.
+- Import JPEG, JPEG + RAW, RAW-only, and supported MP4 originals into Apple Photos on iPhone.
 - Mark previously imported items by reconciling camera filenames with the Photos library.
 - Download all new photos and videos in one action.
 - Record an optional on-device location track and add a matched location during photo import.
+- On Mac, join the camera Wi-Fi from the macOS menu bar, run the protocol probes, and copy downloaded originals to Downloads.
 - Keep camera traffic local between the iPhone and the camera, without accounts, analytics, ads, or cloud uploads.
 
 AVCHD items can appear in the gallery when advertised by the camera. The tested GM1S advertises an AVCHD `.TS` URL that its media server does not serve, so AVCHD playback and import are shown as unavailable rather than promised as supported.
@@ -49,11 +50,11 @@ The protocol is unofficial and can vary by camera model and firmware.
 
 Location logging is optional and visible while active. During import, GM1 Sync reads the original JPEG's EXIF capture time and matches it to a nearby or interpolated point in the locally stored location track. A camera-clock adjustment can compensate when the camera clock differs from the iPhone clock.
 
-Matches more than 15 minutes from a usable track point are rejected. The original camera file remains unchanged; the matched `CLLocation` is supplied separately when the asset is created in Apple Photos.
+Matches more than 15 minutes from a usable track point are rejected. The original camera file remains unchanged; on iPhone the matched `CLLocation` is supplied separately when the asset is created in Apple Photos. On Mac the match is shown for review while the original is copied unchanged to Downloads.
 
 ## Privacy
 
-GM1 Sync has no accounts, advertising, analytics, tracking, or cloud service. Camera credentials are stored in the iOS Keychain and are not written to diagnostics. Location tracks and camera diagnostics remain on the device. See [PRIVACY.md](PRIVACY.md) for details.
+GM1 Sync has no accounts, advertising, analytics, tracking, or cloud service. Camera credentials are stored in the platform Keychain and are not written to diagnostics. Location tracks and camera diagnostics remain on the device or Mac. See [PRIVACY.md](PRIVACY.md) for details.
 
 ## Build and test
 
@@ -66,6 +67,14 @@ open LumixProbe.xcodeproj
 ```
 
 Select your own Apple development team in Xcode before installing on a physical iPhone. If you are not signing for the published app, also replace the bundle identifiers with identifiers owned by your team. A physical device is required to validate Hotspot Configuration, camera networking, Photos import, and real-camera protocol behavior. Unit and simulator UI tests can run without a camera.
+
+The generated project also contains a native `GM1SyncMac` target. Build it with:
+
+```bash
+xcodebuild -project LumixProbe.xcodeproj -scheme GM1SyncMac -sdk macosx build
+```
+
+On Mac, join the camera Wi-Fi from the macOS menu bar before launching GM1 Sync. The Mac app uses the same camera address and protocol probe as iPhone, but does not use iPhone-only QR scanning or hotspot configuration. The **Download first original JPEG** action copies the camera bytes to the Mac user's Downloads folder instead of importing them into Apple Photos. Location logging works while the Mac app is open; iPhone continues to support visible background location logging and direct Photos import.
 
 ## Protocol notes
 

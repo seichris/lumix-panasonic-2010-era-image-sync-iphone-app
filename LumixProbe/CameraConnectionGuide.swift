@@ -19,11 +19,12 @@ struct CameraConnectionGuide: View {
 
                 connectionStep(
                     number: 2,
-                    title: "Join from this iPhone",
-                    detail: "Connect to the camera Wi-Fi by scanning the QR code, or manually."
+                    title: joinTitle,
+                    detail: joinDetail
                 )
             }
 
+#if os(iOS)
             if let rememberedCameraSSID {
                 Button(action: reconnect) {
                     Label("Reconnect to \(rememberedCameraSSID)", systemImage: "wifi")
@@ -65,6 +66,11 @@ struct CameraConnectionGuide: View {
             .controlSize(.large)
             .listRowInsets(connectionActionInsets)
             .accessibilityIdentifier("join-camera-wifi-manually")
+#else
+            Label("Join the camera network from the Mac Wi-Fi menu before probing.", systemImage: "wifi")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+#endif
 
             Label(statusMessage, systemImage: "wifi.exclamationmark")
                 .font(.caption)
@@ -86,6 +92,22 @@ struct CameraConnectionGuide: View {
                 .accessibilityIdentifier("camera-connection-help")
             }
         }
+    }
+
+    private var joinTitle: String {
+#if os(iOS)
+        return "Join from this iPhone"
+#else
+        return "Join the camera Wi-Fi"
+#endif
+    }
+
+    private var joinDetail: String {
+#if os(iOS)
+        return "Connect to the camera Wi-Fi by scanning the QR code, or manually."
+#else
+        return "Use the Wi-Fi menu in the macOS menu bar to join the SSID shown by the camera, then return here."
+#endif
     }
 
     private var connectionActionInsets: EdgeInsets {
