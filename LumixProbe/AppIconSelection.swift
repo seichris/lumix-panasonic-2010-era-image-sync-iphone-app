@@ -1,5 +1,7 @@
 import SwiftUI
+#if os(iOS)
 import UIKit
+#endif
 
 enum AppIconChoice: String, CaseIterable, Identifiable {
     case primary
@@ -36,10 +38,14 @@ enum AppIconChoice: String, CaseIterable, Identifiable {
 
     @MainActor
     static var current: AppIconChoice {
+#if os(iOS)
         guard let iconName = UIApplication.shared.alternateIconName else {
             return .primary
         }
         return AppIconChoice(rawValue: iconName) ?? .primary
+#else
+        return .primary
+#endif
     }
 }
 
@@ -49,6 +55,7 @@ struct AppIconPickerView: View {
     @State private var errorMessage: String?
 
     var body: some View {
+#if os(iOS)
         List {
             Section {
                 Text("Choose how GM1 Sync appears on your Home Screen. Your selection can be changed again at any time.")
@@ -108,6 +115,14 @@ struct AppIconPickerView: View {
         } message: {
             Text(errorMessage ?? "Please try again.")
         }
+#else
+        ContentUnavailableView(
+            "App icon choices are on iPhone",
+            systemImage: "app.dashed",
+            description: Text("The Mac app uses its standard application icon. Change the icon from GM1 Sync on iPhone.")
+        )
+        .navigationTitle("App Icon")
+#endif
     }
 
     private var errorIsPresented: Binding<Bool> {
@@ -120,6 +135,7 @@ struct AppIconPickerView: View {
     }
 
     private func select(_ icon: AppIconChoice) {
+#if os(iOS)
         guard icon != selectedIcon else { return }
         pendingIcon = icon
 
@@ -133,5 +149,8 @@ struct AppIconPickerView: View {
                 pendingIcon = nil
             }
         }
+#else
+        errorMessage = "App icon choices are only available on iPhone."
+#endif
     }
 }

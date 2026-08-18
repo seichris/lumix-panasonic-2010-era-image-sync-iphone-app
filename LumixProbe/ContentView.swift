@@ -30,8 +30,12 @@ struct ContentView: View {
                             .foregroundStyle(.green)
                     }
                     TextField("Camera IP", text: $model.host)
+#if os(iOS)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.numbersAndPunctuation)
+#else
+                        .textFieldStyle(.roundedBorder)
+#endif
                     Text("The default address for this camera generation is 192.168.54.1.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -57,6 +61,7 @@ struct ContentView: View {
                     clearTrack: { isConfirmingTrackClear = true }
                 )
 
+#if os(iOS)
                 Section("Personalize") {
                     NavigationLink {
                         AppIconPickerView()
@@ -70,6 +75,14 @@ struct ContentView: View {
                     }
                     .accessibilityIdentifier("app-icon-link")
                 }
+#else
+                Section("Mac") {
+                    Label("Native Mac app", systemImage: "laptopcomputer")
+                    Text("Join the camera Wi-Fi from the macOS menu bar. Downloaded originals are copied to your Downloads folder.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+#endif
 
                 Section("Protocol tests") {
                     Button("Probe getstate") { model.probeState() }
@@ -143,7 +156,11 @@ struct ContentView: View {
                 Button("Clear", role: .destructive) { model.locationLogger.clear() }
                 Button("Cancel", role: .cancel) {}
             } message: {
+#if os(iOS)
                 Text("Saved location samples will be removed from this iPhone. Downloaded camera originals are not affected.")
+#else
+                Text("Saved location samples will be removed from this Mac. Downloaded camera originals are not affected.")
+#endif
             }
         }
     }
@@ -188,7 +205,7 @@ private struct GeotaggingControls: View {
             }
             .accessibilityIdentifier("camera-clock-adjustment")
 
-            Text("Start before shooting. The visible location session continues while this iPhone is locked. Use a positive adjustment when the camera is behind the iPhone, or a negative one when it is ahead.")
+            Text(locationInstructions)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -198,6 +215,14 @@ private struct GeotaggingControls: View {
         let minutes = Int(cameraClockOffsetMinutes)
         if minutes == 0 { return "None" }
         return String(format: "%+d min", minutes)
+    }
+
+    private var locationInstructions: String {
+#if os(iOS)
+        return "Start before shooting. The visible location session continues while this iPhone is locked. Use a positive adjustment when the camera is behind the iPhone, or a negative one when it is ahead."
+#else
+        return "Start before shooting. Keep GM1 Sync open while recording on Mac. Use a positive adjustment when the camera is behind the Mac, or a negative one when it is ahead."
+#endif
     }
 }
 
@@ -253,15 +278,29 @@ private struct DownloadedPhotoGeotagPreview: View {
                     .foregroundStyle(.secondary)
             }
 
-            Button(match == nil ? "Save original without location" : "Save original with this location", action: save)
+            Button(saveButtonTitle, action: save)
                 .buttonStyle(.borderedProminent)
                 .disabled(isSaving)
                 .accessibilityIdentifier("save-downloaded-photo")
 
+#if os(iOS)
             Text("Photos receives the original camera file as its unadjusted resource. The map location is attached to the Photos asset; the downloaded JPEG bytes and the camera SD card are not modified.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+#else
+            Text("The original camera file is copied byte-for-byte to Downloads. The map match is shown for review; the downloaded JPEG bytes and the camera SD card are not modified.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+#endif
         }
+    }
+
+    private var saveButtonTitle: String {
+#if os(iOS)
+        return match == nil ? "Save original without location" : "Save original with this location"
+#else
+        return match == nil ? "Copy original to Downloads" : "Copy original to Downloads"
+#endif
     }
 
     private func timeDifferenceLabel(_ interval: TimeInterval) -> String {

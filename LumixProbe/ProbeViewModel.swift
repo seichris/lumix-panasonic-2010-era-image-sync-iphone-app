@@ -1,5 +1,7 @@
 import Foundation
+#if os(iOS)
 import Photos
+#endif
 
 struct DownloadedPhoto: Equatable {
     let fileURL: URL
@@ -33,10 +35,21 @@ final class ProbeViewModel: ObservableObject {
         self.defaults = defaults
         self.locationLogger = locationLogger ?? GeotagLocationLogger()
         cameraClockOffsetMinutes = defaults.object(forKey: Self.cameraClockOffsetKey) as? Double ?? 0
-        logFileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("GM1Sync.log")
+        logFileURL = Self.makeLogFileURL()
         persistLog()
         print("[GM1Sync] Diagnostic session started")
+    }
+
+    private static func makeLogFileURL() -> URL {
+#if os(iOS)
+        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GM1Sync.log")
+#else
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GM1Sync", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("GM1Sync.log")
+#endif
     }
 
     func refreshConnectionStatus() async {

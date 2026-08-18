@@ -14,16 +14,22 @@ struct CameraConnectionGuide: View {
 
             connectionStep(
                 number: 2,
-                title: "Join from this iPhone",
-                detail: "Scan the camera QR code below, or manually join the SSID shown by the camera in iPhone Settings."
+                title: joinTitle,
+                detail: joinDetail
             )
 
+#if os(iOS)
             Button(action: scanQRCode) {
                 Label("Scan camera QR code", systemImage: "qrcode.viewfinder")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("scan-camera-qr-code")
+#else
+            Label("Join the camera network from the Mac Wi-Fi menu before probing.", systemImage: "wifi")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+#endif
 
             Label(statusMessage, systemImage: "wifi.exclamationmark")
                 .font(.caption)
@@ -47,5 +53,21 @@ struct CameraConnectionGuide: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var joinDetail: String {
+#if os(iOS)
+        return "Scan the camera QR code below, or manually join the SSID shown by the camera in iPhone Settings."
+#else
+        return "Use the Wi-Fi menu in the macOS menu bar to join the SSID shown by the camera, then return here."
+#endif
+    }
+
+    private var joinTitle: String {
+#if os(iOS)
+        return "Join from this iPhone"
+#else
+        return "Join the camera Wi-Fi"
+#endif
     }
 }

@@ -1,9 +1,12 @@
 import Foundation
+#if os(iOS)
 import NetworkExtension
+#endif
 
 struct LumixWiFiConnector {
     func join(using qrPayload: String) async throws -> String {
         let credentials = try LumixWiFiCredentials(qrPayload: qrPayload)
+#if os(iOS)
         let configuration: NEHotspotConfiguration
 
         if let password = credentials.password, !password.isEmpty {
@@ -35,6 +38,10 @@ struct LumixWiFiConnector {
         }
 
         return credentials.ssid
+#else
+        _ = credentials
+        throw LumixWiFiError.manualWiFiRequired
+#endif
     }
 }
 
@@ -155,8 +162,18 @@ struct LumixWiFiCredentials {
 
 private enum LumixWiFiError: LocalizedError {
     case unsupportedQRCode
+    case manualWiFiRequired
 
     var errorDescription: String? {
-        "This camera QR format is not recognized yet. Join the displayed SSID manually in iPhone Wi-Fi Settings."
+        switch self {
+        case .unsupportedQRCode:
+#if os(iOS)
+            return "This camera QR format is not recognized yet. Join the displayed SSID manually in iPhone Wi-Fi Settings."
+#else
+            return "This camera QR format is not recognized yet. Join the displayed SSID manually in Wi-Fi Settings."
+#endif
+        case .manualWiFiRequired:
+            return "Join the camera Wi-Fi from the macOS menu bar, then probe the camera address."
+        }
     }
 }

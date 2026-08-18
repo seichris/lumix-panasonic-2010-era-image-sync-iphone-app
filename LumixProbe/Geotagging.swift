@@ -1,7 +1,9 @@
 import CoreLocation
 import Foundation
 import ImageIO
+#if os(iOS)
 import Photos
+#endif
 
 struct LocationSample: Codable, Hashable, Identifiable, Sendable {
     let timestamp: Date
@@ -247,12 +249,20 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
     var latestSample: LocationSample? { samples.last }
 
     var hasPreciseLocation: Bool {
+#if os(iOS)
         manager.accuracyAuthorization == .fullAccuracy
+#else
+        true
+#endif
     }
 
     func start() {
         guard CLLocationManager.locationServicesEnabled() else {
+#if os(iOS)
             statusMessage = "Location Services are disabled in iPhone Settings."
+#else
+            statusMessage = "Location Services are disabled in macOS System Settings."
+#endif
             return
         }
 
@@ -273,7 +283,9 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
     func stop() {
         shouldStartAfterAuthorization = false
         manager.stopUpdatingLocation()
+#if os(iOS)
         manager.allowsBackgroundLocationUpdates = false
+#endif
         isLogging = false
         statusMessage = samples.isEmpty
             ? "Location log stopped without any usable samples."
@@ -294,14 +306,20 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
 
     private func beginUpdates() {
         guard !isLogging else { return }
+#if os(iOS)
         manager.allowsBackgroundLocationUpdates = true
         manager.showsBackgroundLocationIndicator = true
+#endif
         manager.startUpdatingLocation()
         isLogging = true
         startedAt = Date()
+#if os(iOS)
         statusMessage = hasPreciseLocation
             ? "Recording location, including while this iPhone is locked."
             : "Recording approximate location. Enable Precise Location for better geotags."
+#else
+        statusMessage = "Recording location while GM1 Sync is open."
+#endif
     }
 
     private func accept(_ location: CLLocation) {
@@ -377,6 +395,7 @@ extension GeotagLocationLogger: @preconcurrency CLLocationManagerDelegate {
     }
 }
 
+#if os(iOS)
 enum PhotosOriginalImporter {
     enum ImportError: LocalizedError {
         case permissionDenied
@@ -409,3 +428,50 @@ enum PhotosOriginalImporter {
         }
     }
 }
+#else
+/// macOS does not use the iOS Photos-library import flow. The downloaded
+/// original is copied byte-for-byte to the user's Downloads folder instead.
+enum PhotosOriginalImporter {
+    enum ImportError: LocalizedError {
+        case missingDownloadsDirectory
+
+        var errorDescription: String? {
+            switch self {
+            case .missingDownloadsDirectory:
+                return "Could not find the Mac Downloads folder."
+            }
+        }
+    }
+
+    static func save(
+        fileURL: URL,
+        originalFilename: String,
+        captureDate: Date?,
+        location: CLLocation?
+    ) async throws {
+        _ = captureDate
+        _ = location
+
+        guard FileManager.default.fileExists(atPath: fileURL.path),
+              let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
+            throw ImportError.missingDownloadsDirectory
+        }
+
+        try FileManager.default.createDirectory(at: downloadsURL, withIntermediateDirectories: true)
+        let safeName = URL(fileURLWithPath: originalFilename).lastPathComponent.isEmpty
+            ? "lumix-original.jpg"
+            : URL(fileURLWithPath: originalFilename).lastPathComponent
+        var destination = downloadsURL.appendingPathComponent(safeName)
+        var suffix = 1
+        while FileManager.default.fileExists(atPath: destination.path) {
+            let stem = destination.deletingPathExtension().lastPathComponent
+            let ext = destination.pathExtension
+            let candidateName = ext.isEmpty ? "\(stem)-\(suffix)" : "\(stem)-\(suffix).\(ext)"
+            destination = downloadsURL.appendingPathComponent(candidateName)
+            suffix += 1
+        }
+
+        try FileManager.default.copyItem(at: fileURL, to: destination)
+    }
+}
+#endif

@@ -1,6 +1,6 @@
 # GM1 Sync
 
-Experimental iOS client for transferring and eventually geotagging photos from older Panasonic Wi-Fi cameras. The immediate goal is to validate the camera's local HTTP + UPnP/DLNA protocol on real GM-family hardware before building the full photo-transfer/geotagging experience.
+Experimental iPhone and Mac client for transferring and eventually geotagging photos from older Panasonic Wi-Fi cameras. The immediate goal is to validate the camera's local HTTP + UPnP/DLNA protocol on real GM-family hardware before building the full photo-transfer/geotagging experience.
 
 The app starts with the GM1, GM1S, and GM5, but Panasonic reused Image App across many system and compact cameras from roughly 2013 onward. See [COMPATIBILITY.md](COMPATIBILITY.md) for the complete candidate list, regional model names, approximate model eras, and confidence tiers. Every model other than the active hardware test target remains unverified until it passes the capability probe.
 
@@ -86,9 +86,17 @@ open LumixProbe.xcodeproj
 
 Build to a physical iPhone. The Simulator cannot reproduce the camera Wi-Fi environment usefully.
 
+The generated project also contains a native `GM1SyncMac` target. Build it with:
+
+```bash
+xcodebuild -project LumixProbe.xcodeproj -scheme GM1SyncMac -sdk macosx build
+```
+
+On Mac, join the camera's Wi-Fi network from the macOS menu bar before launching GM1 Sync. The Mac app uses the same camera address and protocol probe as iPhone, but does not use iPhone-only QR scanning or hotspot configuration. After an original JPEG is downloaded, **Copy original to Downloads** preserves the camera bytes and writes a copy to the Mac user's Downloads folder. Location logging works while the Mac app is open; iPhone continues to support the visible background location session and direct Photos import.
+
 On the GM1S, enable its smartphone Wi-Fi connection and join that network from the iPhone before pressing **Run full probe**. The first release intentionally does not automate joining the SSID; that keeps the protocol test independent of Hotspot Configuration entitlements.
 
-The app requests Local Network and Photos permissions. Plain HTTP is allowed only for local networking via ATS configuration.
+The iPhone app requests Local Network and Photos permissions. The Mac target declares Local Network and Location usage descriptions and writes downloaded originals to Downloads instead of importing them into the iOS Photos library. Plain HTTP is allowed only for local networking via ATS configuration.
 
 Location permission is requested only when geotag logging is started. The iOS Location Updates background mode keeps an active logging session running while the iPhone is locked; it is not used when the logger is stopped.
 
