@@ -225,7 +225,7 @@ private struct AppSettingsView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("App icon")
-                        Text("Choose Lens, Blue Camera, or Black Camera")
+                        Text("Choose Blue Camera, Lens, or Black Camera")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

@@ -138,12 +138,12 @@ final class LumixProbeUITests: XCTestCase {
         scrollToElement(iconLink)
         iconLink.tap()
         XCTAssertTrue(app.navigationBars["App Icon"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Lens"].exists)
         XCTAssertTrue(app.staticTexts["Blue Camera"].exists)
+        XCTAssertTrue(app.staticTexts["Lens"].exists)
         XCTAssertTrue(app.staticTexts["Black Camera"].exists)
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let blueIcon = app.buttons["app-icon-BlueCamera"]
+        let blueIcon = app.buttons["app-icon-primary"]
         if blueIcon.isEnabled {
             blueIcon.tap()
             let confirmation = springboard.alerts.firstMatch
