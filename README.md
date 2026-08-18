@@ -1,6 +1,6 @@
 # GM1 Sync
 
-[![Download GM1 Sync on the App Store](https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83)](https://apps.apple.com/app/id6801485290)
+[![Download GM1 Sync on the App Store](https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83)](https://geo.itunes.apple.com/app/id6801485290)
 
 GM1 Sync is an independent iPhone app for browsing, importing, and geotagging media from compatible Panasonic Wi-Fi cameras. It is an alternative to Panasonic's **Image App** for people who still use these cameras.
 
