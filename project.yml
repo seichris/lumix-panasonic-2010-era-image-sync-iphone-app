@@ -40,9 +40,9 @@ targets:
         com.apple.developer.networking.HotspotConfiguration: true
     settings:
       base:
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_APPICON_NAME: BlueCamera
         ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES:
-          - BlueCamera
+          - AppIcon
           - BlackCamera
         PRODUCT_BUNDLE_IDENTIFIER: com.web3.gm1sync
         PRODUCT_NAME: GM1Sync
