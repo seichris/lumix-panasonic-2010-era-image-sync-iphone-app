@@ -20,16 +20,20 @@ targets:
       path: LumixProbe/Info.plist
       properties:
         CFBundleDisplayName: GM1 Sync
-        CFBundleShortVersionString: "0.1"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "10"
+        ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
+        UIRequiredDeviceCapabilities:
+          - arm64
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         NSCameraUsageDescription: GM1 Sync scans the QR code shown by your camera to join its Wi-Fi network.
         NSLocalNetworkUsageDescription: GM1 Sync connects directly to your camera over its local Wi-Fi network.
         NSLocationWhenInUseUsageDescription: GM1 Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
-        NSPhotoLibraryAddUsageDescription: GM1 Sync can save original photos downloaded from your camera to your photo library.
+        NSPhotoLibraryAddUsageDescription: GM1 Sync can save original photos and videos downloaded from your camera to your photo library.
+        NSPhotoLibraryUsageDescription: GM1 Sync checks which original camera photos and videos are already in your library so it can avoid downloading duplicates.
         UIBackgroundModes:
           - location
         NSAppTransportSecurity:
@@ -40,10 +44,9 @@ targets:
         com.apple.developer.networking.HotspotConfiguration: true
     settings:
       base:
-        DEVELOPMENT_TEAM: 4H5PK8686H
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_APPICON_NAME: BlueCamera
         ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES:
-          - BlueCamera
+          - AppIcon
           - BlackCamera
         PRODUCT_BUNDLE_IDENTIFIER: com.web3.gm1sync
         PRODUCT_NAME: GM1Sync
@@ -57,6 +60,11 @@ targets:
         excludes:
           - Info.plist
           - MacInfo.plist
+          - CameraGalleryStore.swift
+          - CameraGalleryView.swift
+          - CameraImport.swift
+          - DemoCameraGalleryClient.swift
+          - ManualWiFiJoinSheet.swift
     info:
       path: LumixProbe/MacInfo.plist
       properties:
@@ -86,7 +94,6 @@ targets:
       - target: GM1Sync
     settings:
       base:
-        DEVELOPMENT_TEAM: 4H5PK8686H
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.web3.gm1sync.uitests
         TARGETED_DEVICE_FAMILY: "1"
@@ -99,7 +106,6 @@ targets:
       - target: GM1Sync
     settings:
       base:
-        DEVELOPMENT_TEAM: 4H5PK8686H
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.web3.gm1sync.tests
         TARGETED_DEVICE_FAMILY: "1"
@@ -109,6 +115,10 @@ targets:
     hostApplication: GM1SyncMac
     sources:
       - path: LumixProbeTests
+        excludes:
+          - CameraGalleryStoreTests.swift
+          - CameraImportTests.swift
+          - DemoCameraGalleryClientTests.swift
     dependencies:
       - target: GM1SyncMac
     settings:

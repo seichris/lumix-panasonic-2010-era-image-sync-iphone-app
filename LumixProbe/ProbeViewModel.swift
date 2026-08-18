@@ -1,13 +1,4 @@
 import Foundation
-#if os(iOS)
-import Photos
-#endif
-
-struct DownloadedPhoto: Equatable {
-    let fileURL: URL
-    let captureDate: Date?
-    let originalFilename: String
-}
 
 @MainActor
 final class ProbeViewModel: ObservableObject {
@@ -20,75 +11,177 @@ final class ProbeViewModel: ObservableObject {
     @Published var cameraClockOffsetMinutes: Double {
         didSet { defaults.set(cameraClockOffsetMinutes, forKey: Self.cameraClockOffsetKey) }
     }
+    @Published var autoStartGeotagging: Bool {
+        didSet {
+            defaults.set(autoStartGeotagging, forKey: Self.autoStartGeotaggingKey)
+            if autoStartGeotagging { locationLogger.start() }
+        }
+    }
     @Published private(set) var isCameraConnected = false
     @Published private(set) var connectionStatusMessage = "Checking for the camera…"
+    @Published private(set) var rememberedCameraNetwork: RememberedCameraNetwork?
     @Published private(set) var lastResult = "Ready"
 
     private let logFileURL: URL
     private let defaults: UserDefaults
     private let wifiConnector = LumixWiFiConnector()
+    private let cameraNetworkStore: any CameraNetworkStoring
+    private let usesConnectedUITestFixture: Bool
     let locationLogger: GeotagLocationLogger
     private var client: LumixClient { LumixClient(host: host.trimmingCharacters(in: .whitespacesAndNewlines)) }
     private static let cameraClockOffsetKey = "cameraClockOffsetMinutes"
+    private static let autoStartGeotaggingKey = "autoStartGeotagging"
 
-    init(defaults: UserDefaults = .standard, locationLogger: GeotagLocationLogger? = nil) {
+    init(
+        defaults: UserDefaults = .standard,
+        locationLogger: GeotagLocationLogger? = nil,
+        cameraNetworkStore: any CameraNetworkStoring = KeychainCameraNetworkStore()
+    ) {
         self.defaults = defaults
         self.locationLogger = locationLogger ?? GeotagLocationLogger()
+        self.cameraNetworkStore = cameraNetworkStore
+        let launchArguments = ProcessInfo.processInfo.arguments
+        usesConnectedUITestFixture = launchArguments.contains("-UITestConnectedGallery")
         cameraClockOffsetMinutes = defaults.object(forKey: Self.cameraClockOffsetKey) as? Double ?? 0
-        logFileURL = Self.makeLogFileURL()
-        persistLog()
-        print("[GM1Sync] Diagnostic session started")
-    }
-
-    private static func makeLogFileURL() -> URL {
+        autoStartGeotagging = defaults.bool(forKey: Self.autoStartGeotaggingKey)
 #if os(iOS)
-        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        logFileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("GM1Sync.log")
 #else
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("GM1Sync", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appendingPathComponent("GM1Sync.log")
+        logFileURL = directory.appendingPathComponent("GM1Sync.log")
 #endif
+        persistLog()
+        print("[GM1Sync] Diagnostic session started")
+
+        if launchArguments.contains("-UITestNoRememberedCamera") {
+            rememberedCameraNetwork = nil
+        } else if launchArguments.contains("-UITestRememberedCamera") {
+            rememberedCameraNetwork = try? RememberedCameraNetwork(
+                credentials: LumixWiFiCredentials(
+                    ssid: "GM1S-DEMO01",
+                    password: "ui-test-password",
+                    isWEP: false
+                )
+            )
+        } else {
+            do {
+                rememberedCameraNetwork = try cameraNetworkStore.load()
+            } catch {
+                rememberedCameraNetwork = nil
+                print("[GM1Sync] Remembered camera network unavailable: \(error.localizedDescription)")
+            }
+        }
+
+        if usesConnectedUITestFixture {
+            isCameraConnected = true
+            connectionStatusMessage = "Camera connected"
+        }
     }
 
-    func refreshConnectionStatus() async {
-        connectionStatusMessage = "Checking for the camera…"
-        do {
-            let response = try await client.getState()
-            isCameraConnected = response.text.contains("<result>ok</result>")
-            connectionStatusMessage = isCameraConnected ? "Camera connected" : "Join the Wi-Fi network shown by the camera."
-        } catch {
-            isCameraConnected = false
+    func startGeotaggingIfEnabled() {
+        guard autoStartGeotagging else { return }
+        locationLogger.start()
+    }
+
+    func refreshConnectionStatus(waitingForRememberedCamera: Bool = false) async {
+        if usesConnectedUITestFixture {
+            isCameraConnected = true
+            connectionStatusMessage = "Camera connected"
+            return
+        }
+
+        let attempts = waitingForRememberedCamera && rememberedCameraNetwork != nil ? 6 : 1
+        if let rememberedCameraNetwork, attempts > 1 {
+            connectionStatusMessage = "Looking for \(rememberedCameraNetwork.ssid)…"
+        } else {
+            connectionStatusMessage = "Checking for the camera…"
+        }
+
+        for attempt in 0..<attempts {
+            do {
+                let response = try await client.getState(timeoutInterval: 1.5)
+                if response.text.contains("<result>ok</result>") {
+                    isCameraConnected = true
+                    connectionStatusMessage = "Camera connected"
+                    print("[GM1Sync] Camera connection check: reachable")
+                    return
+                }
+                print("[GM1Sync] Camera connection check: unexpected response")
+            } catch {
+                print("[GM1Sync] Camera connection check: unreachable (\(error.localizedDescription))")
+            }
+
+            if attempt < attempts - 1 {
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+
+        isCameraConnected = false
+        if rememberedCameraNetwork != nil {
+            connectionStatusMessage = "Turn on your camera and reconnect Wi-Fi."
+        } else {
             connectionStatusMessage = "Join the Wi-Fi network shown by the camera."
         }
     }
 
     func joinCameraWiFi(qrPayload: String) async {
         do {
-            let ssid = try await wifiConnector.join(using: qrPayload)
-            connectionStatusMessage = "Joining \(ssid)…"
-
-            for _ in 0..<12 {
-                try await Task.sleep(for: .seconds(1))
-                do {
-                    let response = try await client.getState()
-                    guard response.text.contains("<result>ok</result>") else { continue }
-                    isCameraConnected = true
-                    connectionStatusMessage = "Camera connected"
-                    append("Joined camera Wi-Fi and reached the camera.")
-                    return
-                } catch {
-                    continue
-                }
-            }
-
-            isCameraConnected = false
-            connectionStatusMessage = "Wi-Fi joined, but the camera did not respond."
+            let credentials = try LumixWiFiCredentials(qrPayload: qrPayload)
+            let ssid = try await wifiConnector.join(using: credentials)
+            remember(credentials)
+            await waitForCamera(afterJoining: ssid)
         } catch {
             isCameraConnected = false
             connectionStatusMessage = error.localizedDescription
             append("Wi-Fi QR connection ERROR: \(error.localizedDescription)")
+        }
+    }
+
+    func joinCameraWiFi(ssid: String, password: String?, isWEP: Bool) async {
+        do {
+            let credentials = try LumixWiFiCredentials(ssid: ssid, password: password, isWEP: isWEP)
+            let joinedSSID = try await wifiConnector.join(using: credentials)
+            remember(credentials)
+            await waitForCamera(afterJoining: joinedSSID)
+        } catch {
+            isCameraConnected = false
+            connectionStatusMessage = error.localizedDescription
+            append("Manual Wi-Fi connection ERROR: \(error.localizedDescription)")
+        }
+    }
+
+    func reconnectToRememberedCamera() async {
+        guard let rememberedCameraNetwork else {
+            connectionStatusMessage = "Scan the camera QR code to remember its Wi-Fi network."
+            return
+        }
+
+        do {
+            connectionStatusMessage = "Reconnecting to \(rememberedCameraNetwork.ssid)…"
+            let ssid = try await wifiConnector.join(using: rememberedCameraNetwork.credentials)
+            await waitForCamera(afterJoining: ssid)
+        } catch {
+            isCameraConnected = false
+            connectionStatusMessage = error.localizedDescription
+            append("Remembered Wi-Fi connection ERROR: \(error.localizedDescription)")
+        }
+    }
+
+    func forgetRememberedCamera() {
+        guard let network = rememberedCameraNetwork else { return }
+        wifiConnector.removeConfiguration(forSSID: network.ssid)
+
+        do {
+            try cameraNetworkStore.remove()
+            rememberedCameraNetwork = nil
+            connectionStatusMessage = "Camera network forgotten. Scan its QR code to connect again."
+            append("Forgot the remembered camera Wi-Fi network.")
+        } catch {
+            connectionStatusMessage = error.localizedDescription
+            append("Forget camera network ERROR: \(error.localizedDescription)")
         }
     }
 
@@ -253,6 +346,38 @@ final class ProbeViewModel: ObservableObject {
         }
     }
 
+    private func waitForCamera(afterJoining ssid: String) async {
+        connectionStatusMessage = "Joining \(ssid)…"
+
+        for _ in 0..<12 {
+            try? await Task.sleep(for: .seconds(1))
+            do {
+                let response = try await client.getState()
+                guard response.text.contains("<result>ok</result>") else { continue }
+                isCameraConnected = true
+                connectionStatusMessage = "Camera connected"
+                append("Joined camera Wi-Fi and reached the camera.")
+                return
+            } catch {
+                continue
+            }
+        }
+
+        isCameraConnected = false
+        connectionStatusMessage = "Wi-Fi joined, but the camera did not respond."
+    }
+
+    private func remember(_ credentials: LumixWiFiCredentials) {
+        let network = RememberedCameraNetwork(credentials: credentials)
+        do {
+            try cameraNetworkStore.save(network)
+            rememberedCameraNetwork = network
+            append("Remembered camera Wi-Fi \(network.ssid) for future connections.")
+        } catch {
+            print("[GM1Sync] Camera network was joined but could not be remembered: \(error.localizedDescription)")
+        }
+    }
+
     private func testContentInfo(_ client: LumixClient, label: String) async {
         do {
             let (response, info) = try await client.getContentInfo()
@@ -302,6 +427,8 @@ final class ProbeViewModel: ObservableObject {
     }
 
     private func setResources(_ value: [LumixResource]) { resources = value }
+    func recordDiagnostic(_ text: String) { append(text) }
+
     private func append(_ text: String) {
         log += text + "\n"
         print("[GM1Sync] \(text)")

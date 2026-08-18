@@ -5,7 +5,7 @@ import UIKit
 
 enum AppIconChoice: String, CaseIterable, Identifiable {
     case primary
-    case blueCamera = "BlueCamera"
+    case lens = "AppIcon"
     case blackCamera = "BlackCamera"
 
     var id: String { rawValue }
@@ -13,9 +13,9 @@ enum AppIconChoice: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .primary:
-            "Lens"
-        case .blueCamera:
             "Blue Camera"
+        case .lens:
+            "Lens"
         case .blackCamera:
             "Black Camera"
         }
@@ -28,9 +28,9 @@ enum AppIconChoice: String, CaseIterable, Identifiable {
     var previewAssetName: String {
         switch self {
         case .primary:
-            "DefaultIconPreview"
-        case .blueCamera:
             "BlueCameraIconPreview"
+        case .lens:
+            "DefaultIconPreview"
         case .blackCamera:
             "BlackCameraIconPreview"
         }

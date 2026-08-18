@@ -4,8 +4,10 @@ import XCTest
 final class AppIconChoiceTests: XCTestCase {
     func testAlternateIconNamesMatchAssetCatalogNames() {
         XCTAssertNil(AppIconChoice.primary.alternateIconName)
-        XCTAssertEqual(AppIconChoice.blueCamera.alternateIconName, "BlueCamera")
+        XCTAssertEqual(AppIconChoice.lens.alternateIconName, "AppIcon")
         XCTAssertEqual(AppIconChoice.blackCamera.alternateIconName, "BlackCamera")
+        XCTAssertEqual(AppIconChoice.primary.title, "Blue Camera")
+        XCTAssertEqual(AppIconChoice.primary.previewAssetName, "BlueCameraIconPreview")
     }
 
     func testEveryChoiceHasAUniquePreview() {

@@ -1,4 +1,5 @@
 import CoreLocation
+import ImageIO
 import XCTest
 @testable import GM1Sync
 
@@ -73,6 +74,42 @@ final class GeotaggingTests: XCTestCase {
         XCTAssertEqual(parsed.timeIntervalSince1970, 1_786_692_600, accuracy: 0.1)
     }
 
+    func testParsesEmbeddedGPSReferencesAltitudeAndAccuracy() throws {
+        let gps: NSDictionary = [
+            kCGImagePropertyGPSLatitude: 33.8688,
+            kCGImagePropertyGPSLatitudeRef: "S",
+            kCGImagePropertyGPSLongitude: 151.2093,
+            kCGImagePropertyGPSLongitudeRef: "W",
+            kCGImagePropertyGPSAltitude: 12.5,
+            kCGImagePropertyGPSAltitudeRef: 1,
+            kCGImagePropertyGPSHPositioningError: 6
+        ]
+
+        let location = try XCTUnwrap(PhotoOriginalMetadataReader.location(from: gps))
+
+        XCTAssertEqual(location.latitude, -33.8688, accuracy: 0.000_001)
+        XCTAssertEqual(location.longitude, -151.2093, accuracy: 0.000_001)
+        XCTAssertEqual(location.altitude, -12.5, accuracy: 0.001)
+        XCTAssertEqual(location.horizontalAccuracy, 6, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testAutoStartGeotaggingPreferenceLoadsAndPersists() {
+        let suiteName = "GeotaggingTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "autoStartGeotagging")
+
+        let model = ProbeViewModel(
+            defaults: defaults,
+            cameraNetworkStore: EmptyCameraNetworkStore()
+        )
+
+        XCTAssertTrue(model.autoStartGeotagging)
+        model.autoStartGeotagging = false
+        XCTAssertFalse(defaults.bool(forKey: "autoStartGeotagging"))
+    }
+
     private func sample(
         at timestamp: TimeInterval,
         latitude: Double,
@@ -86,4 +123,10 @@ final class GeotaggingTests: XCTestCase {
             horizontalAccuracy: accuracy
         )
     }
+}
+
+private struct EmptyCameraNetworkStore: CameraNetworkStoring {
+    func load() throws -> RememberedCameraNetwork? { nil }
+    func save(_ network: RememberedCameraNetwork) throws {}
+    func remove() throws {}
 }

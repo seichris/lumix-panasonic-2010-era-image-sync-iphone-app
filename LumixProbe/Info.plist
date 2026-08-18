@@ -17,9 +17,11 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1</string>
+	<string>1.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>10</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
@@ -34,13 +36,19 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>GM1 Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>GM1 Sync can save original photos downloaded from your camera to your photo library.</string>
+	<string>GM1 Sync can save original photos and videos downloaded from your camera to your photo library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>GM1 Sync checks which original camera photos and videos are already in your library so it can avoid downloading duplicates.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

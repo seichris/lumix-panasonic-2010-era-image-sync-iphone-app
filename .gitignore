@@ -1,1 +1,21 @@
 LumixProbe.xcodeproj/
+.DS_Store
+DerivedData/
+.build/
+*.xcresult
+*.xcarchive
+*.ipa
+*.dSYM/
+xcuserdata/
+*.xcuserstate
+
+# Never commit local credentials, signing material, or diagnostic exports.
+.env
+.env.*
+*.mobileprovision
+*.p12
+*.cer
+*.pem
+*.key
+*.log
+Diagnostics/
