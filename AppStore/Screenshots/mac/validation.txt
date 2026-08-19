@@ -1,0 +1,3 @@
+PASS 1440x900 png opaque en-US/mac-1440x900/01-sync-pictures-en-us-mac-1440x900.png
+PASS 1440x900 png opaque en-US/mac-1440x900/02-geotag-en-us-mac-1440x900.png
+PASS 1440x900 png opaque en-US/mac-1440x900/03-image-details-en-us-mac-1440x900.png
