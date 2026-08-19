@@ -130,9 +130,13 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Panasonic DMC-GM1S"].exists)
         app.navigationBars.buttons.firstMatch.tap()
 
+        let repositoryLink = app.descendants(matching: .any)["github-repository-link"].firstMatch
+        scrollToElement(repositoryLink)
+        XCTAssertTrue(app.staticTexts["GitHub repository"].exists)
+
         let appVersion = app.staticTexts["app-version"]
         scrollToElement(appVersion)
-        XCTAssertEqual(appVersion.label, "GM1 Sync · Version 1.0 (10)")
+        XCTAssertTrue(appVersion.label.hasPrefix("GM1 Sync · Version 1.0.1 ("))
 
         let iconLink = app.buttons["app-icon-link"]
         scrollToElement(iconLink)

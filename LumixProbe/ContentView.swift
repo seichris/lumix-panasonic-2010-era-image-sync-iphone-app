@@ -209,6 +209,16 @@ private struct AppSettingsView: View {
             }
 
             Section("About") {
+                Link(destination: Self.githubRepositoryURL) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("GitHub repository", systemImage: "link")
+                        Text("View source code and report issues")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("github-repository-link")
+
                 NavigationLink {
                     CameraCompatibilityView()
                 } label: {
@@ -263,6 +273,10 @@ private struct AppSettingsView: View {
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
         return "GM1 Sync · Version \(version) (\(build))"
     }
+
+    private static let githubRepositoryURL = URL(
+        string: "https://github.com/seichris/lumix-panasonic-2010-era-image-sync-iphone-app"
+    )!
 }
 
 private struct CameraDiagnosticsView: View {
