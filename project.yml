@@ -21,7 +21,7 @@ targets:
       properties:
         CFBundleDisplayName: GM1 Sync
         CFBundleShortVersionString: "1.0.1"
-        CFBundleVersion: "12"
+        CFBundleVersion: "13"
         ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         UIRequiredDeviceCapabilities:
@@ -72,7 +72,7 @@ targets:
       properties:
         CFBundleDisplayName: GM1 Sync
         CFBundleShortVersionString: "0.1"
-        CFBundleVersion: "1"
+        CFBundleVersion: "2"
         LSApplicationCategoryType: public.app-category.photography
         LSMinimumSystemVersion: "14.0"
         NSLocalNetworkUsageDescription: GM1 Sync connects directly to your camera over its local Wi-Fi network.
@@ -90,7 +90,7 @@ targets:
     settings:
       base:
         DEVELOPMENT_TEAM: 4H5PK8686H
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_APPICON_NAME: BlueCamera
         PRODUCT_BUNDLE_IDENTIFIER: com.web3.gm1sync
         PRODUCT_NAME: GM1SyncMac
         PRODUCT_MODULE_NAME: GM1Sync
