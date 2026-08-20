@@ -117,9 +117,9 @@ struct AppIconPickerView: View {
         }
 #else
         ContentUnavailableView(
-            "App icon choices are on iPhone",
-            systemImage: "app.dashed",
-            description: Text("The Mac app uses its standard application icon. Change the icon from GM1 Sync on iPhone.")
+            "Blue Camera icon",
+            systemImage: "app.fill",
+            description: Text("GM1 Sync uses the Blue Camera logo on Mac. Alternate icon choices are available on iPhone.")
         )
         .navigationTitle("App Icon")
 #endif

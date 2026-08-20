@@ -545,120 +545,43 @@ private enum ConnectionSheet: String, Identifiable {
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = ProbeViewModel()
-    @State private var isConfirmingTrackClear = false
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    Text("An independent alternative to Panasonic Image App for compatible older cameras.")
+                    Label(
+                        model.isCameraConnected ? "Connected to camera" : model.connectionStatusMessage,
+                        systemImage: model.isCameraConnected ? "checkmark.circle.fill" : "wifi.exclamationmark"
+                    )
+                    .foregroundStyle(model.isCameraConnected ? .green : .secondary)
+
+                    Text("An independent alternative to Panasonic Image App for compatible older cameras. Join the camera Wi-Fi from the macOS menu bar, then open Settings to configure the camera or run diagnostics.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("image-app-alternative-text")
                 }
 
-                if !model.isCameraConnected {
-                    CameraConnectionGuide(
-                        statusMessage: model.connectionStatusMessage,
-                        rememberedCameraSSID: nil,
-                        reconnect: {},
-                        scanQRCode: {},
-                        joinManually: {}
-                    )
-                }
-
-                Section("Camera") {
-                    if model.isCameraConnected {
-                        Label("Connected to camera", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    }
-                    TextField("Camera IP", text: $model.host)
-                        .textFieldStyle(.roundedBorder)
-                    Text("The default address for this camera generation is 192.168.54.1.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Compatibility") {
-                    NavigationLink {
-                        CameraCompatibilityView()
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Potentially compatible cameras")
-                            Text("GM-family and Panasonic Image App models by era")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .accessibilityIdentifier("camera-compatibility-link")
-                }
-
-                GeotaggingControls(
-                    logger: model.locationLogger,
-                    autoStartGeotagging: $model.autoStartGeotagging,
-                    cameraClockOffsetMinutes: $model.cameraClockOffsetMinutes,
-                    clearTrack: { isConfirmingTrackClear = true }
-                )
-
-                Section("Mac") {
-                    Label("Native Mac app", systemImage: "laptopcomputer")
-                    Text("Join the camera Wi-Fi from the macOS menu bar. Downloaded originals are copied to your Downloads folder.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Protocol tests") {
-                    Button("Probe getstate") { model.probeState() }
-                    Button("Request camera access") { model.requestAccess() }
-                    Button("Run full probe") { model.runFullProbe() }
-                        .fontWeight(.semibold)
-                    Button("Probe media server directly") { model.browseFirstFiveDirectly() }
-                    Button("Browse final 5 records") { model.browseLastFive() }
-                    Button("Download first original JPEG") { model.downloadFirstOriginal() }
-                        .disabled(model.isRunning)
-                    LabeledContent("Last result") {
-                        Text(model.lastResult)
-                            .accessibilityIdentifier("lastResult")
-                    }
-                }
-                .disabled(model.isRunning)
-
-                if let photo = model.downloadedPhoto {
-                    DownloadedPhotoGeotagPreview(
-                        photo: photo,
-                        logger: model.locationLogger,
-                        cameraClockOffsetMinutes: model.cameraClockOffsetMinutes,
-                        isSaving: model.isSavingPhoto,
-                        save: model.saveDownloadedToPhotos
-                    )
-                }
-
-                if !model.resources.isEmpty {
-                    Section("Advertised resources") {
-                        ForEach(model.resources) { resource in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(resource.profileName ?? "Unknown profile").font(.headline)
-                                Text(resource.title ?? resource.url.lastPathComponent).font(.subheadline)
-                                Text(resource.url.absoluteString)
-                                    .font(.caption2.monospaced())
-                                    .textSelection(.enabled)
-                            }
-                        }
-                    }
-                }
-
                 Section {
-                    HStack {
-                        Text("Raw probe log").font(.headline)
-                        Spacer()
-                        Button("Clear") { model.clearLog() }.font(.caption)
+                    NavigationLink {
+                        MacSettingsView(model: model)
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
                     }
-                    Text(model.log)
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
+                    .accessibilityIdentifier("app-settings-link")
                 }
             }
             .navigationTitle("GM1 Sync")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    NavigationLink {
+                        MacSettingsView(model: model)
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                    .accessibilityIdentifier("app-settings-toolbar")
+                }
+            }
             .overlay {
                 if model.isRunning { ProgressView().controlSize(.large) }
             }
@@ -671,12 +594,134 @@ struct ContentView: View {
                 model.startGeotaggingIfEnabled()
                 Task { await model.refreshConnectionStatus() }
             }
-            .alert("Clear location track?", isPresented: $isConfirmingTrackClear) {
-                Button("Clear", role: .destructive) { model.locationLogger.clear() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Saved location samples will be removed from this Mac. Downloaded camera originals are not affected.")
+        }
+    }
+}
+
+private struct MacSettingsView: View {
+    @ObservedObject var model: ProbeViewModel
+    @State private var isConfirmingTrackClear = false
+
+    var body: some View {
+        List {
+            if !model.isCameraConnected {
+                CameraConnectionGuide(
+                    statusMessage: model.connectionStatusMessage,
+                    rememberedCameraSSID: nil,
+                    reconnect: {},
+                    scanQRCode: {},
+                    joinManually: {}
+                )
             }
+
+            Section("Camera") {
+                if model.isCameraConnected {
+                    Label("Connected to camera", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
+                TextField("Camera IP", text: $model.host)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("camera-ip-address")
+                Text("The default address for this camera generation is 192.168.54.1.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Compatibility") {
+                NavigationLink {
+                    CameraCompatibilityView()
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Potentially compatible cameras")
+                        Text("GM-family and Panasonic Image App models by era")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("camera-compatibility-link")
+            }
+
+            Section("Appearance") {
+                Label("Blue Camera app icon", systemImage: "app.fill")
+                Text("GM1 Sync uses the Blue Camera logo on Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            GeotaggingControls(
+                logger: model.locationLogger,
+                autoStartGeotagging: $model.autoStartGeotagging,
+                cameraClockOffsetMinutes: $model.cameraClockOffsetMinutes,
+                clearTrack: { isConfirmingTrackClear = true }
+            )
+
+            Section("Mac") {
+                Label("Native Mac app", systemImage: "laptopcomputer")
+                Text("Join the camera Wi-Fi from the macOS menu bar. Downloaded originals are copied to your Downloads folder.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Protocol tests") {
+                Button("Probe getstate") { model.probeState() }
+                Button("Request camera access") { model.requestAccess() }
+                Button("Run full probe") { model.runFullProbe() }
+                    .fontWeight(.semibold)
+                Button("Probe media server directly") { model.browseFirstFiveDirectly() }
+                Button("Browse final 5 records") { model.browseLastFive() }
+                Button("Download first original JPEG") { model.downloadFirstOriginal() }
+                    .disabled(model.isRunning)
+                LabeledContent("Last result") {
+                    Text(model.lastResult)
+                        .accessibilityIdentifier("lastResult")
+                }
+            }
+            .disabled(model.isRunning)
+
+            if let photo = model.downloadedPhoto {
+                DownloadedPhotoGeotagPreview(
+                    photo: photo,
+                    logger: model.locationLogger,
+                    cameraClockOffsetMinutes: model.cameraClockOffsetMinutes,
+                    isSaving: model.isSavingPhoto,
+                    save: model.saveDownloadedToPhotos
+                )
+            }
+
+            if !model.resources.isEmpty {
+                Section("Advertised resources") {
+                    ForEach(model.resources) { resource in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(resource.profileName ?? "Unknown profile").font(.headline)
+                            Text(resource.title ?? resource.url.lastPathComponent).font(.subheadline)
+                            Text(resource.url.absoluteString)
+                                .font(.caption2.monospaced())
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+
+            Section {
+                HStack {
+                    Text("Raw probe log").font(.headline)
+                    Spacer()
+                    Button("Clear") { model.clearLog() }.font(.caption)
+                }
+                Text(model.log)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+            }
+        }
+        .navigationTitle("Settings")
+        .overlay {
+            if model.isRunning { ProgressView().controlSize(.large) }
+        }
+        .alert("Clear location track?", isPresented: $isConfirmingTrackClear) {
+            Button("Clear", role: .destructive) { model.locationLogger.clear() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Saved location samples will be removed from this Mac. Downloaded camera originals are not affected.")
         }
     }
 }
