@@ -56,6 +56,8 @@ The protocol is unofficial and can vary by camera model and firmware.
 
 Location logging is optional and visible while active. During import, GM1 Sync reads the original JPEG's EXIF capture time and matches it to a nearby or interpolated point in the locally stored location track. A camera-clock adjustment can compensate when the camera clock differs from the iPhone clock.
 
+If logging was not enabled when the photos were taken, iPhone users can export `location-history.json` from Google Maps (Settings → Personal content → Export Timeline data) and choose **Import Google Timeline JSON** in GM1 Sync's Geotagging section. The imported points are merged into the local track; the app does not sign in to Google or upload the file.
+
 Matches more than 15 minutes from a usable track point are rejected. The original camera file remains unchanged; on iPhone the matched `CLLocation` is supplied separately when the asset is created in Apple Photos. On Mac the match is shown for review while the original is copied unchanged to Downloads.
 
 ## Privacy

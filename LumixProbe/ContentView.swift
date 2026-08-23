@@ -1,5 +1,8 @@
 import MapKit
 import SwiftUI
+#if os(iOS)
+import UniformTypeIdentifiers
+#endif
 
 #if os(iOS)
 struct ContentView: View {
@@ -357,6 +360,8 @@ private struct GeotaggingControls: View {
     @Binding var autoStartGeotagging: Bool
     @Binding var cameraClockOffsetMinutes: Double
     let clearTrack: () -> Void
+    @State private var isShowingTimelineImporter = false
+    @State private var timelineImportError: String?
 
     var body: some View {
         Section("Geotagging") {
@@ -390,6 +395,17 @@ private struct GeotaggingControls: View {
             }
             .accessibilityIdentifier("auto-start-geotagging")
 
+            Button {
+                isShowingTimelineImporter = true
+            } label: {
+                Label("Import Google Timeline JSON", systemImage: "arrow.down.doc")
+            }
+            .accessibilityIdentifier("import-google-timeline")
+
+            Text("Export location-history.json from Google Maps, then choose it here. Imported points are merged with the saved track.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             if !logger.samples.isEmpty {
                 Button("Clear saved location track", role: .destructive, action: clearTrack)
                     .disabled(logger.isLogging)
@@ -405,6 +421,43 @@ private struct GeotaggingControls: View {
             Text("Start before shooting. The visible location session continues while this iPhone is locked. Use a positive adjustment when the camera is behind the iPhone, or a negative one when it is ahead.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+        .fileImporter(
+            isPresented: $isShowingTimelineImporter,
+            allowedContentTypes: [.json],
+            onCompletion: importTimeline
+        )
+        .alert(
+            "Google Timeline import failed",
+            isPresented: Binding(
+                get: { timelineImportError != nil },
+                set: { if !$0 { timelineImportError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(timelineImportError ?? "The selected file could not be imported.")
+        }
+    }
+
+    private func importTimeline(from result: Result<URL, Error>) {
+        switch result {
+        case let .success(url):
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { url.stopAccessingSecurityScopedResource() }
+            }
+
+            do {
+                let imported = try GoogleTimelineImporter.samples(from: url)
+                logger.importSamples(imported)
+            } catch {
+                timelineImportError = error.localizedDescription
+            }
+        case let .failure(error):
+            if (error as NSError).code != NSUserCancelledError {
+                timelineImportError = error.localizedDescription
+            }
         }
     }
 

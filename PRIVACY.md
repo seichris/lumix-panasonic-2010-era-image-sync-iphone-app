@@ -14,7 +14,7 @@ When the user chooses to import an image or supported video, GM1 Sync adds the s
 
 ## Location
 
-Location logging is off by default and begins only when the user taps **Start location log**. Location samples are stored locally on the iPhone so imported camera photos can receive a matching location. The user can stop logging and delete the saved track from the app at any time. Location data is never sent to WEB3 FZCO or a third party.
+Location logging is off by default and begins only when the user taps **Start location log**. Location samples are stored locally on the iPhone so imported camera photos can receive a matching location. Users may also import a Google Maps `location-history.json` export; it is parsed and merged locally, without signing in to Google or uploading the file. The user can stop logging and delete the saved track from the app at any time. Location data is never sent to WEB3 FZCO or a third party.
 
 ## Diagnostics
 
