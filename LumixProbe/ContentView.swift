@@ -1,5 +1,9 @@
 import MapKit
 import SwiftUI
+#if os(iOS)
+import UIKit
+import UniformTypeIdentifiers
+#endif
 
 #if os(iOS)
 struct ContentView: View {
@@ -196,22 +200,10 @@ private struct AppSettingsView: View {
                 }
             }
 
-            Section("Camera") {
-                TextField("Camera IP", text: $model.host)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.numbersAndPunctuation)
-                    .accessibilityIdentifier("camera-ip-address")
-                Button("Check connection", action: checkCameraConnection)
-                    .accessibilityIdentifier("check-camera-connection")
-                Text("The GM1S normally uses 192.168.54.1 in Image App Direct mode.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("About") {
                 Link(destination: Self.githubRepositoryURL) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Label("GitHub repository", systemImage: "link")
+                        Label("View this app code on Github", systemImage: "curlybraces")
                         Text("View source code and report issues")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -244,7 +236,10 @@ private struct AppSettingsView: View {
                 .accessibilityIdentifier("app-icon-link")
 
                 NavigationLink("Camera diagnostics") {
-                    CameraDiagnosticsView(model: model)
+                    CameraDiagnosticsView(
+                        model: model,
+                        checkCameraConnection: checkCameraConnection
+                    )
                 }
                 .accessibilityIdentifier("camera-diagnostics-link")
             }
@@ -281,6 +276,7 @@ private struct AppSettingsView: View {
 
 private struct CameraDiagnosticsView: View {
     @ObservedObject var model: ProbeViewModel
+    let checkCameraConnection: () -> Void
 
     var body: some View {
         List {
@@ -288,6 +284,12 @@ private struct CameraDiagnosticsView: View {
                 TextField("Camera IP", text: $model.host)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.numbersAndPunctuation)
+                    .accessibilityIdentifier("camera-ip-address")
+                Button("Check connection", action: checkCameraConnection)
+                    .accessibilityIdentifier("check-camera-connection")
+                Text("The GM1S normally uses 192.168.54.1 in Image App Direct mode.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if model.isCameraConnected {
                     Label("Connected to camera", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
@@ -357,6 +359,9 @@ private struct GeotaggingControls: View {
     @Binding var autoStartGeotagging: Bool
     @Binding var cameraClockOffsetMinutes: Double
     let clearTrack: () -> Void
+    @State private var isShowingTimelineImporter = false
+    @State private var timelineImportError: String?
+    @State private var didPasteTimelineData = false
 
     var body: some View {
         Section("Geotagging") {
@@ -390,6 +395,37 @@ private struct GeotaggingControls: View {
             }
             .accessibilityIdentifier("auto-start-geotagging")
 
+            Button {
+                isShowingTimelineImporter = true
+            } label: {
+                Label("Import Google Timeline JSON", systemImage: "arrow.down.doc")
+            }
+            .accessibilityIdentifier("import-google-timeline")
+
+            Button {
+                importTimelineFromClipboard()
+            } label: {
+                Label {
+                    Text(
+                        didPasteTimelineData
+                            ? "Successfully pasted Timeline data"
+                            : "Paste Google Timeline JSON"
+                    )
+                } icon: {
+                    Image(
+                        systemName: didPasteTimelineData
+                            ? "checkmark.circle.fill"
+                            : "doc.on.clipboard"
+                    )
+                    .foregroundStyle(didPasteTimelineData ? .green : .accentColor)
+                }
+            }
+            .accessibilityIdentifier("paste-google-timeline")
+
+            Text("Export location-history.json from Google Maps, choose it here, or copy its JSON and paste it. Imported points are merged with the saved track.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             if !logger.samples.isEmpty {
                 Button("Clear saved location track", role: .destructive, action: clearTrack)
                     .disabled(logger.isLogging)
@@ -405,6 +441,61 @@ private struct GeotaggingControls: View {
             Text("Start before shooting. The visible location session continues while this iPhone is locked. Use a positive adjustment when the camera is behind the iPhone, or a negative one when it is ahead.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+        .fileImporter(
+            isPresented: $isShowingTimelineImporter,
+            allowedContentTypes: [.json],
+            onCompletion: importTimeline
+        )
+        .alert(
+            "Google Timeline import failed",
+            isPresented: Binding(
+                get: { timelineImportError != nil },
+                set: { if !$0 { timelineImportError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(timelineImportError ?? "The selected file could not be imported.")
+        }
+    }
+
+    private func importTimeline(from result: Result<URL, Error>) {
+        switch result {
+        case let .success(url):
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { url.stopAccessingSecurityScopedResource() }
+            }
+
+            do {
+                let imported = try GoogleTimelineImporter.samples(from: url)
+                logger.importSamples(imported)
+            } catch {
+                timelineImportError = error.localizedDescription
+            }
+        case let .failure(error):
+            if (error as NSError).code != NSUserCancelledError {
+                timelineImportError = error.localizedDescription
+            }
+        }
+    }
+
+    private func importTimelineFromClipboard() {
+        guard let text = UIPasteboard.general.string,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            didPasteTimelineData = false
+            timelineImportError = "The clipboard does not contain JSON text. Copy the Google Timeline export, then try again."
+            return
+        }
+
+        do {
+            let imported = try GoogleTimelineImporter.samples(from: text)
+            logger.importSamples(imported)
+            didPasteTimelineData = true
+        } catch {
+            didPasteTimelineData = false
+            timelineImportError = error.localizedDescription
         }
     }
 

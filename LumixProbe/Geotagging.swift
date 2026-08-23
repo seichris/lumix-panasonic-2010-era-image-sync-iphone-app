@@ -415,6 +415,43 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
         statusMessage = "Location track cleared."
     }
 
+    func importSamples(_ importedSamples: [LocationSample]) {
+        let usable = importedSamples.filter {
+            $0.timestamp.timeIntervalSince1970.isFinite &&
+                $0.latitude.isFinite &&
+                $0.longitude.isFinite &&
+                abs($0.latitude) <= 90 &&
+                abs($0.longitude) <= 180 &&
+                $0.horizontalAccuracy >= 0 &&
+                $0.horizontalAccuracy <= LocationTrackMatcher.maximumUsableAccuracy
+        }
+        guard !usable.isEmpty else {
+            statusMessage = "The imported location track contained no usable samples."
+            return
+        }
+
+        let combined = (samples + usable).sorted { $0.timestamp < $1.timestamp }
+        var merged: [LocationSample] = []
+        merged.reserveCapacity(combined.count)
+        for sample in combined {
+            if let previous = merged.last,
+               previous.timestamp == sample.timestamp,
+               abs(previous.latitude - sample.latitude) < 0.0000001,
+               abs(previous.longitude - sample.longitude) < 0.0000001
+            {
+                continue
+            }
+            merged.append(sample)
+        }
+
+        if merged.count > 20_000 {
+            merged.removeFirst(merged.count - 20_000)
+        }
+        samples = merged
+        statusMessage = "Imported \(usable.count) location samples from Google Timeline."
+        persistTrack()
+    }
+
     private func beginUpdates() {
         guard !isLogging else { return }
 #if os(iOS)

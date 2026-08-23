@@ -119,9 +119,18 @@ final class LumixProbeUITests: XCTestCase {
                 NSPredicate(format: "label CONTAINS %@", "Remote Shooting & View → Direct → Image App")
             ).firstMatch.exists
         )
+        XCTAssertFalse(app.textFields["camera-ip-address"].exists)
+        XCTAssertFalse(app.buttons["check-camera-connection"].exists)
+        XCTAssertFalse(app.buttons["start-location-log"].exists)
+
+        let diagnosticsLink = app.buttons["camera-diagnostics-link"]
+        scrollToElement(diagnosticsLink)
+        diagnosticsLink.tap()
+        XCTAssertTrue(app.navigationBars["Diagnostics"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.textFields["camera-ip-address"].exists)
         XCTAssertTrue(app.buttons["check-camera-connection"].exists)
-        XCTAssertFalse(app.buttons["start-location-log"].exists)
+        XCTAssertTrue(app.staticTexts["The GM1S normally uses 192.168.54.1 in Image App Direct mode."].exists)
+        app.navigationBars.buttons.firstMatch.tap()
 
         let compatibilityLink = app.buttons["camera-compatibility-link"]
         scrollToElement(compatibilityLink)
@@ -132,7 +141,7 @@ final class LumixProbeUITests: XCTestCase {
 
         let repositoryLink = app.descendants(matching: .any)["github-repository-link"].firstMatch
         scrollToElement(repositoryLink)
-        XCTAssertTrue(app.staticTexts["GitHub repository"].exists)
+        XCTAssertTrue(app.staticTexts["View this app code on Github"].exists)
 
         let appVersion = app.staticTexts["app-version"]
         scrollToElement(appVersion)
