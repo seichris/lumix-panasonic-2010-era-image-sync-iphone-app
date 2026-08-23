@@ -25,6 +25,10 @@ enum GoogleTimelineImporter {
         try samples(from: Data(contentsOf: fileURL))
     }
 
+    static func samples(from text: String) throws -> [LocationSample] {
+        try samples(from: Data(text.utf8))
+    }
+
     static func samples(from data: Data) throws -> [LocationSample] {
         let object: Any
         do {

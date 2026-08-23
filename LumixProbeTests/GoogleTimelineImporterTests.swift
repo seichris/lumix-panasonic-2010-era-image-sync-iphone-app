@@ -59,6 +59,27 @@ final class GoogleTimelineImporterTests: XCTestCase {
         XCTAssertEqual(samples[1].longitude, 103.1, accuracy: 0.000001)
     }
 
+    func testImportsJSONStringCopiedToClipboard() throws {
+        let text = #"""
+        [
+          {
+            "startTime": "2026-08-23T13:00:00Z",
+            "endTime": "2026-08-23T13:05:00Z",
+            "activity": {
+              "start": "geo:1.200000,103.200000",
+              "end": "geo:1.210000,103.210000"
+            }
+          }
+        ]
+        """#
+
+        let samples = try GoogleTimelineImporter.samples(from: text)
+
+        XCTAssertEqual(samples.count, 2)
+        XCTAssertEqual(samples[1].latitude, 1.21, accuracy: 0.000001)
+        XCTAssertEqual(samples[1].longitude, 103.21, accuracy: 0.000001)
+    }
+
     func testImportsLegacyLocationsWithE7CoordinatesAndAccuracy() throws {
         let data = Data(#"""
         {

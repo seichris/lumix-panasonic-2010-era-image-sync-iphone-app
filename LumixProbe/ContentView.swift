@@ -1,6 +1,7 @@
 import MapKit
 import SwiftUI
 #if os(iOS)
+import UIKit
 import UniformTypeIdentifiers
 #endif
 
@@ -402,7 +403,14 @@ private struct GeotaggingControls: View {
             }
             .accessibilityIdentifier("import-google-timeline")
 
-            Text("Export location-history.json from Google Maps, then choose it here. Imported points are merged with the saved track.")
+            Button {
+                importTimelineFromClipboard()
+            } label: {
+                Label("Paste Google Timeline JSON", systemImage: "doc.on.clipboard")
+            }
+            .accessibilityIdentifier("paste-google-timeline")
+
+            Text("Export location-history.json from Google Maps, choose it here, or copy its JSON and paste it. Imported points are merged with the saved track.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -458,6 +466,21 @@ private struct GeotaggingControls: View {
             if (error as NSError).code != NSUserCancelledError {
                 timelineImportError = error.localizedDescription
             }
+        }
+    }
+
+    private func importTimelineFromClipboard() {
+        guard let text = UIPasteboard.general.string,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            timelineImportError = "The clipboard does not contain JSON text. Copy the Google Timeline export, then try again."
+            return
+        }
+
+        do {
+            let imported = try GoogleTimelineImporter.samples(from: text)
+            logger.importSamples(imported)
+        } catch {
+            timelineImportError = error.localizedDescription
         }
     }
 
