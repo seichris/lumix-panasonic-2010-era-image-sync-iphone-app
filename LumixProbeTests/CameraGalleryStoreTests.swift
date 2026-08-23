@@ -505,6 +505,64 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertNil(packages.first?.embeddedLocation)
     }
 
+    func testManualLocationOverridePersistsAcrossReconnectAndWinsOverTrackMatch() async throws {
+        let captureDate = Date(timeIntervalSince1970: 1_786_692_600)
+        let client = MockGalleryClient(total: 1)
+        let importer = RecordingImporter()
+        let historyStore = InMemoryCameraImportHistoryStore()
+        let locationStore = InMemoryCameraLocationOverrideStore()
+        let manualLocation = PhotoGeotagLocation(latitude: 1.3, longitude: 103.8)
+        let firstStore = CameraGalleryStore(
+            client: client,
+            importer: importer,
+            importHistoryStore: historyStore,
+            locationOverrideStore: locationStore,
+            sourceIdentifier: "GM1S-TEST",
+            pageSize: 1,
+            photoMetadataReader: { _ in
+                PhotoOriginalMetadata(captureDate: captureDate, embeddedLocation: nil)
+            }
+        )
+        let trackSample = LocationSample(
+            timestamp: captureDate,
+            latitude: 1.35,
+            longitude: 103.85,
+            horizontalAccuracy: 8
+        )
+
+        await firstStore.loadInitial()
+        let firstPhoto = try XCTUnwrap(firstStore.photos.first)
+        try firstStore.setManualLocation(manualLocation, for: [firstPhoto])
+        XCTAssertEqual(firstStore.manualLocationOverride(for: firstPhoto), manualLocation)
+
+        let reloadedStore = CameraGalleryStore(
+            client: client,
+            importer: importer,
+            importHistoryStore: historyStore,
+            locationOverrideStore: locationStore,
+            sourceIdentifier: "GM1S-TEST",
+            pageSize: 1,
+            photoMetadataReader: { _ in
+                PhotoOriginalMetadata(captureDate: captureDate, embeddedLocation: nil)
+            }
+        )
+        await reloadedStore.loadInitial()
+        let reloadedPhoto = try XCTUnwrap(reloadedStore.photos.first)
+        XCTAssertEqual(reloadedStore.manualLocationOverride(for: reloadedPhoto), manualLocation)
+
+        await reloadedStore.importPhoto(
+            reloadedPhoto,
+            samples: [trackSample],
+            cameraClockOffset: 0
+        )
+
+        let packages = await importer.packages
+        let package = try XCTUnwrap(packages.last)
+        XCTAssertNil(package.geotag)
+        XCTAssertEqual(package.manualLocation, manualLocation)
+        XCTAssertEqual(reloadedStore.importHistoryRecord(for: reloadedPhoto)?.appliedLocation, manualLocation)
+    }
+
     func testSelectUnimportedExcludesPreviouslyImportedItemsAfterReload() async throws {
         let client = MockGalleryClient(total: 3)
         let historyStore = InMemoryCameraImportHistoryStore()
@@ -821,6 +879,7 @@ private actor RecordingImporter: CameraMediaImporting {
         let roles: [CameraImportPlan.Resource.Role]
         let geotag: GeotagMatch?
         let embeddedLocation: PhotoGeotagLocation?
+        let manualLocation: PhotoGeotagLocation?
     }
 
     private(set) var filenames: [String] = []
@@ -840,7 +899,8 @@ private actor RecordingImporter: CameraMediaImporting {
                 filenames: mediaFilenames,
                 roles: media.resources.map(\.role),
                 geotag: geotag,
-                embeddedLocation: media.embeddedLocation
+                embeddedLocation: media.embeddedLocation,
+                manualLocation: media.manualLocation
             )
         )
         if !failingFilenames.isDisjoint(with: mediaFilenames) {

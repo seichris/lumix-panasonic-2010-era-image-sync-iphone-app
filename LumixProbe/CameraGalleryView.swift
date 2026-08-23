@@ -12,6 +12,7 @@ struct CameraGalleryView: View {
     @State private var showPhotosAccessAlert = false
     @State private var showFailedOnly = false
     @State private var isDownloadingAllNew = false
+    @State private var isShowingManualLocationPicker = false
 
     private let columns = [
         GridItem(.flexible(), spacing: 3),
@@ -101,6 +102,9 @@ struct CameraGalleryView: View {
                 store.importHistoryReconciliationError
                     ?? "Allow Full Access to Photos so GM1 Sync can identify already downloaded media without creating duplicates."
             )
+        }
+        .sheet(isPresented: $isShowingManualLocationPicker) {
+            ManualLocationPickerView(store: store, photos: selectedPhotoImages)
         }
     }
 
@@ -367,6 +371,28 @@ struct CameraGalleryView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            if !selectedPhotoImages.isEmpty {
+                Button {
+                    isShowingManualLocationPicker = true
+                } label: {
+                    Label(
+                        "Set location for \(selectedPhotoImages.count) selected \(selectedPhotoImages.count == 1 ? "image" : "images")",
+                        systemImage: "mappin.and.ellipse"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.isImporting)
+                .accessibilityIdentifier("set-manual-location")
+
+                if selectedPhotoImages.count != store.selectedPhotos.count {
+                    Text("Selected videos are not affected.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
             HStack {
                 Text(store.isImporting ? "Importing originals…" : "\(store.selectedPhotoIDs.count) selected")
                     .font(.subheadline.weight(.medium))
@@ -397,6 +423,10 @@ struct CameraGalleryView: View {
         return CameraPhotoImportMode.allCases.filter { mode in
             selectedPhotos.allSatisfy { $0.supports(mode) }
         }
+    }
+
+    private var selectedPhotoImages: [LumixPhoto] {
+        store.selectedPhotos.filter { $0.kind == .photo }
     }
 }
 
@@ -460,6 +490,12 @@ private struct CameraPhotoGridCell: View {
                             .background(.regularMaterial, in: Capsule())
                     }
                     Spacer()
+                    if store.manualLocationOverride(for: photo) != nil {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.blue)
+                            .background(.white, in: Circle())
+                    }
                     if historyRecord != nil {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.title2)
@@ -505,8 +541,14 @@ private struct CameraPhotoGridCell: View {
     }
 
     private var historyAccessibilityValue: String {
-        guard let historyRecord else { return "Not imported by GM1 Sync" }
-        return "Previously imported: \(historyRecord.summary)"
+        var values: [String] = []
+        if let historyRecord {
+            values.append("Previously imported: \(historyRecord.summary)")
+        }
+        if store.manualLocationOverride(for: photo) != nil {
+            values.append("Manual location selected")
+        }
+        return values.isEmpty ? "Not imported by GM1 Sync" : values.joined(separator: "; ")
     }
 }
 
@@ -826,6 +868,14 @@ private struct CameraPhotoGeotaggingDetail: View {
             Label("Original JPEG is geotagged", systemImage: "mappin.circle.fill")
                 .foregroundStyle(.green)
             Text("This location is embedded in the original file and will be kept when it is imported.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            position(location)
+        } else if let location = store.manualLocationOverride(for: photo) {
+            MatchedLocationMap(location: location, markerTitle: "Manual location")
+            Label("Manual location selected", systemImage: "mappin.circle.fill")
+                .foregroundStyle(.blue)
+            Text("This location will be used when the selected camera item is imported to Photos.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             position(location)

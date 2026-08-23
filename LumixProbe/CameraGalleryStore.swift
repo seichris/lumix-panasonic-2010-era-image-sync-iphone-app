@@ -140,6 +140,7 @@ final class CameraGalleryStore: ObservableObject {
     @Published private(set) var batchProgress: CameraBatchProgress?
     @Published private(set) var isImporting = false
     @Published private(set) var importHistory: [String: CameraImportHistoryRecord] = [:]
+    @Published private(set) var manualLocationOverrides: [String: PhotoGeotagLocation] = [:]
     @Published private(set) var isReconcilingImportHistory = false
     @Published private(set) var importHistoryReconciliationError: String?
     @Published private(set) var hasCompletePhotoLibraryImportHistory = false
@@ -156,6 +157,7 @@ final class CameraGalleryStore: ObservableObject {
     private var client: any CameraGalleryClient
     private let importer: any CameraMediaImporting
     private let importHistoryStore: any CameraImportHistoryStoring
+    private let locationOverrideStore: any CameraLocationOverrideStoring
     private let importReconciler: any CameraImportReconciling
     private let photoMetadataReader: @Sendable (URL) -> PhotoOriginalMetadata
     private let metadataInspectionDownloadTimeout: Duration
@@ -184,6 +186,7 @@ final class CameraGalleryStore: ObservableObject {
         client: any CameraGalleryClient = LumixClient(),
         importer: any CameraMediaImporting = SystemCameraMediaImporter(),
         importHistoryStore: any CameraImportHistoryStoring = UserDefaultsCameraImportHistoryStore(),
+        locationOverrideStore: any CameraLocationOverrideStoring = UserDefaultsCameraLocationOverrideStore(),
         importReconciler: any CameraImportReconciling = NoopCameraImportReconciler(),
         sourceIdentifier: String = "camera",
         pageSize: Int = 20,
@@ -198,12 +201,14 @@ final class CameraGalleryStore: ObservableObject {
         self.client = client
         self.importer = importer
         self.importHistoryStore = importHistoryStore
+        self.locationOverrideStore = locationOverrideStore
         self.importReconciler = importReconciler
         self.photoMetadataReader = photoMetadataReader
         self.metadataInspectionDownloadTimeout = metadataInspectionDownloadTimeout
         self.pageSize = max(1, pageSize)
         mediaCache = LumixMediaCache(byteLimit: mediaCacheByteLimit)
         loadImportHistory()
+        loadManualLocationOverrides()
     }
 
     init(
@@ -211,6 +216,7 @@ final class CameraGalleryStore: ObservableObject {
         sourceIdentifierProvider: @escaping @MainActor () -> String = { "camera" },
         importer: any CameraMediaImporting = SystemCameraMediaImporter(),
         importHistoryStore: any CameraImportHistoryStoring = UserDefaultsCameraImportHistoryStore(),
+        locationOverrideStore: any CameraLocationOverrideStoring = UserDefaultsCameraLocationOverrideStore(),
         importReconciler: any CameraImportReconciling = NoopCameraImportReconciler(),
         pageSize: Int = 20,
         mediaCacheByteLimit: Int = 24 * 1024 * 1024,
@@ -224,12 +230,14 @@ final class CameraGalleryStore: ObservableObject {
         client = clientProvider()
         self.importer = importer
         self.importHistoryStore = importHistoryStore
+        self.locationOverrideStore = locationOverrideStore
         self.importReconciler = importReconciler
         self.photoMetadataReader = photoMetadataReader
         self.metadataInspectionDownloadTimeout = metadataInspectionDownloadTimeout
         self.pageSize = max(1, pageSize)
         mediaCache = LumixMediaCache(byteLimit: mediaCacheByteLimit)
         loadImportHistory()
+        loadManualLocationOverrides()
     }
 
     init(
@@ -243,6 +251,7 @@ final class CameraGalleryStore: ObservableObject {
         client = previewClient
         importer = SystemCameraMediaImporter()
         importHistoryStore = InMemoryCameraImportHistoryStore()
+        locationOverrideStore = InMemoryCameraLocationOverrideStore()
         importReconciler = NoopCameraImportReconciler()
         photoMetadataReader = { PhotoOriginalMetadataReader.read(from: $0) }
         metadataInspectionDownloadTimeout = .seconds(45)
@@ -282,6 +291,31 @@ final class CameraGalleryStore: ObservableObject {
 
     func importHistoryRecord(for photo: LumixPhoto) -> CameraImportHistoryRecord? {
         importHistory[historyKey(for: photo)]
+    }
+
+    func manualLocationOverride(for photo: LumixPhoto) -> PhotoGeotagLocation? {
+        manualLocationOverrides[locationOverrideKey(for: photo)]
+    }
+
+    func setManualLocation(
+        _ location: PhotoGeotagLocation,
+        for photos: [LumixPhoto]
+    ) throws {
+        guard location.latitude.isFinite,
+              location.longitude.isFinite,
+              abs(location.latitude) <= 90,
+              abs(location.longitude) <= 180 else {
+            throw CameraLocationOverrideError.invalidCoordinate
+        }
+        guard !photos.isEmpty else { return }
+
+        var updated = manualLocationOverrides
+        for photo in photos where photo.kind == .photo {
+            updated[locationOverrideKey(for: photo)] = location
+        }
+        guard updated != manualLocationOverrides else { return }
+        try locationOverrideStore.save(updated)
+        manualLocationOverrides = updated
     }
 
     func metadataInspectionState(for photo: LumixPhoto) -> CameraPhotoMetadataInspectionState? {
@@ -963,6 +997,7 @@ final class CameraGalleryStore: ObservableObject {
 
             do {
                 let plan = try photo.importPlan(photoMode: photoMode, policy: mediaPolicy)
+                let manualLocation = manualLocationOverride(for: photo)
                 importStates[photo.id] = .downloading
                 var downloadedResources: [DownloadedCameraMedia.Resource] = []
                 var originalMetadata: PhotoOriginalMetadata?
@@ -997,18 +1032,24 @@ final class CameraGalleryStore: ObservableObject {
                     variant: plan.variant,
                     resources: downloadedResources,
                     captureDate: captureDate,
-                    embeddedLocation: originalMetadata?.embeddedLocation
+                    embeddedLocation: originalMetadata?.embeddedLocation,
+                    manualLocation: manualLocation
                 )
                 failingFilename = downloadedResources
                     .map(\.originalFilename)
                     .joined(separator: " + ")
-                let geotag = originalMetadata?.embeddedLocation == nil ? captureDate.flatMap {
-                    LocationTrackMatcher.match(
-                        captureDate: $0,
-                        samples: samples,
-                        cameraClockOffset: cameraClockOffset
-                    )
-                } : nil
+                let geotag: GeotagMatch?
+                if originalMetadata?.embeddedLocation == nil, manualLocation == nil {
+                    geotag = captureDate.flatMap {
+                        LocationTrackMatcher.match(
+                            captureDate: $0,
+                            samples: samples,
+                            cameraClockOffset: cameraClockOffset
+                        )
+                    }
+                } else {
+                    geotag = nil
+                }
 
                 importStates[photo.id] = .saving
                 try await importer.save(downloadedMedia, geotag: geotag)
@@ -1018,9 +1059,9 @@ final class CameraGalleryStore: ObservableObject {
                     of: photo,
                     variant: plan.variant,
                     verifiedCaptureDate: captureDate,
-                    appliedLocation: originalMetadata?.embeddedLocation ?? geotag.map {
-                        PhotoGeotagLocation(match: $0)
-                    }
+                    appliedLocation: originalMetadata?.embeddedLocation
+                        ?? manualLocation
+                        ?? geotag.map { PhotoGeotagLocation(match: $0) }
                 )
                 batchProgress?.saved += 1
                 selectedPhotoIDs.remove(photo.id)
@@ -1053,6 +1094,15 @@ final class CameraGalleryStore: ObservableObject {
         } catch {
             importHistory = [:]
             print("[GM1Sync] Import history could not be loaded: \(error.localizedDescription)")
+        }
+    }
+
+    private func loadManualLocationOverrides() {
+        do {
+            manualLocationOverrides = try locationOverrideStore.load()
+        } catch {
+            manualLocationOverrides = [:]
+            print("[GM1Sync] Manual location overrides could not be loaded: \(error.localizedDescription)")
         }
     }
 
@@ -1125,6 +1175,10 @@ final class CameraGalleryStore: ObservableObject {
     }
 
     private func historyKey(for photo: LumixPhoto) -> String {
+        [sourceIdentifierProvider(), photo.importIdentity].joined(separator: "|")
+    }
+
+    private func locationOverrideKey(for photo: LumixPhoto) -> String {
         [sourceIdentifierProvider(), photo.importIdentity].joined(separator: "|")
     }
 

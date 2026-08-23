@@ -22,6 +22,7 @@ GM1 Sync is not affiliated with or endorsed by Panasonic. Panasonic, LUMIX, Imag
 - Import JPEG, JPEG + RAW, RAW-only, and supported MP4 originals into Apple Photos on iPhone.
 - Mark previously imported items by reconciling camera filenames with the Photos library.
 - Download all new photos and videos in one action.
+- Select images and assign a searched Apple Maps location before importing them.
 - Record an optional on-device location track and add a matched location during photo import.
 - On Mac, join the camera Wi-Fi from the macOS menu bar, run the protocol probes, and copy downloaded originals to Downloads.
 - Keep camera traffic local between the iPhone and the camera, without accounts, analytics, ads, or cloud uploads.
@@ -57,6 +58,8 @@ The protocol is unofficial and can vary by camera model and firmware.
 Location logging is optional and visible while active. During import, GM1 Sync reads the original JPEG's EXIF capture time and matches it to a nearby or interpolated point in the locally stored location track. A camera-clock adjustment can compensate when the camera clock differs from the iPhone clock.
 
 If logging was not enabled when the photos were taken, iPhone users can export `location-history.json` from Google Maps (Settings → Personal content → Export Timeline data) and choose **Import Google Timeline JSON** in GM1 Sync's Geotagging section. If the JSON text is already copied, **Paste Google Timeline JSON** accepts it directly from the clipboard. The imported points are merged into the local track; the app does not sign in to Google or upload the file.
+
+For a direct override, select one or more images in the camera gallery and choose **Set location**. Search Apple Maps, confirm a result, and GM1 Sync stores that location locally for each selected camera item. The override is reused after reconnecting to the same camera and is applied when the image is imported to Apple Photos; selected videos are not affected.
 
 Matches more than 15 minutes from a usable track point are rejected. The original camera file remains unchanged; on iPhone the matched `CLLocation` is supplied separately when the asset is created in Apple Photos. On Mac the match is shown for review while the original is copied unchanged to Downloads.
 
