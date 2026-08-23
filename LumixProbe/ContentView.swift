@@ -363,6 +363,7 @@ private struct GeotaggingControls: View {
     let clearTrack: () -> Void
     @State private var isShowingTimelineImporter = false
     @State private var timelineImportError: String?
+    @State private var didPasteTimelineData = false
 
     var body: some View {
         Section("Geotagging") {
@@ -406,7 +407,20 @@ private struct GeotaggingControls: View {
             Button {
                 importTimelineFromClipboard()
             } label: {
-                Label("Paste Google Timeline JSON", systemImage: "doc.on.clipboard")
+                Label {
+                    Text(
+                        didPasteTimelineData
+                            ? "Successfully pasted Timeline data"
+                            : "Paste Google Timeline JSON"
+                    )
+                } icon: {
+                    Image(
+                        systemName: didPasteTimelineData
+                            ? "checkmark.circle.fill"
+                            : "doc.on.clipboard"
+                    )
+                    .foregroundStyle(didPasteTimelineData ? .green : .accentColor)
+                }
             }
             .accessibilityIdentifier("paste-google-timeline")
 
@@ -472,6 +486,7 @@ private struct GeotaggingControls: View {
     private func importTimelineFromClipboard() {
         guard let text = UIPasteboard.general.string,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            didPasteTimelineData = false
             timelineImportError = "The clipboard does not contain JSON text. Copy the Google Timeline export, then try again."
             return
         }
@@ -479,7 +494,9 @@ private struct GeotaggingControls: View {
         do {
             let imported = try GoogleTimelineImporter.samples(from: text)
             logger.importSamples(imported)
+            didPasteTimelineData = true
         } catch {
+            didPasteTimelineData = false
             timelineImportError = error.localizedDescription
         }
     }
