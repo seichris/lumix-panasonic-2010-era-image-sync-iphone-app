@@ -215,7 +215,7 @@ private struct AppSettingsView: View {
             Section("About") {
                 Link(destination: Self.githubRepositoryURL) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Label("GitHub repository", systemImage: "link")
+                        Label("View this app code on Github", systemImage: "curlybraces")
                         Text("View source code and report issues")
                             .font(.caption)
                             .foregroundStyle(.secondary)

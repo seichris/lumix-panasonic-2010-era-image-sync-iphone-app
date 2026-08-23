@@ -132,7 +132,7 @@ final class LumixProbeUITests: XCTestCase {
 
         let repositoryLink = app.descendants(matching: .any)["github-repository-link"].firstMatch
         scrollToElement(repositoryLink)
-        XCTAssertTrue(app.staticTexts["GitHub repository"].exists)
+        XCTAssertTrue(app.staticTexts["View this app code on Github"].exists)
 
         let appVersion = app.staticTexts["app-version"]
         scrollToElement(appVersion)
