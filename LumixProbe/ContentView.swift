@@ -200,18 +200,6 @@ private struct AppSettingsView: View {
                 }
             }
 
-            Section("Camera") {
-                TextField("Camera IP", text: $model.host)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.numbersAndPunctuation)
-                    .accessibilityIdentifier("camera-ip-address")
-                Button("Check connection", action: checkCameraConnection)
-                    .accessibilityIdentifier("check-camera-connection")
-                Text("The GM1S normally uses 192.168.54.1 in Image App Direct mode.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("About") {
                 Link(destination: Self.githubRepositoryURL) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -248,7 +236,10 @@ private struct AppSettingsView: View {
                 .accessibilityIdentifier("app-icon-link")
 
                 NavigationLink("Camera diagnostics") {
-                    CameraDiagnosticsView(model: model)
+                    CameraDiagnosticsView(
+                        model: model,
+                        checkCameraConnection: checkCameraConnection
+                    )
                 }
                 .accessibilityIdentifier("camera-diagnostics-link")
             }
@@ -285,6 +276,7 @@ private struct AppSettingsView: View {
 
 private struct CameraDiagnosticsView: View {
     @ObservedObject var model: ProbeViewModel
+    let checkCameraConnection: () -> Void
 
     var body: some View {
         List {
@@ -292,6 +284,12 @@ private struct CameraDiagnosticsView: View {
                 TextField("Camera IP", text: $model.host)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.numbersAndPunctuation)
+                    .accessibilityIdentifier("camera-ip-address")
+                Button("Check connection", action: checkCameraConnection)
+                    .accessibilityIdentifier("check-camera-connection")
+                Text("The GM1S normally uses 192.168.54.1 in Image App Direct mode.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if model.isCameraConnected {
                     Label("Connected to camera", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
