@@ -1,18 +1,18 @@
-# Vintage LUMIX Sync
+# Retro LUMIX Sync
 
 <p align="center">
-  <img src="docs/screenshots/01-sync-pictures.png" alt="Vintage LUMIX Sync camera media gallery" width="32%" />
-  <img src="docs/screenshots/02-geotag.png" alt="Vintage LUMIX Sync geotagging" width="32%" />
-  <img src="docs/screenshots/03-image-details.png" alt="Vintage LUMIX Sync image details" width="32%" />
+  <img src="docs/screenshots/01-sync-pictures.png" alt="Retro LUMIX Sync camera media gallery" width="32%" />
+  <img src="docs/screenshots/02-geotag.png" alt="Retro LUMIX Sync geotagging" width="32%" />
+  <img src="docs/screenshots/03-image-details.png" alt="Retro LUMIX Sync image details" width="32%" />
 </p>
 
-[![Download Vintage LUMIX Sync on the App Store](https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83)](https://apps.apple.com/us/app/gm1-sync/id6801485290)
+[![Download Retro LUMIX Sync on the App Store](https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83)](https://apps.apple.com/us/app/gm1-sync/id6801485290)
 
-Vintage LUMIX Sync is an independent iPhone and Mac app for browsing, importing, and geotagging media from compatible Panasonic Wi-Fi cameras. It is an alternative to Panasonic's **Image App** for people who still use these cameras.
+Retro LUMIX Sync is an independent iPhone and Mac app for browsing, importing, and geotagging media from compatible Panasonic Wi-Fi cameras. It is an alternative to Panasonic's **Image App** for people who still use these cameras.
 
 The Panasonic Lumix DMC-GM1S is the primary camera validated on real hardware. The GM1, GM5, and other Image App-era Panasonic Lumix cameras from roughly the 2010s may use a compatible protocol, but model and firmware support must be verified individually. See [COMPATIBILITY.md](COMPATIBILITY.md).
 
-Vintage LUMIX Sync is not affiliated with or endorsed by Panasonic. Panasonic, LUMIX, Image App, and the camera model names belong to their respective owners.
+Retro LUMIX Sync is not affiliated with or endorsed by Panasonic. Panasonic, LUMIX, Image App, and the camera model names belong to their respective owners.
 
 ## Features
 
@@ -37,11 +37,11 @@ On the camera choose:
 Wi-Fi → New Connection → Remote Shooting & View → Direct → Image App
 ```
 
-Join the Wi-Fi network shown by the camera using Vintage LUMIX Sync's QR scanner or manual Wi-Fi form. This one **Image App Direct** connection is sufficient for browsing previews and importing supported originals; do not switch to **Send Images Stored in the Camera**.
+Join the Wi-Fi network shown by the camera using Retro LUMIX Sync's QR scanner or manual Wi-Fi form. This one **Image App Direct** connection is sufficient for browsing previews and importing supported originals; do not switch to **Send Images Stored in the Camera**.
 
 ## Confirmed GM1S protocol
 
-Real-device testing confirms that Vintage LUMIX Sync can:
+Real-device testing confirms that Retro LUMIX Sync can:
 
 - reach the camera's local `cam.cgi` control endpoint;
 - switch the camera into playback mode;
@@ -55,17 +55,17 @@ The protocol is unofficial and can vary by camera model and firmware.
 
 ## Geotagging
 
-Location logging is optional and visible while active. During import, Vintage LUMIX Sync reads the original JPEG's EXIF capture time and matches it to a nearby or interpolated point in the locally stored location track. A camera-clock adjustment can compensate when the camera clock differs from the iPhone clock.
+Location logging is optional and visible while active. During import, Retro LUMIX Sync reads the original JPEG's EXIF capture time and matches it to a nearby or interpolated point in the locally stored location track. A camera-clock adjustment can compensate when the camera clock differs from the iPhone clock.
 
-If logging was not enabled when the photos were taken, iPhone users can export `location-history.json` from Google Maps (Settings → Personal content → Export Timeline data) and choose **Import Google Timeline JSON** in Vintage LUMIX Sync's Geotagging section. If the JSON text is already copied, **Paste Google Timeline JSON** accepts it directly from the clipboard. The imported points are merged into the local track; the app does not sign in to Google or upload the file.
+If logging was not enabled when the photos were taken, iPhone users can export `location-history.json` from Google Maps (Settings → Personal content → Export Timeline data) and choose **Import Google Timeline JSON** in Retro LUMIX Sync's Geotagging section. If the JSON text is already copied, **Paste Google Timeline JSON** accepts it directly from the clipboard. The imported points are merged into the local track; the app does not sign in to Google or upload the file.
 
-For a direct override, select one or more images in the camera gallery and choose **Set location**. Search Apple Maps, confirm a result, and Vintage LUMIX Sync stores that location locally for each selected camera item. The override is reused after reconnecting to the same camera and is applied when the image is imported to Apple Photos; selected videos are not affected.
+For a direct override, select one or more images in the camera gallery and choose **Set location**. Search Apple Maps, confirm a result, and Retro LUMIX Sync stores that location locally for each selected camera item. The override is reused after reconnecting to the same camera and is applied when the image is imported to Apple Photos; selected videos are not affected.
 
 Matches more than 15 minutes from a usable track point are rejected. The original camera file remains unchanged; on iPhone the matched `CLLocation` is supplied separately when the asset is created in Apple Photos. On Mac the match is shown for review while the original is copied unchanged to Downloads.
 
 ## Privacy
 
-Vintage LUMIX Sync has no accounts, advertising, analytics, tracking, or cloud service. Camera credentials are stored in the platform Keychain and are not written to diagnostics. Location tracks and camera diagnostics remain on the device or Mac. See [PRIVACY.md](PRIVACY.md) for details.
+Retro LUMIX Sync has no accounts, advertising, analytics, tracking, or cloud service. Camera credentials are stored in the platform Keychain and are not written to diagnostics. Location tracks and camera diagnostics remain on the device or Mac. See [PRIVACY.md](PRIVACY.md) for details.
 
 ## Build and test
 
@@ -85,7 +85,7 @@ The generated project also contains a native `GM1SyncMac` target. Build it with:
 xcodebuild -project LumixProbe.xcodeproj -scheme GM1SyncMac -sdk macosx build
 ```
 
-On Mac, join the camera Wi-Fi from the macOS menu bar before launching Vintage LUMIX Sync. The Mac app uses the same camera address and protocol probe as iPhone, but does not use iPhone-only QR scanning or hotspot configuration. The **Download first original JPEG** action copies the camera bytes to the Mac user's Downloads folder instead of importing them into Apple Photos. Location logging works while the Mac app is open; iPhone continues to support visible background location logging and direct Photos import.
+On Mac, join the camera Wi-Fi from the macOS menu bar before launching Retro LUMIX Sync. The Mac app uses the same camera address and protocol probe as iPhone, but does not use iPhone-only QR scanning or hotspot configuration. The **Download first original JPEG** action copies the camera bytes to the Mac user's Downloads folder instead of importing them into Apple Photos. Location logging works while the Mac app is open; iPhone continues to support visible background location logging and direct Photos import.
 
 ## Protocol notes
 
@@ -97,7 +97,7 @@ GET http://192.168.54.1/cam.cgi?mode=camcmd&value=playmode
 GET http://192.168.54.1/cam.cgi?mode=get_content_info
 ```
 
-Media enumeration uses a UPnP `ContentDirectory:1` SOAP request. Returned DIDL-Lite items may expose multiple resources for one camera item. Vintage LUMIX Sync groups them by item ID and resolves profiles according to their purpose:
+Media enumeration uses a UPnP `ContentDirectory:1` SOAP request. Returned DIDL-Lite items may expose multiple resources for one camera item. Retro LUMIX Sync groups them by item ID and resolves profiles according to their purpose:
 
 | Purpose | Preferred profiles |
 |---|---|

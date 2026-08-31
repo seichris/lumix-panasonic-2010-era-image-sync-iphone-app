@@ -60,7 +60,7 @@ struct QRCodeScannerSheet: View {
                 .foregroundStyle(.tint)
             Text("Join the camera Wi-Fi on your Mac")
                 .font(.title3.weight(.semibold))
-            Text("Use the Wi-Fi menu in the macOS menu bar to join the SSID shown on the camera, then return to Vintage LUMIX Sync and probe the camera address.")
+            Text("Use the Wi-Fi menu in the macOS menu bar to join the SSID shown on the camera, then return to Retro LUMIX Sync and probe the camera address.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 460)

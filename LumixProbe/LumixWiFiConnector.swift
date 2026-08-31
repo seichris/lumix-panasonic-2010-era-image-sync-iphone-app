@@ -245,7 +245,7 @@ enum LumixWiFiError: LocalizedError {
         case let .unsupportedQRCode(reference):
             return "This camera QR format is not recognized yet (reference \(reference)). Enter the displayed network details manually."
         case .macRequiresManualJoin:
-            return "Join the camera Wi-Fi from the macOS menu bar, then return to Vintage LUMIX Sync."
+            return "Join the camera Wi-Fi from the macOS menu bar, then return to Retro LUMIX Sync."
         }
     }
 }

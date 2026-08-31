@@ -466,7 +466,7 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
             ? "Recording location, including while this iPhone is locked."
             : "Recording approximate location. Enable Precise Location for better geotags."
 #else
-        statusMessage = "Recording location while Vintage LUMIX Sync is open."
+        statusMessage = "Recording location while Retro LUMIX Sync is open."
 #endif
     }
 
