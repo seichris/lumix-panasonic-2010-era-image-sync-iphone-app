@@ -92,7 +92,7 @@ private final class PanasonicLoopbackProxy: @unchecked Sendable {
         self.resource = resource
         remoteURL = resource.url
         diagnosticEvents = [
-            "GM1 Sync AVCHD playback diagnostic",
+            "Vintage LUMIX Sync AVCHD playback diagnostic",
             "Profile: \(resource.profileName ?? "unknown")",
             "Role: \(resource.role.rawValue)",
             "Resolution: \(resource.resolutionWidth.map(String.init) ?? "?")x\(resource.resolutionHeight.map(String.init) ?? "?")",

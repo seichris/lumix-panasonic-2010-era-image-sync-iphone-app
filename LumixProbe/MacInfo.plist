@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>GM1 Sync</string>
+	<string>Vintage LUMIX Sync</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -19,9 +19,9 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.photography</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1</string>
+	<string>0.3</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>4</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSAppTransportSecurity</key>
@@ -30,10 +30,10 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>GM1 Sync connects directly to your camera over its local Wi-Fi network.</string>
+	<string>Vintage LUMIX Sync connects directly to your camera over its local Wi-Fi network.</string>
 	<key>NSLocationUsageDescription</key>
-	<string>GM1 Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
+	<string>Vintage LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>GM1 Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
+	<string>Vintage LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
 </dict>
 </plist>

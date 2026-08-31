@@ -19,9 +19,9 @@ targets:
     info:
       path: LumixProbe/Info.plist
       properties:
-        CFBundleDisplayName: GM1 Sync
-        CFBundleShortVersionString: "1.0.1"
-        CFBundleVersion: "13"
+        CFBundleDisplayName: Vintage LUMIX Sync
+        CFBundleShortVersionString: "1.0.3"
+        CFBundleVersion: "15"
         ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         UIRequiredDeviceCapabilities:
@@ -29,11 +29,11 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        NSCameraUsageDescription: GM1 Sync scans the QR code shown by your camera to join its Wi-Fi network.
-        NSLocalNetworkUsageDescription: GM1 Sync connects directly to your camera over its local Wi-Fi network.
-        NSLocationWhenInUseUsageDescription: GM1 Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
-        NSPhotoLibraryAddUsageDescription: GM1 Sync can save original photos and videos downloaded from your camera to your photo library.
-        NSPhotoLibraryUsageDescription: GM1 Sync checks which original camera photos and videos are already in your library so it can avoid downloading duplicates.
+        NSCameraUsageDescription: Vintage LUMIX Sync scans the QR code shown by your camera to join its Wi-Fi network.
+        NSLocalNetworkUsageDescription: Vintage LUMIX Sync connects directly to your camera over its local Wi-Fi network.
+        NSLocationWhenInUseUsageDescription: Vintage LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
+        NSPhotoLibraryAddUsageDescription: Vintage LUMIX Sync can save original photos and videos downloaded from your camera to your photo library.
+        NSPhotoLibraryUsageDescription: Vintage LUMIX Sync checks which original camera photos and videos are already in your library so it can avoid downloading duplicates.
         UIBackgroundModes:
           - location
         NSAppTransportSecurity:
@@ -70,14 +70,14 @@ targets:
     info:
       path: LumixProbe/MacInfo.plist
       properties:
-        CFBundleDisplayName: GM1 Sync
-        CFBundleShortVersionString: "0.1"
-        CFBundleVersion: "2"
+        CFBundleDisplayName: Vintage LUMIX Sync
+        CFBundleShortVersionString: "0.3"
+        CFBundleVersion: "4"
         LSApplicationCategoryType: public.app-category.photography
         LSMinimumSystemVersion: "14.0"
-        NSLocalNetworkUsageDescription: GM1 Sync connects directly to your camera over its local Wi-Fi network.
-        NSLocationUsageDescription: GM1 Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
-        NSLocationWhenInUseUsageDescription: GM1 Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
+        NSLocalNetworkUsageDescription: Vintage LUMIX Sync connects directly to your camera over its local Wi-Fi network.
+        NSLocationUsageDescription: Vintage LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
+        NSLocationWhenInUseUsageDescription: Vintage LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     entitlements:

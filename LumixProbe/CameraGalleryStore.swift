@@ -504,7 +504,7 @@ final class CameraGalleryStore: ObservableObject {
             } else {
                 hasCompletePhotoLibraryImportHistory = false
                 importHistoryReconciliationError =
-                    "GM1 Sync has limited Photos access. Allow Full Access so it can reliably identify every new camera item."
+                    "Vintage LUMIX Sync has limited Photos access. Allow Full Access so it can reliably identify every new camera item."
             }
         } catch {
             hasCompletePhotoLibraryImportHistory = false
