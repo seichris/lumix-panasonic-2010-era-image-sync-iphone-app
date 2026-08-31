@@ -19,9 +19,9 @@ targets:
     info:
       path: LumixProbe/Info.plist
       properties:
-        CFBundleDisplayName: Vintage LUMIX Sync
+        CFBundleDisplayName: Retro LUMIX Sync
         CFBundleShortVersionString: "1.0.3"
-        CFBundleVersion: "15"
+        CFBundleVersion: "16"
         ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         UIRequiredDeviceCapabilities:
@@ -29,11 +29,11 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        NSCameraUsageDescription: Vintage LUMIX Sync scans the QR code shown by your camera to join its Wi-Fi network.
-        NSLocalNetworkUsageDescription: Vintage LUMIX Sync connects directly to your camera over its local Wi-Fi network.
-        NSLocationWhenInUseUsageDescription: Vintage LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
-        NSPhotoLibraryAddUsageDescription: Vintage LUMIX Sync can save original photos and videos downloaded from your camera to your photo library.
-        NSPhotoLibraryUsageDescription: Vintage LUMIX Sync checks which original camera photos and videos are already in your library so it can avoid downloading duplicates.
+        NSCameraUsageDescription: Retro LUMIX Sync scans the QR code shown by your camera to join its Wi-Fi network.
+        NSLocalNetworkUsageDescription: Retro LUMIX Sync connects directly to your camera over its local Wi-Fi network.
+        NSLocationWhenInUseUsageDescription: Retro LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
+        NSPhotoLibraryAddUsageDescription: Retro LUMIX Sync can save original photos and videos downloaded from your camera to your photo library.
+        NSPhotoLibraryUsageDescription: Retro LUMIX Sync checks which original camera photos and videos are already in your library so it can avoid downloading duplicates.
         UIBackgroundModes:
           - location
         NSAppTransportSecurity:
@@ -70,14 +70,14 @@ targets:
     info:
       path: LumixProbe/MacInfo.plist
       properties:
-        CFBundleDisplayName: Vintage LUMIX Sync
+        CFBundleDisplayName: Retro LUMIX Sync
         CFBundleShortVersionString: "0.3"
         CFBundleVersion: "4"
         LSApplicationCategoryType: public.app-category.photography
         LSMinimumSystemVersion: "14.0"
-        NSLocalNetworkUsageDescription: Vintage LUMIX Sync connects directly to your camera over its local Wi-Fi network.
-        NSLocationUsageDescription: Vintage LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
-        NSLocationWhenInUseUsageDescription: Vintage LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
+        NSLocalNetworkUsageDescription: Retro LUMIX Sync connects directly to your camera over its local Wi-Fi network.
+        NSLocationUsageDescription: Retro LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
+        NSLocationWhenInUseUsageDescription: Retro LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     entitlements:

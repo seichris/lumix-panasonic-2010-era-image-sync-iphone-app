@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Vintage LUMIX Sync</string>
+	<string>Retro LUMIX Sync</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -30,10 +30,10 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Vintage LUMIX Sync connects directly to your camera over its local Wi-Fi network.</string>
+	<string>Retro LUMIX Sync connects directly to your camera over its local Wi-Fi network.</string>
 	<key>NSLocationUsageDescription</key>
-	<string>Vintage LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
+	<string>Retro LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Vintage LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
+	<string>Retro LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
 </dict>
 </plist>

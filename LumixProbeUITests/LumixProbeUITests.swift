@@ -145,7 +145,7 @@ final class LumixProbeUITests: XCTestCase {
 
         let appVersion = app.staticTexts["app-version"]
         scrollToElement(appVersion)
-        XCTAssertTrue(appVersion.label.hasPrefix("Vintage LUMIX Sync · Version 1.0.3 ("))
+        XCTAssertTrue(appVersion.label.hasPrefix("Retro LUMIX Sync · Version 1.0.3 ("))
 
         let iconLink = app.buttons["app-icon-link"]
         scrollToElement(iconLink)
@@ -161,7 +161,7 @@ final class LumixProbeUITests: XCTestCase {
             blueIcon.tap()
             let confirmation = springboard.alerts.firstMatch
             XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
-            XCTAssertTrue(confirmation.staticTexts["You have changed the icon for “Vintage LUMIX Sync”."].exists)
+            XCTAssertTrue(confirmation.staticTexts["You have changed the icon for “Retro LUMIX Sync”."].exists)
             confirmation.buttons["OK"].tap()
         }
         let selected = NSPredicate(format: "value CONTAINS %@", "Selected")

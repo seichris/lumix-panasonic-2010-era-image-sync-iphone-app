@@ -1,6 +1,6 @@
-# Vintage LUMIX Sync camera candidates
+# Retro LUMIX Sync camera candidates
 
-Vintage LUMIX Sync is being validated on GM-family hardware first. The wider list below is a research and testing queue, not a claim of confirmed support.
+Retro LUMIX Sync is being validated on GM-family hardware first. The wider list below is a research and testing queue, not a claim of confirmed support.
 
 Panasonic lists these system and compact cameras in its Image App ecosystem. That makes them plausible candidates for the same broad local Wi-Fi, `cam.cgi`, UPnP ContentDirectory, and HTTP media-resource architecture, but authentication and individual commands can vary by firmware and model.
 
@@ -77,7 +77,7 @@ The dates are approximate model-introduction eras derived from Panasonic's Image
 
 ## Recent Image App compact cameras: approximately 2025–2026
 
-These are included for completeness because Panasonic still lists them with Image App. Vintage LUMIX Sync does not assume that they expose the legacy protocol.
+These are included for completeness because Panasonic still lists them with Image App. Retro LUMIX Sync does not assume that they expose the legacy protocol.
 
 | Camera | Approximate era | Current confidence |
 |---|---:|---|
@@ -97,4 +97,4 @@ A camera should only move from candidate to confirmed after a real-device run re
 
 Source: [Panasonic Image App applicable models and support history](https://av.jpn.support.panasonic.com/support/global/cs/soft/image_app/).
 
-Panasonic, LUMIX, and the camera model names belong to their respective owner. Vintage LUMIX Sync is independent software and is not affiliated with or endorsed by Panasonic.
+Panasonic, LUMIX, and the camera model names belong to their respective owner. Retro LUMIX Sync is independent software and is not affiliated with or endorsed by Panasonic.

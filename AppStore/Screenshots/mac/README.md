@@ -1,6 +1,6 @@
-# Vintage LUMIX Sync Mac App Store screenshots
+# Retro LUMIX Sync Mac App Store screenshots
 
-This is the ordered English (U.S.) Mac screenshot set for Vintage LUMIX Sync.
+This is the ordered English (U.S.) Mac screenshot set for Retro LUMIX Sync.
 
 Upload order:
 

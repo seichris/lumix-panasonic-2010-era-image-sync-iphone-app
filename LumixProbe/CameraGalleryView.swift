@@ -100,7 +100,7 @@ struct CameraGalleryView: View {
         } message: {
             Text(
                 store.importHistoryReconciliationError
-                    ?? "Allow Full Access to Photos so Vintage LUMIX Sync can identify already downloaded media without creating duplicates."
+                    ?? "Allow Full Access to Photos so Retro LUMIX Sync can identify already downloaded media without creating duplicates."
             )
         }
         .sheet(isPresented: $isShowingManualLocationPicker) {
@@ -548,7 +548,7 @@ private struct CameraPhotoGridCell: View {
         if store.manualLocationOverride(for: photo) != nil {
             values.append("Manual location selected")
         }
-        return values.isEmpty ? "Not imported by Vintage LUMIX Sync" : values.joined(separator: "; ")
+        return values.isEmpty ? "Not imported by Retro LUMIX Sync" : values.joined(separator: "; ")
     }
 }
 

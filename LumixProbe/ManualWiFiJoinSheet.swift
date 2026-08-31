@@ -36,11 +36,11 @@ struct ManualWiFiJoinSheet: View {
                     .disabled(ssid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("join-manual-camera-wifi")
                 } footer: {
-                    Text("Vintage LUMIX Sync asks iOS to join this network. The password stays in the system Wi-Fi configuration and is never written to the diagnostic log.")
+                    Text("Retro LUMIX Sync asks iOS to join this network. The password stays in the system Wi-Fi configuration and is never written to the diagnostic log.")
                 }
 
                 Section("If iOS cannot join") {
-                    Button("Open Vintage LUMIX Sync Settings") {
+                    Button("Open Retro LUMIX Sync Settings") {
                         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
                         UIApplication.shared.open(url)
                     }
