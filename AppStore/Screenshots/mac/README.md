@@ -1,6 +1,6 @@
-# GM1 Sync Mac App Store screenshots
+# Vintage LUMIX Sync Mac App Store screenshots
 
-This is the ordered English (U.S.) Mac screenshot set for GM1 Sync.
+This is the ordered English (U.S.) Mac screenshot set for Vintage LUMIX Sync.
 
 Upload order:
 

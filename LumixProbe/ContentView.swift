@@ -119,7 +119,7 @@ struct ContentView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("GM1 Sync")
+                        Text("Vintage LUMIX Sync")
                             .font(.largeTitle.bold())
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
@@ -259,14 +259,14 @@ private struct AppSettingsView: View {
             Button("Forget", role: .destructive) { model.forgetRememberedCamera() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("GM1 Sync will remove the saved Wi-Fi password and its Auto-Join configuration. You will need to scan the camera QR code again.")
+            Text("Vintage LUMIX Sync will remove the saved Wi-Fi password and its Auto-Join configuration. You will need to scan the camera QR code again.")
         }
     }
 
     private var appVersionText: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
-        return "GM1 Sync · Version \(version) (\(build))"
+        return "Vintage LUMIX Sync · Version \(version) (\(build))"
     }
 
     private static let githubRepositoryURL = URL(
@@ -662,7 +662,7 @@ struct ContentView: View {
                     .accessibilityIdentifier("app-settings-link")
                 }
             }
-            .navigationTitle("GM1 Sync")
+            .navigationTitle("Vintage LUMIX Sync")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     NavigationLink {
@@ -734,7 +734,7 @@ private struct MacSettingsView: View {
 
             Section("Appearance") {
                 Label("Blue Camera app icon", systemImage: "app.fill")
-                Text("GM1 Sync uses the Blue Camera logo on Mac.")
+                Text("Vintage LUMIX Sync uses the Blue Camera logo on Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -860,7 +860,7 @@ private struct GeotaggingControls: View {
             }
             .accessibilityIdentifier("camera-clock-adjustment")
 
-            Text("Start before shooting. Keep GM1 Sync open while recording on Mac. Use a positive adjustment when the camera is behind the Mac, or a negative one when it is ahead.")
+            Text("Start before shooting. Keep Vintage LUMIX Sync open while recording on Mac. Use a positive adjustment when the camera is behind the Mac, or a negative one when it is ahead.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

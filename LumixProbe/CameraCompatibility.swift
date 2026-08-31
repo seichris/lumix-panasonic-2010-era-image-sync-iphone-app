@@ -4,7 +4,7 @@ struct CameraCompatibilityView: View {
     var body: some View {
         List {
             Section {
-                Text("GM1 Sync is being validated on the GM family first. The other cameras are candidates because Panasonic lists them in the same Image App ecosystem; inclusion does not mean compatibility has been confirmed.")
+                Text("Vintage LUMIX Sync is being validated on the GM family first. The other cameras are candidates because Panasonic lists them in the same Image App ecosystem; inclusion does not mean compatibility has been confirmed.")
                     .font(.subheadline)
             }
 
@@ -22,7 +22,7 @@ struct CameraCompatibilityView: View {
 
             Section("About this list") {
                 Text("Dates are approximate model-introduction eras based on Panasonic's Image App support history, not exact manufacturing spans.")
-                Text("Panasonic, LUMIX, and the camera model names belong to their respective owner. GM1 Sync is independent software and is not affiliated with or endorsed by Panasonic.")
+                Text("Panasonic, LUMIX, and the camera model names belong to their respective owner. Vintage LUMIX Sync is independent software and is not affiliated with or endorsed by Panasonic.")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -154,7 +154,7 @@ enum CameraCompatibilityCatalog {
         ),
         CameraCandidateSection(
             title: "Recent Image App compacts · 2025–2026",
-            detail: "Panasonic still lists these with Image App, but GM1 Sync does not assume they share the legacy protocol.",
+            detail: "Panasonic still lists these with Image App, but Vintage LUMIX Sync does not assume they share the legacy protocol.",
             cameras: [
                 camera("Panasonic DC-TZ99 / ZS99", "Introduced c. 2025", .laterCandidate),
                 camera("Panasonic DC-TZ300 / ZS300", "Introduced c. 2026", .laterCandidate)

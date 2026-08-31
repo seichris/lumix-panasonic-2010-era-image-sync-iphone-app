@@ -58,7 +58,7 @@ struct AppIconPickerView: View {
 #if os(iOS)
         List {
             Section {
-                Text("Choose how GM1 Sync appears on your Home Screen. Your selection can be changed again at any time.")
+                Text("Choose how Vintage LUMIX Sync appears on your Home Screen. Your selection can be changed again at any time.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -119,7 +119,7 @@ struct AppIconPickerView: View {
         ContentUnavailableView(
             "Blue Camera icon",
             systemImage: "app.fill",
-            description: Text("GM1 Sync uses the Blue Camera logo on Mac. Alternate icon choices are available on iPhone.")
+            description: Text("Vintage LUMIX Sync uses the Blue Camera logo on Mac. Alternate icon choices are available on iPhone.")
         )
         .navigationTitle("App Icon")
 #endif

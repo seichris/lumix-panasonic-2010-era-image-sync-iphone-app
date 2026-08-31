@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>GM1 Sync</string>
+	<string>Vintage LUMIX Sync</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.1</string>
+	<string>1.0.3</string>
     <key>CFBundleVersion</key>
-    <string>13</string>
+    <string>15</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
@@ -30,15 +30,15 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>GM1 Sync scans the QR code shown by your camera to join its Wi-Fi network.</string>
+	<string>Vintage LUMIX Sync scans the QR code shown by your camera to join its Wi-Fi network.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>GM1 Sync connects directly to your camera over its local Wi-Fi network.</string>
+	<string>Vintage LUMIX Sync connects directly to your camera over its local Wi-Fi network.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>GM1 Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
+	<string>Vintage LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>GM1 Sync can save original photos and videos downloaded from your camera to your photo library.</string>
+	<string>Vintage LUMIX Sync can save original photos and videos downloaded from your camera to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>GM1 Sync checks which original camera photos and videos are already in your library so it can avoid downloading duplicates.</string>
+	<string>Vintage LUMIX Sync checks which original camera photos and videos are already in your library so it can avoid downloading duplicates.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
