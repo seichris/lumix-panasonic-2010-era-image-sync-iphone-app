@@ -63,6 +63,11 @@ struct ContentView: View {
                 model.startGeotaggingIfEnabled()
                 await model.refreshConnectionStatus(waitingForRememberedCamera: true)
             }
+            .onOpenURL { url in
+                guard model.handleLocationTrackingURL(url) else { return }
+                presentedSheet = nil
+                isShowingSettings = false
+            }
             .onChange(of: model.isCameraConnected) { _, isConnected in
                 guard !isConnected else { return }
                 Task { await galleryStore.resetForReconnect() }

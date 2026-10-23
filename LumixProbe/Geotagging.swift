@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 #if os(iOS)
 import Photos
+import WidgetKit
 #endif
 
 struct LocationSample: Codable, Hashable, Identifiable, Sendable {
@@ -330,14 +331,19 @@ enum PhotoOriginalMetadataReader {
 @MainActor
 final class GeotagLocationLogger: NSObject, ObservableObject {
     @Published private(set) var samples: [LocationSample] = []
-    @Published private(set) var isLogging = false
+    @Published private(set) var isLogging = false {
+        didSet { publishWidgetState() }
+    }
+    private(set) var wasManuallyStopped = false
     @Published private(set) var startedAt: Date?
     @Published private(set) var statusMessage = "Location logging is off."
     @Published private(set) var authorizationStatus: CLAuthorizationStatus
 
     private let manager = CLLocationManager()
     private let storageURL: URL
-    private var shouldStartAfterAuthorization = false
+    private var shouldStartAfterAuthorization = false {
+        didSet { publishWidgetState() }
+    }
     private var lastPersistedAt = Date.distantPast
 
     override init() {
@@ -355,6 +361,7 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
         manager.distanceFilter = 5
         manager.pausesLocationUpdatesAutomatically = false
         loadTrack()
+        publishWidgetState()
     }
 
     var latestSample: LocationSample? { samples.last }
@@ -368,6 +375,7 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
     }
 
     func start() {
+        wasManuallyStopped = false
         guard CLLocationManager.locationServicesEnabled() else {
 #if os(iOS)
             statusMessage = "Location Services are disabled in iPhone Settings."
@@ -392,6 +400,7 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
     }
 
     func stop() {
+        wasManuallyStopped = true
         shouldStartAfterAuthorization = false
         manager.stopUpdatingLocation()
 #if os(iOS)
@@ -402,6 +411,15 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
             ? "Location log stopped without any usable samples."
             : "Location log stopped with \(samples.count) samples."
         persistTrack()
+    }
+
+    private func publishWidgetState() {
+#if os(iOS)
+        let state: LocationTrackingWidgetState = isLogging
+            ? .recording : (shouldStartAfterAuthorization ? .awaitingPermission : .off)
+        state.save()
+        WidgetCenter.shared.reloadTimelines(ofKind: LocationTrackingWidgetState.kind)
+#endif
     }
 
     func clear() {
@@ -471,7 +489,8 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
     }
 
     private func accept(_ location: CLLocation) {
-        guard location.horizontalAccuracy >= 0,
+        guard isLogging,
+              location.horizontalAccuracy >= 0,
               location.horizontalAccuracy <= LocationTrackMatcher.maximumUsableAccuracy,
               abs(location.timestamp.timeIntervalSinceNow) <= 120 else { return }
 
@@ -517,6 +536,10 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
 extension GeotagLocationLogger: @preconcurrency CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
+        if isLogging, authorizationStatus == .denied || authorizationStatus == .restricted {
+            stop()
+            statusMessage = "Location permission was not granted."
+        }
         guard shouldStartAfterAuthorization else { return }
 
         switch manager.authorizationStatus {

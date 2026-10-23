@@ -9,6 +9,28 @@ final class LumixProbeUITests: XCTestCase {
         app.launchArguments = ["-UITestNoRememberedCamera"]
     }
 
+    func testWidgetStartAndStopLinksControlLocationLogging() throws {
+        let permissionMonitor = addUIInterruptionMonitor(withDescription: "Location permission") { alert in
+            let allow = alert.buttons["Allow While Using App"]
+            guard allow.exists else { return false }
+            allow.tap()
+            return true
+        }
+        defer { removeUIInterruptionMonitor(permissionMonitor) }
+        app.launch()
+
+        app.open(URL(string: "gm1sync://tracking/start")!)
+        // Trigger interruption handling if this is the first location request.
+        app.tap()
+        XCTAssertTrue(app.buttons["stop-location-log"].waitForExistence(timeout: 10))
+
+        app.open(URL(string: "gm1sync://tracking/stop")!)
+        XCTAssertTrue(app.buttons["start-location-log"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["stop-location-log"].exists)
+        app.activate()
+        XCTAssertTrue(app.buttons["start-location-log"].exists)
+    }
+
     func testRememberedCameraReconnectAppearsAlongsideQRCodeScanner() throws {
         app.launchArguments = ["-UITestRememberedCamera"]
         app.launch()

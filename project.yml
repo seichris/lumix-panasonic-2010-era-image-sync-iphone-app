@@ -16,6 +16,9 @@ targets:
         excludes:
           - Info.plist
           - MacInfo.plist
+      - path: Shared
+    dependencies:
+      - target: LocationTrackingWidget
     info:
       path: LumixProbe/Info.plist
       properties:
@@ -34,6 +37,10 @@ targets:
         NSLocationWhenInUseUsageDescription: Retro LUMIX Sync records a visible location track while you take photos so downloaded camera images can be geotagged.
         NSPhotoLibraryAddUsageDescription: Retro LUMIX Sync can save original photos and videos downloaded from your camera to your photo library.
         NSPhotoLibraryUsageDescription: Retro LUMIX Sync checks which original camera photos and videos are already in your library so it can avoid downloading duplicates.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.web3.gm1sync.tracking
+            CFBundleURLSchemes:
+              - gm1sync
         UIBackgroundModes:
           - location
         NSAppTransportSecurity:
@@ -42,6 +49,8 @@ targets:
       path: LumixProbe/LumixProbe.entitlements
       properties:
         com.apple.developer.networking.HotspotConfiguration: true
+        com.apple.security.application-groups:
+          - group.com.web3.gm1sync
     settings:
       base:
         DEVELOPMENT_TEAM: 4H5PK8686H
@@ -53,6 +62,35 @@ targets:
         PRODUCT_NAME: GM1Sync
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
+  LocationTrackingWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: LocationTrackingWidget
+        excludes:
+          - Info.plist
+          - LocationTrackingWidget.entitlements
+      - path: Shared
+    info:
+      path: LocationTrackingWidget/Info.plist
+      properties:
+        CFBundleDisplayName: Geotagging
+        CFBundleShortVersionString: "1.0.3"
+        CFBundleVersion: "16"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: LocationTrackingWidget/LocationTrackingWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.web3.gm1sync
+    settings:
+      base:
+        DEVELOPMENT_TEAM: 4H5PK8686H
+        PRODUCT_BUNDLE_IDENTIFIER: com.web3.gm1sync.tracking-widget
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
   GM1SyncMac:
     type: application
     platform: macOS
@@ -67,6 +105,7 @@ targets:
           - CameraImport.swift
           - DemoCameraGalleryClient.swift
           - ManualWiFiJoinSheet.swift
+      - path: Shared
     info:
       path: LumixProbe/MacInfo.plist
       properties:

@@ -1,6 +1,6 @@
 # Retro LUMIX Sync Privacy Policy
 
-Last updated: August 14, 2026
+Last updated: October 23, 2026
 
 Retro LUMIX Sync does not collect, transmit, sell, or share personal data with WEB3 FZCO or third parties. The app has no advertising, analytics, tracking, accounts, or cloud service.
 
@@ -14,7 +14,7 @@ When the user chooses to import an image or supported video, Retro LUMIX Sync ad
 
 ## Location
 
-Location logging is off by default and begins only when the user taps **Start location log**. Location samples are stored locally on the iPhone so imported camera photos can receive a matching location. Users may also import a Google Maps `location-history.json` export from Files or the clipboard; it is parsed and merged locally, without signing in to Google or uploading the file. Users can select images in the camera gallery, search Apple Maps, and save a manual location override; those overrides are stored locally and attached to the Photos asset only when the image is imported. The user can stop logging, delete the saved track, or delete the app at any time. Location data is never sent to WEB3 FZCO or a third party.
+Location logging is off by default. The user can start or stop it in the app or through the Geotagging Home Screen widget, and can optionally enable automatic start when opening the app. The widget shares only the logging status with the app through an on-device App Group; it does not read location samples or coordinates. Location samples are stored locally on the iPhone so imported camera photos can receive a matching location. Users may also import a Google Maps `location-history.json` export from Files or the clipboard; it is parsed and merged locally, without signing in to Google or uploading the file. Users can select images in the camera gallery, search Apple Maps, and save a manual location override; those overrides are stored locally and attached to the Photos asset only when the image is imported. The user can stop logging, delete the saved track, or delete the app at any time. Location data is never sent to WEB3 FZCO or a third party.
 
 ## Diagnostics
 
