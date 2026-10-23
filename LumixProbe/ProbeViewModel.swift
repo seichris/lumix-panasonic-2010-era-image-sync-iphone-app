@@ -82,8 +82,18 @@ final class ProbeViewModel: ObservableObject {
     }
 
     func startGeotaggingIfEnabled() {
-        guard autoStartGeotagging else { return }
+        guard autoStartGeotagging, !locationLogger.wasManuallyStopped else { return }
         locationLogger.start()
+    }
+
+    @discardableResult
+    func handleLocationTrackingURL(_ url: URL) -> Bool {
+        guard let action = LocationTrackingAction(url: url) else { return false }
+        switch action {
+        case .start: locationLogger.start()
+        case .stop: locationLogger.stop()
+        }
+        return true
     }
 
     func refreshConnectionStatus(waitingForRememberedCamera: Bool = false) async {

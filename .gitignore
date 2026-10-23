@@ -1,6 +1,6 @@
 LumixProbe.xcodeproj/
 .DS_Store
-DerivedData/
+DerivedData*/
 .build/
 *.xcresult
 *.xcarchive

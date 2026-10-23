@@ -110,6 +110,61 @@ final class GeotaggingTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: "autoStartGeotagging"))
     }
 
+    func testWidgetActionsRoundTripAndRejectUnrelatedURLs() {
+        XCTAssertEqual(LocationTrackingAction(url: LocationTrackingAction.start.url), .start)
+        XCTAssertEqual(LocationTrackingAction(url: LocationTrackingAction.stop.url), .stop)
+        for value in ["https://tracking/start", "gm1sync://other/stop", "gm1sync://tracking/toggle",
+                      "gm1sync://tracking/start?unexpected=true", "gm1sync://tracking/start/extra"] {
+            XCTAssertNil(LocationTrackingAction(url: URL(string: value)!))
+        }
+    }
+
+    func testWidgetStatePersistsWithoutSharingTheLocationTrack() {
+        let suiteName = "WidgetStateTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertEqual(LocationTrackingWidgetState.read(from: defaults), .off)
+        LocationTrackingWidgetState.recording.save(to: defaults)
+        XCTAssertEqual(LocationTrackingWidgetState.read(from: defaults), .recording)
+        XCTAssertEqual(LocationTrackingWidgetState.read(from: defaults).action, .stop)
+        LocationTrackingWidgetState.awaitingPermission.save(to: defaults)
+        XCTAssertEqual(LocationTrackingWidgetState.read(from: defaults).action, .stop)
+        LocationTrackingWidgetState.off.save(to: defaults)
+        XCTAssertEqual(LocationTrackingWidgetState.read(from: defaults).action, .start)
+    }
+
+    @MainActor
+    func testWidgetStopWinsOverAutoStartWhenTheAppBecomesActive() {
+        let suiteName = "WidgetStopTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "autoStartGeotagging")
+        let model = ProbeViewModel(defaults: defaults, cameraNetworkStore: EmptyCameraNetworkStore())
+
+        XCTAssertTrue(model.handleLocationTrackingURL(LocationTrackingAction.stop.url))
+        model.startGeotaggingIfEnabled()
+        model.startGeotaggingIfEnabled()
+
+        XCTAssertFalse(model.locationLogger.isLogging)
+        XCTAssertTrue(model.locationLogger.wasManuallyStopped)
+        XCTAssertTrue(model.autoStartGeotagging)
+        XCTAssertFalse(model.handleLocationTrackingURL(URL(string: "gm1sync://other/stop")!))
+    }
+
+    @MainActor
+    func testQueuedLocationUpdateAfterStopIsIgnored() {
+        let logger = GeotagLocationLogger()
+        logger.stop()
+        let previousSamples = logger.samples
+        logger.locationManager(CLLocationManager(), didUpdateLocations: [
+            CLLocation(coordinate: CLLocationCoordinate2D(latitude: 1, longitude: 103),
+                       altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: .now)
+        ])
+        XCTAssertEqual(logger.samples, previousSamples)
+        XCTAssertFalse(logger.isLogging)
+    }
+
     private func sample(
         at timestamp: TimeInterval,
         latitude: Double,

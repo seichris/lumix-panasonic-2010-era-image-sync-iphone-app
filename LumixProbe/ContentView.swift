@@ -63,6 +63,11 @@ struct ContentView: View {
                 model.startGeotaggingIfEnabled()
                 await model.refreshConnectionStatus(waitingForRememberedCamera: true)
             }
+            .onOpenURL { url in
+                guard model.handleLocationTrackingURL(url) else { return }
+                presentedSheet = nil
+                isShowingSettings = false
+            }
             .onChange(of: model.isCameraConnected) { _, isConnected in
                 guard !isConnected else { return }
                 Task { await galleryStore.resetForReconnect() }
@@ -181,6 +186,9 @@ private struct AppSettingsView: View {
 
     var body: some View {
         List {
+            Section("Geotagging") {
+                LocationTrackingWidgetSetupButton()
+            }
             Section("Connection") {
                 Label(
                     model.isCameraConnected ? "Connected to camera" : model.connectionStatusMessage,
@@ -389,6 +397,8 @@ private struct GeotaggingControls: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            LocationTrackingWidgetSetupButton()
 
             Toggle(isOn: $autoStartGeotagging) {
                 Label("Start geotagging on app start", systemImage: "location.fill.viewfinder")
