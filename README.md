@@ -55,7 +55,9 @@ The protocol is unofficial and can vary by camera model and firmware.
 
 ## Geotagging
 
-On iPhone, add the **Geotagging** Home Screen widget from Retro LUMIX Sync. Tap it to turn location tracking on, then tap it again to turn tracking off. Each tap opens the app and applies the action automatically; the first start asks for location permission if needed. Stopping keeps your saved track for later photo imports. A manual stop stays off when returning to the app, even with automatic start enabled, until you start tracking again or relaunch the app.
+On iPhone, tap **Add Home Screen widget** beside the geotagging controls or in Settings for a widget preview and setup guide. On iOS 18 or later, touch and hold the Retro LUMIX Sync app icon on the Home Screen, then choose the small widget. The guide also includes the widget-gallery route for other versions or layouts. iOS requires adding the widget from the Home Screen; the app cannot place it automatically.
+
+Tap the **Geotagging** widget to turn location tracking on, then tap it again to turn tracking off. Each tap opens the app and applies the action automatically; the first start asks for location permission if needed. Stopping keeps your saved track for later photo imports. A manual stop stays off when returning to the app, even with automatic start enabled, until you start tracking again or relaunch the app.
 
 The widget shares only the logging status with the app, never coordinates or location samples. Its display refreshes after changes made in the app. iOS controls when widget refreshes appear, so the displayed status can lag behind the app, including after force-quitting it.
 
@@ -84,6 +86,8 @@ open LumixProbe.xcodeproj
 Select your own Apple development team in Xcode before installing on a physical iPhone. If you are not signing for the published app, also replace the bundle identifiers with identifiers owned by your team. A physical device is required to validate Hotspot Configuration, camera networking, Photos import, and real-camera protocol behavior. Unit and simulator UI tests can run without a camera.
 
 The iPhone app embeds a `LocationTrackingWidget` extension. For device signing, provision the extension bundle ID and enable the same App Group (`group.com.web3.gm1sync`) for both the app and extension. When using your own bundle identifiers, update the group identifier in `project.yml` and `Shared/LocationTrackingWidgetState.swift` as well.
+
+Keep ad hoc code signing enabled when testing the widget in Simulator. A build with `CODE_SIGNING_ALLOWED=NO` can compile successfully while omitting the App Group entitlement, preventing the app and widget from sharing tracking status.
 
 The generated project also contains a native `GM1SyncMac` target. Build it with:
 

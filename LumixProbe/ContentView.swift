@@ -186,6 +186,9 @@ private struct AppSettingsView: View {
 
     var body: some View {
         List {
+            Section("Geotagging") {
+                LocationTrackingWidgetSetupButton()
+            }
             Section("Connection") {
                 Label(
                     model.isCameraConnected ? "Connected to camera" : model.connectionStatusMessage,
@@ -394,6 +397,8 @@ private struct GeotaggingControls: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            LocationTrackingWidgetSetupButton()
 
             Toggle(isOn: $autoStartGeotagging) {
                 Label("Start geotagging on app start", systemImage: "location.fill.viewfinder")

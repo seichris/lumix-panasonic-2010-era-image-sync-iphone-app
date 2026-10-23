@@ -30,4 +30,12 @@ enum LocationTrackingWidgetState: String {
     }
 
     var action: LocationTrackingAction { self == .off ? .start : .stop }
+
+    var title: String {
+        switch self {
+        case .off: "Off"
+        case .recording: "On"
+        case .awaitingPermission: "Needs permission"
+        }
+    }
 }
