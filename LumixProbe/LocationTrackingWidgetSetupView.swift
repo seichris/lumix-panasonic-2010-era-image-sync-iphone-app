@@ -11,7 +11,7 @@ struct LocationTrackingWidgetSetupButton: View {
         } label: {
             Label {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Add Home Screen widget")
+                    Text("Add geotagging widget to home screen")
                     Text("One tap on. One tap off.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -79,7 +79,7 @@ struct LocationTrackingWidgetSetupView: View {
                 .padding(24)
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("Add Home Screen widget")
+            .navigationTitle("Add geotagging widget to home screen")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

@@ -55,7 +55,7 @@ The protocol is unofficial and can vary by camera model and firmware.
 
 ## Geotagging
 
-On iPhone, tap **Add Home Screen widget** beside the geotagging controls or in Settings for a widget preview and setup guide. On iOS 18 or later, touch and hold the Retro LUMIX Sync app icon on the Home Screen, then choose the small widget. The guide also includes the widget-gallery route for other versions or layouts. iOS requires adding the widget from the Home Screen; the app cannot place it automatically.
+On iPhone, tap **Add geotagging widget to home screen** beside the geotagging controls or in Settings for a widget preview and setup guide. On iOS 18 or later, touch and hold the Retro LUMIX Sync app icon on the Home Screen, then choose the small widget. The guide also includes the widget-gallery route for other versions or layouts. iOS requires adding the widget from the Home Screen; the app cannot place it automatically.
 
 Tap the **Geotagging** widget to turn location tracking on, then tap it again to turn tracking off. Each tap opens the app and applies the action automatically; the first start asks for location permission if needed. Stopping keeps your saved track for later photo imports. A manual stop stays off when returning to the app, even with automatic start enabled, until you start tracking again or relaunch the app.
 
