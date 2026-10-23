@@ -23,8 +23,8 @@ targets:
       path: LumixProbe/Info.plist
       properties:
         CFBundleDisplayName: Retro LUMIX Sync
-        CFBundleShortVersionString: "1.0.3"
-        CFBundleVersion: "16"
+        CFBundleShortVersionString: "1.0.4"
+        CFBundleVersion: "17"
         ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         UIRequiredDeviceCapabilities:
@@ -75,8 +75,8 @@ targets:
       path: LocationTrackingWidget/Info.plist
       properties:
         CFBundleDisplayName: Geotagging
-        CFBundleShortVersionString: "1.0.3"
-        CFBundleVersion: "16"
+        CFBundleShortVersionString: "1.0.4"
+        CFBundleVersion: "17"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
