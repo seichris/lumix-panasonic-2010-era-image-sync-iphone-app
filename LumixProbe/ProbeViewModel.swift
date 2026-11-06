@@ -26,7 +26,10 @@ final class ProbeViewModel: ObservableObject {
     private let defaults: UserDefaults
     private let wifiConnector = LumixWiFiConnector()
     private let cameraNetworkStore: any CameraNetworkStoring
-    private let usesConnectedUITestFixture: Bool
+    private let checkCamera: @Sendable (String, TimeInterval?) async throws -> Bool
+    private var connectionAttempt = UUID()
+    private var joiningWiFi = false
+    private let simulatedConnection: Bool?
     let locationLogger: GeotagLocationLogger
     private var client: LumixClient { LumixClient(host: host.trimmingCharacters(in: .whitespacesAndNewlines)) }
     private static let cameraClockOffsetKey = "cameraClockOffsetMinutes"
@@ -35,13 +38,24 @@ final class ProbeViewModel: ObservableObject {
     init(
         defaults: UserDefaults = .standard,
         locationLogger: GeotagLocationLogger? = nil,
-        cameraNetworkStore: any CameraNetworkStoring = KeychainCameraNetworkStore()
+        cameraNetworkStore: any CameraNetworkStoring = KeychainCameraNetworkStore(),
+        checkCamera: @escaping @Sendable (String, TimeInterval?) async throws -> Bool = { host, timeout in
+            let response = try await LumixClient(host: host).getState(timeoutInterval: timeout)
+            return response.text.contains("<result>ok</result>")
+        }
     ) {
         self.defaults = defaults
         self.locationLogger = locationLogger ?? GeotagLocationLogger()
         self.cameraNetworkStore = cameraNetworkStore
+        self.checkCamera = checkCamera
         let launchArguments = ProcessInfo.processInfo.arguments
-        usesConnectedUITestFixture = launchArguments.contains("-UITestConnectedGallery")
+        if launchArguments.contains("-UITestConnectedGallery") {
+            simulatedConnection = true
+        } else if launchArguments.contains("-UITestDisconnected") {
+            simulatedConnection = false
+        } else {
+            simulatedConnection = nil
+        }
         cameraClockOffsetMinutes = defaults.object(forKey: Self.cameraClockOffsetKey) as? Double ?? 0
         autoStartGeotagging = defaults.bool(forKey: Self.autoStartGeotaggingKey)
 #if os(iOS)
@@ -75,9 +89,9 @@ final class ProbeViewModel: ObservableObject {
             }
         }
 
-        if usesConnectedUITestFixture {
-            isCameraConnected = true
-            connectionStatusMessage = "Camera connected"
+        if let simulatedConnection {
+            isCameraConnected = simulatedConnection
+            connectionStatusMessage = simulatedConnection ? "Camera connected" : disconnectedMessage
         }
     }
 
@@ -97,12 +111,16 @@ final class ProbeViewModel: ObservableObject {
     }
 
     func refreshConnectionStatus(waitingForRememberedCamera: Bool = false) async {
-        if usesConnectedUITestFixture {
-            isCameraConnected = true
-            connectionStatusMessage = "Camera connected"
+        guard !joiningWiFi else { return }
+        if let simulatedConnection {
+            isCameraConnected = simulatedConnection
+            connectionStatusMessage = simulatedConnection ? "Camera connected" : disconnectedMessage
             return
         }
 
+        let id = UUID()
+        connectionAttempt = id
+        let target = host.trimmingCharacters(in: .whitespacesAndNewlines)
         let attempts = waitingForRememberedCamera && rememberedCameraNetwork != nil ? 6 : 1
         if let rememberedCameraNetwork, attempts > 1 {
             connectionStatusMessage = "Looking for \(rememberedCameraNetwork.ssid)…"
@@ -112,8 +130,9 @@ final class ProbeViewModel: ObservableObject {
 
         for attempt in 0..<attempts {
             do {
-                let response = try await client.getState(timeoutInterval: 1.5)
-                if response.text.contains("<result>ok</result>") {
+                let reachable = try await checkCamera(target, 1.5)
+                guard isCurrentConnectionAttempt(id, host: target) else { return }
+                if reachable {
                     isCameraConnected = true
                     connectionStatusMessage = "Camera connected"
                     print("[GM1Sync] Camera connection check: reachable")
@@ -121,28 +140,30 @@ final class ProbeViewModel: ObservableObject {
                 }
                 print("[GM1Sync] Camera connection check: unexpected response")
             } catch {
+                guard isCurrentConnectionAttempt(id, host: target) else { return }
                 print("[GM1Sync] Camera connection check: unreachable (\(error.localizedDescription))")
             }
 
             if attempt < attempts - 1 {
                 try? await Task.sleep(for: .seconds(1))
+                guard isCurrentConnectionAttempt(id, host: target) else { return }
             }
         }
 
         isCameraConnected = false
-        if rememberedCameraNetwork != nil {
-            connectionStatusMessage = "Turn on your camera and reconnect Wi-Fi."
-        } else {
-            connectionStatusMessage = "Join the Wi-Fi network shown by the camera."
-        }
+        connectionStatusMessage = disconnectedMessage
+    }
+
+    private var disconnectedMessage: String {
+        rememberedCameraNetwork == nil
+            ? "Join the Wi-Fi network shown by the camera."
+            : "Turn on your camera and reconnect Wi-Fi."
     }
 
     func joinCameraWiFi(qrPayload: String) async {
         do {
             let credentials = try LumixWiFiCredentials(qrPayload: qrPayload)
-            let ssid = try await wifiConnector.join(using: credentials)
-            remember(credentials)
-            await waitForCamera(afterJoining: ssid)
+            try await join(credentials, rememberOnSuccess: true)
         } catch {
             isCameraConnected = false
             connectionStatusMessage = error.localizedDescription
@@ -153,9 +174,7 @@ final class ProbeViewModel: ObservableObject {
     func joinCameraWiFi(ssid: String, password: String?, isWEP: Bool) async {
         do {
             let credentials = try LumixWiFiCredentials(ssid: ssid, password: password, isWEP: isWEP)
-            let joinedSSID = try await wifiConnector.join(using: credentials)
-            remember(credentials)
-            await waitForCamera(afterJoining: joinedSSID)
+            try await join(credentials, rememberOnSuccess: true)
         } catch {
             isCameraConnected = false
             connectionStatusMessage = error.localizedDescription
@@ -171,8 +190,7 @@ final class ProbeViewModel: ObservableObject {
 
         do {
             connectionStatusMessage = "Reconnecting to \(rememberedCameraNetwork.ssid)…"
-            let ssid = try await wifiConnector.join(using: rememberedCameraNetwork.credentials)
-            await waitForCamera(afterJoining: ssid)
+            try await join(rememberedCameraNetwork.credentials, rememberOnSuccess: false)
         } catch {
             isCameraConnected = false
             connectionStatusMessage = error.localizedDescription
@@ -182,6 +200,8 @@ final class ProbeViewModel: ObservableObject {
 
     func forgetRememberedCamera() {
         guard let network = rememberedCameraNetwork else { return }
+        connectionAttempt = UUID()
+        joiningWiFi = false
         wifiConnector.removeConfiguration(forSSID: network.ssid)
 
         do {
@@ -294,14 +314,19 @@ final class ProbeViewModel: ObservableObject {
         }
     }
 
-    func saveDownloadedToPhotos() {
+    func saveDownloadedOriginal() {
         guard let photo = downloadedPhoto else { append("No downloaded file yet."); return }
         guard !isSavingPhoto else { return }
-        let match = geotagMatch(for: photo)
         isSavingPhoto = true
         Task {
             defer { isSavingPhoto = false }
             do {
+#if os(macOS)
+                let destination = try await MacOriginalExporter.copy(fileURL: photo.fileURL, originalFilename: photo.originalFilename)
+                lastResult = "Copied \(destination.lastPathComponent) to Downloads"
+                append(lastResult)
+#else
+                let match = geotagMatch(for: photo)
                 try await PhotosOriginalImporter.save(
                     fileURL: photo.fileURL,
                     originalFilename: photo.originalFilename,
@@ -315,9 +340,14 @@ final class ProbeViewModel: ObservableObject {
                     append("Saved untouched original to Photos without a matched location.")
                     lastResult = "Photo saved without location"
                 }
+#endif
             } catch {
-                append("Photos import ERROR: \(error.localizedDescription)")
+#if os(macOS)
+                lastResult = "Copy to Downloads failed"
+#else
                 lastResult = "Save to Photos failed"
+#endif
+                append("\(lastResult): \(error.localizedDescription)")
             }
         }
     }
@@ -356,20 +386,41 @@ final class ProbeViewModel: ObservableObject {
         }
     }
 
-    private func waitForCamera(afterJoining ssid: String) async {
+    private func isCurrentConnectionAttempt(_ id: UUID, host target: String) -> Bool {
+        !Task.isCancelled && connectionAttempt == id && target == host.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func join(_ credentials: LumixWiFiCredentials, rememberOnSuccess: Bool) async throws {
+        guard !joiningWiFi else { return }
+        let id = UUID()
+        connectionAttempt = id
+        joiningWiFi = true
+        defer { if connectionAttempt == id { joiningWiFi = false } }
+        let target = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ssid: String
+        do {
+            ssid = try await wifiConnector.join(using: credentials)
+        } catch {
+            guard isCurrentConnectionAttempt(id, host: target) else { return }
+            throw error
+        }
+        guard isCurrentConnectionAttempt(id, host: target) else { return }
+        if rememberOnSuccess { remember(credentials) }
         connectionStatusMessage = "Joining \(ssid)…"
 
         for _ in 0..<12 {
             try? await Task.sleep(for: .seconds(1))
+            guard isCurrentConnectionAttempt(id, host: target) else { return }
             do {
-                let response = try await client.getState()
-                guard response.text.contains("<result>ok</result>") else { continue }
+                let reachable = try await checkCamera(target, nil)
+                guard isCurrentConnectionAttempt(id, host: target) else { return }
+                guard reachable else { continue }
                 isCameraConnected = true
                 connectionStatusMessage = "Camera connected"
                 append("Joined camera Wi-Fi and reached the camera.")
                 return
             } catch {
-                continue
+                guard isCurrentConnectionAttempt(id, host: target) else { return }
             }
         }
 

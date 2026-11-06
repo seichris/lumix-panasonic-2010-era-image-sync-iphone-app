@@ -162,11 +162,13 @@ enum LocationTrackMatcher {
                 after.timestamp.timeIntervalSince(adjustedCaptureDate)
             )
 
+            let longitudeDelta = (after.longitude - before.longitude).remainder(dividingBy: 360)
+            let longitude = (before.longitude + progress * longitudeDelta).remainder(dividingBy: 360)
             return GeotagMatch(
                 captureDate: captureDate,
                 adjustedCaptureDate: adjustedCaptureDate,
                 latitude: interpolate(before.latitude, after.latitude, progress: progress),
-                longitude: interpolate(before.longitude, after.longitude, progress: progress),
+                longitude: longitude,
                 altitude: interpolate(before.altitude, after.altitude, progress: progress),
                 horizontalAccuracy: accuracy,
                 nearestSampleTimeDifference: nearestDifference,
@@ -261,8 +263,8 @@ enum PhotoCaptureDateReader {
         guard components.count == 2,
               let hours = Int(components[0]),
               let minutes = Int(components[1]),
-              hours <= 23,
-              minutes <= 59 else { return nil }
+              (0...23).contains(hours),
+              (0...59).contains(minutes) else { return nil }
         return TimeZone(secondsFromGMT: sign * ((hours * 60 + minutes) * 60))
     }
 }
@@ -309,7 +311,7 @@ enum PhotoOriginalMetadataReader {
         guard abs(latitude) <= 90, abs(longitude) <= 180 else { return nil }
 
         let rawAltitude = number(gps[kCGImagePropertyGPSAltitude]) ?? 0
-        let altitudeReference = Int(number(gps[kCGImagePropertyGPSAltitudeRef]) ?? 0)
+        let altitudeReference = number(gps[kCGImagePropertyGPSAltitudeRef])
         let altitude = altitudeReference == 1 ? -abs(rawAltitude) : rawAltitude
         let accuracy = number(gps[kCGImagePropertyGPSHPositioningError]) ?? -1
 
@@ -346,12 +348,16 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
     }
     private var lastPersistedAt = Date.distantPast
 
-    override init() {
+    override convenience init() {
         let supportDirectory = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         )[0]
-        storageURL = supportDirectory.appendingPathComponent("GM1Sync-location-track.json")
+        self.init(storageURL: supportDirectory.appendingPathComponent("GM1Sync-location-track.json"))
+    }
+
+    init(storageURL: URL) {
+        self.storageURL = storageURL
         authorizationStatus = manager.authorizationStatus
         super.init()
 
@@ -427,13 +433,20 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
             statusMessage = "Stop location logging before clearing the track."
             return
         }
+        do {
+            try FileManager.default.removeItem(at: storageURL)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            // An empty track may never have been written.
+        } catch {
+            statusMessage = "Could not clear the saved location track: \(error.localizedDescription)"
+            return
+        }
         samples = []
         startedAt = nil
-        try? FileManager.default.removeItem(at: storageURL)
         statusMessage = "Location track cleared."
     }
 
-    func importSamples(_ importedSamples: [LocationSample]) {
+    func importSamples(_ importedSamples: [LocationSample]) throws {
         let usable = importedSamples.filter {
             $0.timestamp.timeIntervalSince1970.isFinite &&
                 $0.latitude.isFinite &&
@@ -444,8 +457,7 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
                 $0.horizontalAccuracy <= LocationTrackMatcher.maximumUsableAccuracy
         }
         guard !usable.isEmpty else {
-            statusMessage = "The imported location track contained no usable samples."
-            return
+            throw GoogleTimelineImporter.ImportError.noUsableLocations
         }
 
         let combined = (samples + usable).sorted { $0.timestamp < $1.timestamp }
@@ -465,9 +477,9 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
         if merged.count > 20_000 {
             merged.removeFirst(merged.count - 20_000)
         }
+        try writeTrack(merged)
         samples = merged
         statusMessage = "Imported \(usable.count) location samples from Google Timeline."
-        persistTrack()
     }
 
     private func beginUpdates() {
@@ -522,14 +534,18 @@ final class GeotagLocationLogger: NSObject, ObservableObject {
 
     private func persistTrack() {
         do {
-            let directory = storageURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(samples)
-            try data.write(to: storageURL, options: .atomic)
-            lastPersistedAt = Date()
+            try writeTrack(samples)
         } catch {
             statusMessage = "Could not save the location track: \(error.localizedDescription)"
         }
+    }
+
+    private func writeTrack(_ track: [LocationSample]) throws {
+        let directory = storageURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(track)
+        try data.write(to: storageURL, options: .atomic)
+        lastPersistedAt = Date()
     }
 }
 
@@ -600,9 +616,7 @@ enum PhotosOriginalImporter {
     }
 }
 #else
-/// macOS does not use the iOS Photos-library import flow. The downloaded
-/// original is copied byte-for-byte to the user's Downloads folder instead.
-enum PhotosOriginalImporter {
+enum MacOriginalExporter {
     enum ImportError: LocalizedError {
         case missingDownloadsDirectory
 
@@ -614,35 +628,33 @@ enum PhotosOriginalImporter {
         }
     }
 
-    static func save(
+    static func copy(
         fileURL: URL,
         originalFilename: String,
-        captureDate: Date?,
-        location: CLLocation?
-    ) async throws {
-        _ = captureDate
-        _ = location
-
-        guard FileManager.default.fileExists(atPath: fileURL.path),
-              let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
+        to downloadsURL: URL? = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+    ) async throws -> URL {
+        guard let downloadsURL else {
             throw ImportError.missingDownloadsDirectory
         }
 
         try FileManager.default.createDirectory(at: downloadsURL, withIntermediateDirectories: true)
-        let safeName = URL(fileURLWithPath: originalFilename).lastPathComponent.isEmpty
-            ? "lumix-original.jpg"
-            : URL(fileURLWithPath: originalFilename).lastPathComponent
-        var destination = downloadsURL.appendingPathComponent(safeName)
-        var suffix = 1
-        while FileManager.default.fileExists(atPath: destination.path) {
-            let stem = destination.deletingPathExtension().lastPathComponent
-            let ext = destination.pathExtension
-            let candidateName = ext.isEmpty ? "\(stem)-\(suffix)" : "\(stem)-\(suffix).\(ext)"
-            destination = downloadsURL.appendingPathComponent(candidateName)
-            suffix += 1
+        let name = (originalFilename as NSString).lastPathComponent
+        let safeName = ["", ".", "..", "/"].contains(name) ? "lumix-original.jpg" : name
+        let original = downloadsURL.appendingPathComponent(safeName)
+        let stem = original.deletingPathExtension().lastPathComponent
+        let ext = original.pathExtension
+        var destination = original
+        var suffix = 0
+        while true {
+            do {
+                try FileManager.default.copyItem(at: fileURL, to: destination)
+                return destination
+            } catch let error as CocoaError where error.code == .fileWriteFileExists {
+                suffix += 1
+                let next = ext.isEmpty ? "\(stem)-\(suffix)" : "\(stem)-\(suffix).\(ext)"
+                destination = downloadsURL.appendingPathComponent(next)
+            }
         }
-
-        try FileManager.default.copyItem(at: fileURL, to: destination)
     }
 }
 #endif

@@ -272,7 +272,8 @@ private final class PanasonicLoopbackProxy: @unchecked Sendable {
             return
         }
         let portValue = remoteURL.port ?? 80
-        guard let port = NWEndpoint.Port(rawValue: UInt16(portValue)) else {
+        guard let rawPort = UInt16(exactly: portValue), rawPort != 0,
+              let port = NWEndpoint.Port(rawValue: rawPort) else {
             sendError(502, reason: "Bad Gateway", to: local, id: localID)
             return
         }

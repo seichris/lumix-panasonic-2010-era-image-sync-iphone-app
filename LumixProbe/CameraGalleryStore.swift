@@ -154,6 +154,7 @@ final class CameraGalleryStore: ObservableObject {
 
     private let clientProvider: @MainActor () -> any CameraGalleryClient
     private let sourceIdentifierProvider: @MainActor () -> String
+    private var sourceIdentifier: String
     private var client: any CameraGalleryClient
     private let importer: any CameraMediaImporting
     private let importHistoryStore: any CameraImportHistoryStoring
@@ -164,7 +165,7 @@ final class CameraGalleryStore: ObservableObject {
     private let mediaCache: LumixMediaCache
     private let pageSize: Int
     private var nextPageRequest: PageRequest?
-    private var loadGeneration = UUID()
+    private(set) var loadGeneration = UUID()
     private var initialLoadTask: Task<Void, Never>?
     private var initialLoadTaskID: UUID?
     private var paginationTask: Task<Void, Never>?
@@ -173,7 +174,7 @@ final class CameraGalleryStore: ObservableObject {
     private var importTaskID: UUID?
     private var sessionResetTask: Task<Void, Never>?
     private var sessionResetTaskID: UUID?
-    private var reconciledImportFilenames: Set<String> = []
+    private var reconciliationTask: Task<Void, Never>?
     private struct MetadataInspectionTask {
         let id: UUID
         let photo: LumixPhoto
@@ -198,6 +199,7 @@ final class CameraGalleryStore: ObservableObject {
     ) {
         clientProvider = { client }
         sourceIdentifierProvider = { sourceIdentifier }
+        self.sourceIdentifier = sourceIdentifier
         self.client = client
         self.importer = importer
         self.importHistoryStore = importHistoryStore
@@ -227,6 +229,7 @@ final class CameraGalleryStore: ObservableObject {
     ) {
         self.clientProvider = clientProvider
         self.sourceIdentifierProvider = sourceIdentifierProvider
+        sourceIdentifier = sourceIdentifierProvider()
         client = clientProvider()
         self.importer = importer
         self.importHistoryStore = importHistoryStore
@@ -248,6 +251,7 @@ final class CameraGalleryStore: ObservableObject {
         let previewClient = DemoCameraGalleryClient(total: max(totalCount, photos.count))
         clientProvider = { previewClient }
         sourceIdentifierProvider = { "preview-camera" }
+        sourceIdentifier = "preview-camera"
         client = previewClient
         importer = SystemCameraMediaImporter()
         importHistoryStore = InMemoryCameraImportHistoryStore()
@@ -294,7 +298,7 @@ final class CameraGalleryStore: ObservableObject {
     }
 
     func manualLocationOverride(for photo: LumixPhoto) -> PhotoGeotagLocation? {
-        manualLocationOverrides[locationOverrideKey(for: photo)]
+        manualLocationOverrides[historyKey(for: photo)]
     }
 
     func setManualLocation(
@@ -311,7 +315,7 @@ final class CameraGalleryStore: ObservableObject {
 
         var updated = manualLocationOverrides
         for photo in photos where photo.kind == .photo {
-            updated[locationOverrideKey(for: photo)] = location
+            updated[historyKey(for: photo)] = location
         }
         guard updated != manualLocationOverrides else { return }
         try locationOverrideStore.save(updated)
@@ -336,6 +340,8 @@ final class CameraGalleryStore: ObservableObject {
 
     func loadInitial() async {
         if let sessionResetTask { await sessionResetTask.value }
+        if sourceIdentifier != sourceIdentifierProvider() { await resetForReconnect() }
+        resetImportReconciliation()
         cancelMetadataInspections(
             failureMessage: "The metadata check was interrupted when the camera gallery refreshed. Try again."
         )
@@ -347,6 +353,7 @@ final class CameraGalleryStore: ObservableObject {
         paginationTask = nil
         paginationTaskID = nil
         client = clientProvider()
+        sourceIdentifier = sourceIdentifierProvider()
         phase = .loading
         isLoadingNextPage = false
         paginationError = nil
@@ -364,17 +371,19 @@ final class CameraGalleryStore: ObservableObject {
                 try Task.checkCancellation()
                 guard loadGeneration == generation else { return }
 
+                let fetchedCapabilities: CameraCapabilities?
                 do {
-                    capabilities = try await client.fetchCapabilities()
-                    print("[GM1Sync] Loaded \(capabilities?.entries.count ?? 0) camera media capability entries.")
+                    fetchedCapabilities = try await client.fetchCapabilities()
+                    print("[GM1Sync] Loaded \(fetchedCapabilities?.entries.count ?? 0) camera media capability entries.")
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
-                    capabilities = nil
+                    fetchedCapabilities = nil
                     print("[GM1Sync] Camera capabilities unavailable: \(error.localizedDescription)")
                 }
                 try Task.checkCancellation()
                 guard loadGeneration == generation else { return }
+                capabilities = fetchedCapabilities
 
                 guard reportedTotal > 0 else {
                     phase = .empty
@@ -383,7 +392,7 @@ final class CameraGalleryStore: ObservableObject {
 
                 let count = min(pageSize, reportedTotal)
                 let start = max(0, reportedTotal - count)
-                let page = try await client.browsePhotos(start: start, count: count)
+                let page = try await Self.browsePage(client, start: start, count: count)
                 try Task.checkCancellation()
                 guard loadGeneration == generation else { return }
 
@@ -436,7 +445,7 @@ final class CameraGalleryStore: ObservableObject {
             }
 
             do {
-                let page = try await client.browsePhotos(start: request.start, count: request.count)
+                let page = try await Self.browsePage(client, start: request.start, count: request.count)
                 try Task.checkCancellation()
                 guard loadGeneration == generation else { return }
                 totalCount = max(totalCount, page.totalMatches)
@@ -462,12 +471,13 @@ final class CameraGalleryStore: ObservableObject {
     }
 
     func loadAllPages() async {
+        let generation = loadGeneration
         while nextPageRequest != nil, !Task.isCancelled {
             let requestBeforeLoad = nextPageRequest
             await loadNextPage()
-            if paginationError != nil || nextPageRequest == requestBeforeLoad { return }
+            if loadGeneration != generation || paginationError != nil || nextPageRequest == requestBeforeLoad { return }
         }
-        if paginationError == nil { await reconcileImportHistoryWithPhotos() }
+        if !Task.isCancelled, hasCompleteMediaCounts { await reconcileImportHistoryWithPhotos() }
     }
 
     func reloadAllMedia() async {
@@ -477,40 +487,51 @@ final class CameraGalleryStore: ObservableObject {
     }
 
     func reconcileImportHistoryWithPhotos() async {
-        guard !isReconcilingImportHistory else { return }
+        if let reconciliationTask {
+            await reconciliationTask.value
+            return
+        }
 
         let candidates = photos.filter { !isPreviouslyImported($0) }
         let candidateFilenames = candidates.reduce(into: Set<String>()) { result, photo in
             result.formUnion(photo.importFilenames)
         }
-        let uncheckedFilenames = candidateFilenames.subtracting(reconciledImportFilenames)
-        guard !uncheckedFilenames.isEmpty else {
-            if candidateFilenames.isSubset(of: reconciledImportFilenames) {
-                hasCompletePhotoLibraryImportHistory = importHistoryReconciliationError == nil
-            }
+        importHistoryReconciliationError = nil
+        guard !candidateFilenames.isEmpty else {
+            hasCompletePhotoLibraryImportHistory = true
             return
         }
 
         isReconcilingImportHistory = true
-        importHistoryReconciliationError = nil
-        defer { isReconcilingImportHistory = false }
-
-        do {
-            let result = try await importReconciler.importedFilenames(matching: uncheckedFilenames)
-            recoverImportHistory(for: candidates, matchedFilenames: result.matchedFilenames)
-            if result.hasCompleteLibraryAccess {
-                reconciledImportFilenames.formUnion(uncheckedFilenames)
-                hasCompletePhotoLibraryImportHistory = true
-            } else {
-                hasCompletePhotoLibraryImportHistory = false
-                importHistoryReconciliationError =
-                    "Retro LUMIX Sync has limited Photos access. Allow Full Access so it can reliably identify every new camera item."
+        hasCompletePhotoLibraryImportHistory = false
+        let task = Task {
+            do {
+                let result = try await importReconciler.importedFilenames(matching: candidateFilenames)
+                guard !Task.isCancelled else { return }
+                recoverImportHistory(for: candidates, matchedFilenames: result.matchedFilenames)
+                hasCompletePhotoLibraryImportHistory = result.hasCompleteLibraryAccess
+                if !result.hasCompleteLibraryAccess {
+                    importHistoryReconciliationError =
+                        "Retro LUMIX Sync has limited Photos access. Allow Full Access so it can reliably identify every new camera item."
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                importHistoryReconciliationError = error.localizedDescription
+                print("[GM1Sync] Photos import-history reconciliation failed: \(error.localizedDescription)")
             }
-        } catch {
-            hasCompletePhotoLibraryImportHistory = false
-            importHistoryReconciliationError = error.localizedDescription
-            print("[GM1Sync] Photos import-history reconciliation failed: \(error.localizedDescription)")
+            isReconcilingImportHistory = false
+            reconciliationTask = nil
         }
+        reconciliationTask = task
+        await task.value
+    }
+
+    private func resetImportReconciliation() {
+        reconciliationTask?.cancel()
+        reconciliationTask = nil
+        isReconcilingImportHistory = false
+        hasCompletePhotoLibraryImportHistory = false
+        importHistoryReconciliationError = nil
     }
 
     func cancelLoading() {
@@ -546,6 +567,7 @@ final class CameraGalleryStore: ObservableObject {
 
     private func performReconnectReset() async {
         cancelLoading()
+        resetImportReconciliation()
         let activeImport = importTask
         importTask?.cancel()
         await activeImport?.value
@@ -919,12 +941,17 @@ final class CameraGalleryStore: ObservableObject {
 
     func importSelected(
         photoMode: CameraPhotoImportMode = .jpeg,
+        allowFormatFallback: Bool = false,
         samples: [LocationSample],
         cameraClockOffset: TimeInterval
     ) async {
         await importPhotos(
-            selectedPhotos,
-            photoMode: photoMode,
+            selectedPhotos.map { photo in
+                if allowFormatFallback, photo.kind == .photo, !photo.supports(photoMode) {
+                    return (photo, photo.originalJPEGResource == nil ? .raw : .jpeg)
+                }
+                return (photo, photoMode)
+            },
             samples: samples,
             cameraClockOffset: cameraClockOffset
         )
@@ -937,22 +964,21 @@ final class CameraGalleryStore: ObservableObject {
         cameraClockOffset: TimeInterval
     ) async {
         await importPhotos(
-            [photo],
-            photoMode: photoMode,
+            [(photo, photoMode)],
             samples: samples,
             cameraClockOffset: cameraClockOffset
         )
     }
 
     private func importPhotos(
-        _ photosToImport: [LumixPhoto],
-        photoMode: CameraPhotoImportMode,
+        _ photosToImport: [(LumixPhoto, CameraPhotoImportMode)],
         samples: [LocationSample],
         cameraClockOffset: TimeInterval
     ) async {
         guard !isImporting, !photosToImport.isEmpty else { return }
         let taskID = UUID()
         let client = self.client
+        let source = sourceIdentifier
         isImporting = true
         batchProgress = CameraBatchProgress(
             total: photosToImport.count,
@@ -965,7 +991,7 @@ final class CameraGalleryStore: ObservableObject {
             guard let self else { return }
             await performImport(
                 photosToImport,
-                photoMode: photoMode,
+                source: source,
                 samples: samples,
                 cameraClockOffset: cameraClockOffset,
                 client: client
@@ -983,13 +1009,13 @@ final class CameraGalleryStore: ObservableObject {
     }
 
     private func performImport(
-        _ photosToImport: [LumixPhoto],
-        photoMode: CameraPhotoImportMode,
+        _ photosToImport: [(LumixPhoto, CameraPhotoImportMode)],
+        source: String,
         samples: [LocationSample],
         cameraClockOffset: TimeInterval,
         client: any CameraGalleryClient
     ) async {
-        for photo in photosToImport {
+        for (photo, photoMode) in photosToImport {
             if Task.isCancelled { break }
             batchProgress?.currentTitle = photo.title
             var temporaryFiles: [URL] = []
@@ -997,7 +1023,8 @@ final class CameraGalleryStore: ObservableObject {
 
             do {
                 let plan = try photo.importPlan(photoMode: photoMode, policy: mediaPolicy)
-                let manualLocation = manualLocationOverride(for: photo)
+                let key = historyKey(for: photo, source: source)
+                let manualLocation = manualLocationOverrides[key]
                 importStates[photo.id] = .downloading
                 var downloadedResources: [DownloadedCameraMedia.Resource] = []
                 var originalMetadata: PhotoOriginalMetadata?
@@ -1052,11 +1079,12 @@ final class CameraGalleryStore: ObservableObject {
                 }
 
                 importStates[photo.id] = .saving
-                try await importer.save(downloadedMedia, geotag: geotag)
                 try Task.checkCancellation()
+                try await importer.save(downloadedMedia, geotag: geotag)
+                // PhotoKit can commit a save while a reconnect is cancelling this batch.
                 importStates[photo.id] = .saved
                 recordImport(
-                    of: photo,
+                    key: key,
                     variant: plan.variant,
                     verifiedCaptureDate: captureDate,
                     appliedLocation: originalMetadata?.embeddedLocation
@@ -1107,12 +1135,11 @@ final class CameraGalleryStore: ObservableObject {
     }
 
     private func recordImport(
-        of photo: LumixPhoto,
+        key: String,
         variant: CameraImportVariant,
         verifiedCaptureDate: Date?,
         appliedLocation: PhotoGeotagLocation?
     ) {
-        let key = historyKey(for: photo)
         var record = importHistory[key] ?? CameraImportHistoryRecord(
             variants: [],
             lastImportedAt: .now
@@ -1140,6 +1167,7 @@ final class CameraGalleryStore: ObservableObject {
         var recoveredCount = 0
 
         for photo in candidates {
+            guard !isPreviouslyImported(photo) else { continue }
             let photoMatches = photo.importFilenames.intersection(matches)
             guard !photoMatches.isEmpty else { continue }
             let variant: CameraImportVariant
@@ -1174,12 +1202,30 @@ final class CameraGalleryStore: ObservableObject {
         }
     }
 
-    private func historyKey(for photo: LumixPhoto) -> String {
-        [sourceIdentifierProvider(), photo.importIdentity].joined(separator: "|")
+    private func historyKey(for photo: LumixPhoto, source: String? = nil) -> String {
+        [source ?? sourceIdentifier, photo.importIdentity].joined(separator: "|")
     }
 
-    private func locationOverrideKey(for photo: LumixPhoto) -> String {
-        [sourceIdentifierProvider(), photo.importIdentity].joined(separator: "|")
+    private static func browsePage(
+        _ client: any CameraGalleryClient, start: Int, count: Int
+    ) async throws -> LumixPhotoPage {
+        var cursor = start
+        let end = start + count
+        var photos: [LumixPhoto] = []
+        var totalMatches = 0
+        while cursor < end {
+            try Task.checkCancellation()
+            let page = try await client.browsePhotos(start: cursor, count: end - cursor)
+            totalMatches = page.totalMatches
+            guard page.numberReturned > 0 else {
+                if cursor >= totalMatches { break }
+                throw LumixError.incompleteBrowse
+            }
+            photos.append(contentsOf: page.photos)
+            cursor += min(page.numberReturned, end - cursor)
+        }
+        return LumixPhotoPage(startIndex: start, numberReturned: cursor - start,
+                              totalMatches: totalMatches, photos: photos)
     }
 
     private func previousPage(before start: Int) -> PageRequest? {
@@ -1361,6 +1407,7 @@ private actor LumixMediaCache {
             do {
                 let value = try await task.value
                 try Task.checkCancellation()
+                guard !task.isCancelled else { throw CancellationError() }
                 finishRequest(for: url, waiterID: waiterID, value: value)
                 return value
             } catch {
@@ -1373,8 +1420,7 @@ private actor LumixMediaCache {
     }
 
     private func finishRequest(for url: URL, waiterID: UUID, value: Data?) {
-        guard var request = inFlight[url] else { return }
-        request.waiters.remove(waiterID)
+        guard var request = inFlight[url], request.waiters.remove(waiterID) != nil else { return }
 
         if let value {
             inFlight[url] = nil

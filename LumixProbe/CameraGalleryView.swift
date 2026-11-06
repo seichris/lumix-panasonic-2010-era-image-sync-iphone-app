@@ -326,8 +326,9 @@ struct CameraGalleryView: View {
         isDownloadingAllNew = true
         defer { isDownloadingAllNew = false }
 
+        let generation = store.loadGeneration
         await store.loadAllPages()
-        guard store.paginationError == nil else { return }
+        guard !Task.isCancelled, store.loadGeneration == generation, store.hasCompleteMediaCounts else { return }
         guard store.hasCompletePhotoLibraryImportHistory else {
             showPhotosAccessAlert = true
             return
@@ -341,6 +342,7 @@ struct CameraGalleryView: View {
 
         await store.importSelected(
             photoMode: importMode,
+            allowFormatFallback: true,
             samples: model.locationLogger.samples,
             cameraClockOffset: model.cameraClockOffsetMinutes * 60
         )
