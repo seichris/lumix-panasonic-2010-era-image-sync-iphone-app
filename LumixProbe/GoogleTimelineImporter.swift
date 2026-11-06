@@ -136,8 +136,10 @@ enum GoogleTimelineImporter {
         for point in points {
             let offsetMinutes = number(
                 point["durationMinutesOffsetFromStartTime"] ?? point["offsetMinutes"]
-            ) ?? 0
-            let timestamp = startTime?.addingTimeInterval(offsetMinutes * 60)
+            )
+            let timestamp = date(from: point["time"]) ?? offsetMinutes.flatMap { minutes in
+                startTime?.addingTimeInterval(minutes * 60)
+            }
             append(
                 coordinate: coordinate(from: point["point"] ?? point["location"]),
                 timestamp: timestamp,
@@ -223,13 +225,14 @@ enum GoogleTimelineImporter {
         into samples: inout [LocationSample]
     ) {
         guard let coordinate, let timestamp,
+              timestamp.timeIntervalSince1970.isFinite,
               coordinate.latitude.isFinite,
               coordinate.longitude.isFinite,
               abs(coordinate.latitude) <= 90,
               abs(coordinate.longitude) <= 180,
               altitude.isFinite,
               accuracy.isFinite,
-              accuracy >= 0 else { return }
+              (0...LocationTrackMatcher.maximumUsableAccuracy).contains(accuracy) else { return }
 
         samples.append(LocationSample(
             timestamp: timestamp,
@@ -259,24 +262,14 @@ enum GoogleTimelineImporter {
     }
 
     private static func date(from value: Any?) -> Date? {
-        if let number = number(value) {
+        if let number = number(value), number.isFinite {
             let seconds = number > 10_000_000_000 ? number / 1_000 : number
             return Date(timeIntervalSince1970: seconds)
         }
 
         guard let string = value as? String else { return nil }
-        if let number = Double(string) {
-            let seconds = number > 10_000_000_000 ? number / 1_000 : number
-            return Date(timeIntervalSince1970: seconds)
-        }
-
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: string) { return date }
-
-        let standard = ISO8601DateFormatter()
-        standard.formatOptions = [.withInternetDateTime]
-        return standard.date(from: string)
+        return (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(string))
+            ?? (try? Date.ISO8601FormatStyle().parse(string))
     }
 
     private static func coordinate(from value: Any?) -> (latitude: Double, longitude: Double)? {

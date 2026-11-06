@@ -4,6 +4,17 @@ import XCTest
 @testable import GM1Sync
 
 final class GeotaggingTests: XCTestCase {
+    func testTrackCrossingDateLineInterpolatesAcrossThePacificInEitherDirection() throws {
+        for east in [1.0, -1.0] {
+            let samples = [sample(at: 990, latitude: 0, longitude: 179.8 * east, accuracy: 10),
+                           sample(at: 1_010, latitude: 0, longitude: -179.8 * east, accuracy: 10)]
+            let match = try XCTUnwrap(LocationTrackMatcher.match(
+                captureDate: Date(timeIntervalSince1970: 1_005), samples: samples
+            ))
+            XCTAssertEqual(match.longitude, -179.9 * east, accuracy: 0.000_001)
+        }
+    }
+
     func testInterpolatesLocationAroundCaptureTime() throws {
         let capture = Date(timeIntervalSince1970: 1_000)
         let samples = [
@@ -18,6 +29,26 @@ final class GeotaggingTests: XCTestCase {
         XCTAssertEqual(match.longitude, 102, accuracy: 0.000_001)
         XCTAssertEqual(match.horizontalAccuracy, 18)
         XCTAssertEqual(match.quality, .excellent)
+    }
+
+    @MainActor
+    func testFailedLocationTrackWriteDoesNotPublishOrEraseExistingSamples() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let parent = directory.appendingPathComponent("support")
+        let track = parent.appendingPathComponent("track.json")
+        let logger = GeotagLocationLogger(storageURL: track)
+        let saved = sample(at: 1_000, latitude: 1, longitude: 2, accuracy: 20)
+        try logger.importSamples([saved])
+        // Block the storage directory without depending on the test process's permissions.
+        try FileManager.default.moveItem(at: parent, to: directory.appendingPathComponent("original"))
+        try Data().write(to: parent)
+        XCTAssertThrowsError(try logger.importSamples([sample(at: 2_000, latitude: 3, longitude: 4, accuracy: 10)]))
+        XCTAssertEqual(logger.samples, [saved])
+        logger.clear()
+        XCTAssertEqual(logger.samples, [saved])
+        XCTAssertTrue(logger.statusMessage.hasPrefix("Could not clear"))
     }
 
     func testAppliesCameraClockAdjustmentBeforeMatching() throws {

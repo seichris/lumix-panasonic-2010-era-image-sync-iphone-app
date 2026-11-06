@@ -174,9 +174,7 @@ struct LumixResource: Identifiable, Hashable, Sendable {
     }
 
     var profileName: String? {
-        guard let range = protocolInfo.range(of: "PANASONIC.COM_PN=") else { return nil }
-        let rest = protocolInfo[range.upperBound...]
-        return String(rest.prefix { $0 != ";" })
+        protocolParameter("PANASONIC.COM_PN")?.uppercased()
     }
 
     var isOriginalJPEG: Bool {
@@ -238,8 +236,8 @@ struct LumixResource: Identifiable, Hashable, Sendable {
     }
 
     var mimeType: String? {
-        let components = protocolInfo.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
-        guard components.count == 3 else { return nil }
+        let components = protocolInfo.split(separator: ":", maxSplits: 3, omittingEmptySubsequences: false)
+        guard components.count >= 3 else { return nil }
         return components[2].split(separator: ";", maxSplits: 1).first.map(String.init)?.lowercased()
     }
 
@@ -249,8 +247,7 @@ struct LumixResource: Identifiable, Hashable, Sendable {
 
     private func protocolParameter(_ name: String) -> String? {
         protocolInfo
-            .split(separator: ";")
-            .dropFirst()
+            .split(whereSeparator: { $0 == ";" || $0 == ":" })
             .compactMap { component -> (String, String)? in
                 let pair = component.split(separator: "=", maxSplits: 1).map(String.init)
                 guard pair.count == 2 else { return nil }
@@ -430,6 +427,17 @@ struct LumixBrowseResult: Sendable {
     let rawSOAP: String
     let didl: String
     let resources: [LumixResource]
+
+    static func parse(_ response: LumixHTTPResponse) throws -> Self {
+        let outer = SimpleXML(response.data)
+        guard let result = outer.firstText("Result") else { throw LumixError.missingBrowseResult }
+        // XMLParser has already unescaped the SOAP text. Only older double-escaped
+        // envelopes need another pass; entities inside DIDL belong to its parser.
+        let didl = result.hasPrefix("&lt;") ? result.htmlUnescaped : result
+        return Self(numberReturned: outer.firstInt("NumberReturned"), totalMatches: outer.firstInt("TotalMatches"),
+                    updateID: outer.firstInt("UpdateID"), rawSOAP: response.text,
+                    didl: didl, resources: DIDLParser.parse(didl))
+    }
 }
 
 enum LumixBrowseFlag: String, Sendable {
@@ -471,6 +479,7 @@ enum LumixError: LocalizedError, Equatable {
     case nonHTTPResponse
     case http(Int, String)
     case missingBrowseResult
+    case incompleteBrowse
     case noOriginalJPEG
     case noRAW
     case noVideo
@@ -480,10 +489,11 @@ enum LumixError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .invalidURL: return "Could not construct Lumix URL."
+        case .invalidURL: return "The address is invalid for the selected camera."
         case .nonHTTPResponse: return "Camera returned a non-HTTP response."
         case let .http(code, body): return "HTTP \(code): \(body.prefix(300))"
         case .missingBrowseResult: return "UPnP response did not contain a DIDL-Lite Result."
+        case .incompleteBrowse: return "The camera stopped listing media before the end of the page. Retry to continue."
         case .noOriginalJPEG: return "This camera item does not advertise an original JPEG."
         case .noRAW: return "This camera item does not advertise a RAW companion."
         case .noVideo: return "This camera item does not advertise a downloadable video."
@@ -575,6 +585,7 @@ actor LumixClient {
         availableResources: [LumixResource]
     ) async throws -> any CameraPlaybackSession {
         guard resource.isAVCHD else { throw LumixError.videoPlaybackNotSupported }
+        _ = try cameraMediaURL(for: resource)
         return PanasonicAVCHDPlaybackSession(
             resource: resource,
             availableResources: availableResources
@@ -587,7 +598,12 @@ actor LumixClient {
         start: Int,
         count: Int
     ) async throws -> LumixBrowseResult {
-        guard let url = URL(string: "http://\(host):60606/Server0/CDS_control") else { throw LumixError.invalidURL }
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = host
+        components.port = 60606
+        components.path = "/Server0/CDS_control"
+        guard let url = components.url else { throw LumixError.invalidURL }
         let body = LumixBrowseSOAP.make(objectID: objectID, flag: flag, start: start, count: count)
 
         var request = URLRequest(url: url)
@@ -599,18 +615,7 @@ actor LumixClient {
         request.setValue("close", forHTTPHeaderField: "Connection")
 
         let response = try await send(request)
-        let outer = SimpleXML(response.data)
-        guard let escapedDIDL = outer.firstText("Result") else { throw LumixError.missingBrowseResult }
-        let didl = escapedDIDL.htmlUnescaped
-        let resources = DIDLParser.parse(didl)
-        return LumixBrowseResult(
-            numberReturned: outer.firstInt("NumberReturned"),
-            totalMatches: outer.firstInt("TotalMatches"),
-            updateID: outer.firstInt("UpdateID"),
-            rawSOAP: response.text,
-            didl: didl,
-            resources: resources
-        )
+        return try LumixBrowseResult.parse(response)
     }
 
     func browseLast(_ count: Int = 5) async throws -> LumixBrowseResult {
@@ -647,14 +652,14 @@ actor LumixClient {
     }
 
     func downloadJPEGData(_ resource: LumixResource) async throws -> Data {
-        let data = try await LegacyLumixMediaDownloader.downloadJPEG(from: resource.url)
+        let data = try await LegacyLumixMediaDownloader.downloadJPEG(from: cameraMediaURL(for: resource))
         try Self.validateJPEG(data)
         return data
     }
 
     func download(_ resource: LumixResource) async throws -> URL {
         try await LegacyLumixMediaDownloader.downloadFile(
-            from: resource.downloadURL,
+            from: cameraMediaURL(for: resource),
             validatesJPEG: resource.isOriginalJPEG && !resource.isVideo,
             requestStyle: resource.requiresDLNAStreamingRequest ? .panasonicDLNAInitial : .legacy
         )
@@ -662,11 +667,18 @@ actor LumixClient {
 
     func downloadMetadataPrefix(_ resource: LumixResource) async throws -> URL {
         try await LegacyLumixMediaDownloader.downloadFile(
-            from: resource.downloadURL,
+            from: cameraMediaURL(for: resource),
             requestStyle: .legacy,
             maximumBodyBytes: 512 * 1024,
             socketTimeoutSeconds: 12
         )
+    }
+
+    private func cameraMediaURL(for resource: LumixResource) throws -> URL {
+        let url = resource.downloadURL
+        guard url.scheme?.lowercased() == "http", url.user == nil, url.password == nil,
+              url.host?.caseInsensitiveCompare(host) == .orderedSame else { throw LumixError.invalidURL }
+        return url
     }
 
     private static func validateJPEG(_ data: Data) throws {
@@ -699,7 +711,7 @@ actor LumixClient {
         let maximumAttempts = 5
 
         for attempt in 0..<maximumAttempts {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await session.data(for: request, delegate: CameraControlRedirects.shared)
             guard let http = response as? HTTPURLResponse else { throw LumixError.nonHTTPResponse }
             let headers = http.allHeaderFields.reduce(into: [String: String]()) { result, header in
                 result[String(describing: header.key)] = String(describing: header.value)
@@ -723,6 +735,25 @@ actor LumixClient {
         }
 
         preconditionFailure("The bounded request loop must return or throw.")
+    }
+}
+
+final class CameraControlRedirects: NSObject, URLSessionTaskDelegate {
+    static let shared = CameraControlRedirects()
+
+    static func allows(_ destination: URL, from source: URL) -> Bool {
+        destination.scheme?.lowercased() == "http" && destination.user == nil && destination.password == nil &&
+            destination.host?.lowercased() == source.host?.lowercased() && (destination.port ?? 80) == (source.port ?? 80)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        guard let source = task.originalRequest?.url, let destination = request.url,
+              Self.allows(destination, from: source) else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
     }
 }
 

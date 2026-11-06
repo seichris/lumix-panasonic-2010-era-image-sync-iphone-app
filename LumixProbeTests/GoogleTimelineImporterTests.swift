@@ -2,6 +2,25 @@ import XCTest
 @testable import GM1Sync
 
 final class GoogleTimelineImporterTests: XCTestCase {
+    func testTimelinePathUsesEachPointsAbsoluteTimeOrExplicitOffset() throws {
+        let json = #"""
+        {"semanticSegments":[{"startTime":"2026-08-23T12:00:00Z","timelinePath":[
+          {"point":"1°, 103°","time":"2026-08-23T12:03:00Z"},
+          {"point":"2°, 104°","durationMinutesOffsetFromStartTime":"5"},
+          {"point":"3°, 105°"}
+        ]}]}
+        """#
+        let samples = try GoogleTimelineImporter.samples(from: json)
+        XCTAssertEqual(samples.map(\.timestamp), [date("2026-08-23T12:03:00Z"), date("2026-08-23T12:05:00Z")])
+    }
+
+    func testAnExportWithOnlyUnusableSamplesDoesNotReportASuccessfulImport() {
+        let json = #"{"locations":[{"latitude":1,"longitude":2,"timestampMs":"1000000000000","accuracy":9999}]}"#
+        XCTAssertThrowsError(try GoogleTimelineImporter.samples(from: json)) { error in
+            XCTAssertEqual(error as? GoogleTimelineImporter.ImportError, .noUsableLocations)
+        }
+    }
+
     func testImportsCurrentIOSVisitAndActivityRecords() throws {
         let data = Data(#"""
         [

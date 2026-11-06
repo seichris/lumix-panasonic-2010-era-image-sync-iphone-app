@@ -6,7 +6,7 @@ final class LumixProbeUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-UITestNoRememberedCamera"]
+        app.launchArguments = ["-UITestNoRememberedCamera", "-UITestDisconnected"]
     }
 
     func testWidgetStartAndStopLinksControlLocationLogging() throws {
@@ -32,7 +32,7 @@ final class LumixProbeUITests: XCTestCase {
     }
 
     func testRememberedCameraReconnectAppearsAlongsideQRCodeScanner() throws {
-        app.launchArguments = ["-UITestRememberedCamera"]
+        app.launchArguments = ["-UITestRememberedCamera", "-UITestDisconnected"]
         app.launch()
 
         XCTAssertTrue(app.buttons["Reconnect to GM1S-DEMO01"].waitForExistence(timeout: 12))
@@ -54,8 +54,9 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Connect to the camera Wi-Fi by scanning the QR code, or manually."].exists)
         XCTAssertTrue(app.buttons["Scan camera QR code"].exists)
         XCTAssertTrue(app.buttons["Enter wi-fi name and password"].exists)
+        connectionHelp.tap()
         XCTAssertTrue(app.buttons["start-location-log"].exists)
-        XCTAssertTrue(app.switches["auto-start-geotagging"].exists)
+        scrollToElement(app.switches["auto-start-geotagging"])
         XCTAssertTrue(app.staticTexts["Start geotagging on app start"].exists)
         XCTAssertFalse(app.staticTexts["Need help?"].exists)
         XCTAssertFalse(app.textFields["camera-ip-address"].exists)
@@ -67,7 +68,9 @@ final class LumixProbeUITests: XCTestCase {
             return true
         }
 
-        app.buttons["Scan camera QR code"].tap()
+        let scanner = app.buttons["Scan camera QR code"]
+        scrollToElement(scanner, towardTop: true)
+        scanner.tap()
         app.tap()
         XCTAssertTrue(app.navigationBars["Scan camera Wi-Fi"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Cancel"].exists)
@@ -145,6 +148,10 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertFalse(app.buttons["check-camera-connection"].exists)
         XCTAssertFalse(app.buttons["start-location-log"].exists)
 
+        let repositoryLink = app.descendants(matching: .any)["github-repository-link"].firstMatch
+        scrollToElement(repositoryLink)
+        XCTAssertTrue(repositoryLink.label.contains("View this app code on Github"))
+
         let diagnosticsLink = app.buttons["camera-diagnostics-link"]
         scrollToElement(diagnosticsLink)
         diagnosticsLink.tap()
@@ -161,16 +168,13 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Panasonic DMC-GM1S"].exists)
         app.navigationBars.buttons.firstMatch.tap()
 
-        let repositoryLink = app.descendants(matching: .any)["github-repository-link"].firstMatch
-        scrollToElement(repositoryLink)
-        XCTAssertTrue(app.staticTexts["View this app code on Github"].exists)
-
         let appVersion = app.staticTexts["app-version"]
         scrollToElement(appVersion)
-        XCTAssertTrue(appVersion.label.hasPrefix("Retro LUMIX Sync · Version 1.0.3 ("))
+        XCTAssertNotNil(appVersion.label.range(of: #"^Retro LUMIX Sync · Version \d+(\.\d+)+ \(\d+\)$"#,
+                                              options: .regularExpression))
 
         let iconLink = app.buttons["app-icon-link"]
-        scrollToElement(iconLink)
+        scrollToElement(iconLink, towardTop: true)
         iconLink.tap()
         XCTAssertTrue(app.navigationBars["App Icon"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Blue Camera"].exists)
@@ -226,6 +230,7 @@ final class LumixProbeUITests: XCTestCase {
 #if targetEnvironment(simulator)
         throw XCTSkip("Requires the physical iPhone connected to a powered GM1S.")
 #else
+        app.launchArguments = ["-UITestNoRememberedCamera"]
         app.launch()
         XCTAssertTrue(app.scrollViews["camera-gallery"].waitForExistence(timeout: 20))
         openDiagnostics()
@@ -272,10 +277,10 @@ final class LumixProbeUITests: XCTestCase {
         )
     }
 
-    private func scrollToElement(_ element: XCUIElement) {
+    private func scrollToElement(_ element: XCUIElement, towardTop: Bool = false) {
         var attempts = 0
         while !element.isHittable, attempts < 8 {
-            app.swipeUp()
+            if towardTop { app.swipeDown() } else { app.swipeUp() }
             attempts += 1
         }
         XCTAssertTrue(element.exists)

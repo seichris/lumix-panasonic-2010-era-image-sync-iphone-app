@@ -4,6 +4,111 @@ import XCTest
 
 @MainActor
 final class CameraGalleryStoreTests: XCTestCase {
+    func testShortCameraRepliesStillLoadEveryItemNewestFirst() async {
+        let client = MockGalleryClient(total: 11, maximumReturnedCount: 2)
+        let store = CameraGalleryStore(client: client, pageSize: 5)
+
+        await store.reloadAllMedia()
+
+        XCTAssertEqual(store.photos.compactMap(\.itemID), (0..<11).reversed().map(String.init))
+        XCTAssertTrue(store.hasCompleteMediaCounts)
+    }
+
+    func testZeroProgressOnANonemptyPageOffersARetry() async {
+        let client = MockGalleryClient(total: 4, maximumReturnedCount: 0)
+        let store = CameraGalleryStore(client: client, pageSize: 4)
+        await store.reloadAllMedia()
+        guard case .failed = store.phase else { return XCTFail("Expected a recoverable browse failure") }
+        XCTAssertFalse(store.hasCompleteMediaCounts)
+    }
+
+    func testBulkImportUsesAnAvailableOriginalForEachItem() async {
+        let client = MockGalleryClient(total: 3, rawOnlyIndexes: [1], videoIndexes: [2])
+        let importer = RecordingImporter()
+        let store = CameraGalleryStore(client: client, importer: importer,
+                                      importHistoryStore: InMemoryCameraImportHistoryStore())
+        await store.reloadAllMedia()
+        XCTAssertEqual(store.selectUnimported(), 3)
+        await store.importSelected(photoMode: .jpegAndRAW, allowFormatFallback: true, samples: [], cameraClockOffset: 0)
+        let packages = await importer.packages
+        XCTAssertEqual(packages.map(\.variant), [.video, .raw, .jpeg])
+        XCTAssertEqual(store.batchProgress?.failed, 0)
+    }
+
+    func testLateThumbnailCannotReplaceTheNextCamerasThumbnailAtTheSameURL() async throws {
+        let first = MockGalleryClient(total: 1, holdThumbnails: true)
+        let second = MockGalleryClient(total: 1, holdThumbnails: true)
+        var client = first
+        let store = CameraGalleryStore(clientProvider: { client })
+        let resource = Self.resource(0)
+        let oldLoad = Task { try await store.mediaData(for: resource) }
+        let oldStarted = await waitUntil { await first.thumbnailIsWaiting }
+        XCTAssertTrue(oldStarted)
+        await store.resetForReconnect()
+        client = second
+        await store.loadInitial()
+        let newLoad = Task { try await store.mediaData(for: resource) }
+        let newStarted = await waitUntil { await second.thumbnailIsWaiting }
+        XCTAssertTrue(newStarted)
+        await first.finishThumbnail(with: Data([1]))
+        do {
+            _ = try await oldLoad.value
+            XCTFail("Returned a thumbnail from the disconnected camera")
+        } catch is CancellationError {}
+        await second.finishThumbnail(with: Data([2]))
+        let current = try await newLoad.value
+        let cached = try await store.mediaData(for: resource)
+        XCTAssertEqual(current, Data([2]))
+        XCTAssertEqual(cached, current)
+    }
+
+    func testOldPhotosScanCannotMarkTheNextCameraImported() async throws {
+        let reconciler = SuspendedLibraryScan()
+        var source = "camera-A"
+        let client = MockGalleryClient(total: 1)
+        let store = CameraGalleryStore(clientProvider: { client }, sourceIdentifierProvider: { source },
+                                      importHistoryStore: InMemoryCameraImportHistoryStore(),
+                                      importReconciler: reconciler)
+        await store.loadInitial()
+        let oldScan = Task { await store.reconcileImportHistoryWithPhotos() }
+        let started = await waitUntil { await reconciler.isWaiting }
+        XCTAssertTrue(started)
+        source = "camera-B"
+        await store.resetForReconnect()
+        await store.loadInitial()
+        await store.reconcileImportHistoryWithPhotos()
+        await reconciler.finish()
+        await oldScan.value
+
+        let photo = try XCTUnwrap(store.photos.first)
+        XCTAssertNil(store.importHistoryRecord(for: photo))
+        XCTAssertFalse(store.hasCompletePhotoLibraryImportHistory)
+        XCTAssertNotNil(store.importHistoryReconciliationError)
+    }
+
+    func testReconnectRecordsACompletedPhotosWriteAgainstItsOriginalCamera() async throws {
+        let importer = SuspendedSuccessfulImporter()
+        var source = "camera-A"
+        let client = MockGalleryClient(total: 1)
+        let history = InMemoryCameraImportHistoryStore()
+        let store = CameraGalleryStore(clientProvider: { client }, sourceIdentifierProvider: { source },
+                                      importer: importer, importHistoryStore: history)
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+        let importing = Task { await store.importPhoto(photo, samples: [], cameraClockOffset: 0) }
+        let started = await waitUntil { await importer.isSaving }
+        XCTAssertTrue(started)
+        source = "camera-B"
+        let reconnect = Task { await store.resetForReconnect() }
+        let cancelled = await waitUntil { await importer.cancellationObserved }
+        XCTAssertTrue(cancelled)
+        await importer.finish()
+        await importing.value
+        await reconnect.value
+        XCTAssertEqual(try history.load()["camera-A|" + photo.importIdentity]?.variants, [.jpeg])
+        XCTAssertNil(try history.load()["camera-B|" + photo.importIdentity])
+    }
+
     func testLoadsEveryPageNewestFirstWithoutDuplicates() async throws {
         let client = MockGalleryClient(total: 41, overlapsPages: true)
         let store = CameraGalleryStore(client: client, importer: RecordingImporter(), pageSize: 10)
@@ -659,6 +764,16 @@ final class CameraGalleryStoreTests: XCTestCase {
         let maximumActiveDownloads = await client.maximumActiveDownloads
         XCTAssertEqual(maximumActiveDownloads, 3)
 
+        // A released slot can legitimately start another download. Cancel and drain
+        // the queued requests while all three active transfers still hold their slots.
+        let activeURLs = await client.activeURLs
+        let queued = zip(resources, loads).filter { !activeURLs.contains($0.0.url) }.map(\.1)
+        XCTAssertEqual(queued.count, 2)
+        queued.forEach { $0.cancel() }
+        for load in queued { _ = try? await load.value }
+        let cancelledWhileQueued = await client.cancellationCount
+        XCTAssertEqual(cancelledWhileQueued, 0)
+
         loads.forEach { $0.cancel() }
         for load in loads { _ = try? await load.value }
 
@@ -707,12 +822,17 @@ private actor MockGalleryClient: CameraGalleryClient {
 
     private var total: Int
     private let overlapsPages: Bool
+    private let maximumReturnedCount: Int
     private let preparationDelay: Duration
     private let includesRAW: Bool
+    private let rawOnlyIndexes: Set<Int>
     private let videoIndexes: Set<Int>
     private let downloadDelay: Duration
     private let ignoresDownloadCancellation: Bool
     private let cancellationHandlerBlockSeconds: TimeInterval
+    private let holdThumbnails: Bool
+    private var thumbnailContinuation: CheckedContinuation<Data, Never>?
+    var thumbnailIsWaiting: Bool { thumbnailContinuation != nil }
     private var delayedBrowseStart: Int?
     private var delayedBrowseDuration: Duration = .milliseconds(250)
     private(set) var browseRequests: [BrowseRequest] = []
@@ -722,17 +842,23 @@ private actor MockGalleryClient: CameraGalleryClient {
     init(
         total: Int,
         overlapsPages: Bool = false,
+        maximumReturnedCount: Int = .max,
         preparationDelay: Duration = .zero,
         includesRAW: Bool = false,
+        rawOnlyIndexes: Set<Int> = [],
         videoIndexes: Set<Int> = [],
         downloadDelay: Duration = .zero,
         ignoresDownloadCancellation: Bool = false,
-        cancellationHandlerBlockSeconds: TimeInterval = 0
+        cancellationHandlerBlockSeconds: TimeInterval = 0,
+        holdThumbnails: Bool = false
     ) {
         self.total = total
         self.overlapsPages = overlapsPages
+        self.maximumReturnedCount = maximumReturnedCount
         self.preparationDelay = preparationDelay
         self.includesRAW = includesRAW
+        self.rawOnlyIndexes = rawOnlyIndexes
+        self.holdThumbnails = holdThumbnails
         self.videoIndexes = videoIndexes
         self.downloadDelay = downloadDelay
         self.ignoresDownloadCancellation = ignoresDownloadCancellation
@@ -765,7 +891,7 @@ private actor MockGalleryClient: CameraGalleryClient {
                 throw CancellationError()
             }
         }
-        let upperBound = min(total, start + count)
+        let upperBound = min(total, start + min(count, maximumReturnedCount))
         var photos = start < upperBound ? (start..<upperBound).map(photo) : []
         if overlapsPages, upperBound < total {
             photos.append(photo(upperBound))
@@ -779,7 +905,13 @@ private actor MockGalleryClient: CameraGalleryClient {
     }
 
     func downloadJPEGData(_ resource: LumixResource) async throws -> Data {
-        Data([0xff, 0xd8, 0xff, 0xd9])
+        if holdThumbnails { return await withCheckedContinuation { thumbnailContinuation = $0 } }
+        return Data([0xff, 0xd8, 0xff, 0xd9])
+    }
+
+    func finishThumbnail(with data: Data) {
+        thumbnailContinuation?.resume(returning: data)
+        thumbnailContinuation = nil
     }
 
     func download(_ resource: LumixResource) async throws -> URL {
@@ -827,8 +959,8 @@ private actor MockGalleryClient: CameraGalleryClient {
             url: URL(string: "http://192.168.54.1:50001/photo-\(index).jpg")!,
             protocolInfo: "http-get:*:image/jpeg;PANASONIC.COM_PN=CAM_ORG"
         )
-        var resources = [resource]
-        if includesRAW {
+        var resources = rawOnlyIndexes.contains(index) ? [] : [resource]
+        if includesRAW || rawOnlyIndexes.contains(index) {
             resources.append(
                 LumixResource(
                     itemID: itemID,
@@ -842,8 +974,48 @@ private actor MockGalleryClient: CameraGalleryClient {
     }
 }
 
+private actor SuspendedLibraryScan: CameraImportReconciling {
+    private var continuation: CheckedContinuation<Void, Never>?
+    var isWaiting: Bool { continuation != nil }
+
+    func importedFilenames(matching filenames: Set<String>) async throws -> CameraImportReconciliationResult {
+        if isWaiting {
+            return .init(matchedFilenames: [], hasCompleteLibraryAccess: false)
+        }
+        await withCheckedContinuation { continuation = $0 }
+        return .init(matchedFilenames: filenames, hasCompleteLibraryAccess: true)
+    }
+
+    func finish() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private actor SuspendedSuccessfulImporter: CameraMediaImporting {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var cancellationObserved = false
+    var isSaving: Bool { continuation != nil }
+
+    func save(_ media: DownloadedCameraMedia, geotag: GeotagMatch?) async throws {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation = $0 }
+        } onCancel: {
+            Task { await self.noteCancellation() }
+        }
+    }
+
+    private func noteCancellation() { cancellationObserved = true }
+
+    func finish() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 private actor CancellableMediaClient: CameraGalleryClient {
-    private(set) var activeDownloads = 0
+    private(set) var activeURLs: Set<URL> = []
+    var activeDownloads: Int { activeURLs.count }
     private(set) var maximumActiveDownloads = 0
     private(set) var cancellationCount = 0
 
@@ -854,9 +1026,9 @@ private actor CancellableMediaClient: CameraGalleryClient {
     }
 
     func downloadJPEGData(_ resource: LumixResource) async throws -> Data {
-        activeDownloads += 1
+        activeURLs.insert(resource.url)
         maximumActiveDownloads = max(maximumActiveDownloads, activeDownloads)
-        defer { activeDownloads -= 1 }
+        defer { activeURLs.remove(resource.url) }
 
         do {
             try await Task.sleep(for: .seconds(30))

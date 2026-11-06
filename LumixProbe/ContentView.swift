@@ -123,16 +123,14 @@ struct ContentView: View {
         List {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("Retro LUMIX Sync")
                             .font(.largeTitle.bold())
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
+                            .fixedSize(horizontal: false, vertical: true)
                         Text("& other 2010-era Lumix cams")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.65)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("landing-title")
@@ -326,7 +324,7 @@ private struct CameraDiagnosticsView: View {
                     logger: model.locationLogger,
                     cameraClockOffsetMinutes: model.cameraClockOffsetMinutes,
                     isSaving: model.isSavingPhoto,
-                    save: model.saveDownloadedToPhotos
+                    save: model.saveDownloadedOriginal
                 )
             }
 
@@ -370,6 +368,7 @@ private struct GeotaggingControls: View {
     @State private var isShowingTimelineImporter = false
     @State private var timelineImportError: String?
     @State private var didPasteTimelineData = false
+    @State private var isImportingTimeline = false
 
     var body: some View {
         Section("Geotagging") {
@@ -411,6 +410,7 @@ private struct GeotaggingControls: View {
                 Label("Import Google Timeline JSON", systemImage: "arrow.down.doc")
             }
             .accessibilityIdentifier("import-google-timeline")
+            .disabled(isImportingTimeline)
 
             Button {
                 importTimelineFromClipboard()
@@ -431,6 +431,7 @@ private struct GeotaggingControls: View {
                 }
             }
             .accessibilityIdentifier("paste-google-timeline")
+            .disabled(isImportingTimeline)
 
             Text("Export location-history.json from Google Maps, choose it here, or copy its JSON and paste it. Imported points are merged with the saved track.")
                 .font(.caption)
@@ -438,7 +439,7 @@ private struct GeotaggingControls: View {
 
             if !logger.samples.isEmpty {
                 Button("Clear saved location track", role: .destructive, action: clearTrack)
-                    .disabled(logger.isLogging)
+                    .disabled(logger.isLogging || isImportingTimeline)
             }
 
             Stepper(value: $cameraClockOffsetMinutes, in: -720...720, step: 1) {
@@ -473,16 +474,10 @@ private struct GeotaggingControls: View {
     private func importTimeline(from result: Result<URL, Error>) {
         switch result {
         case let .success(url):
-            let accessed = url.startAccessingSecurityScopedResource()
-            defer {
-                if accessed { url.stopAccessingSecurityScopedResource() }
-            }
-
-            do {
-                let imported = try GoogleTimelineImporter.samples(from: url)
-                logger.importSamples(imported)
-            } catch {
-                timelineImportError = error.localizedDescription
+            importTimeline(pasted: false) {
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+                return try GoogleTimelineImporter.samples(from: url)
             }
         case let .failure(error):
             if (error as NSError).code != NSUserCancelledError {
@@ -499,13 +494,22 @@ private struct GeotaggingControls: View {
             return
         }
 
-        do {
-            let imported = try GoogleTimelineImporter.samples(from: text)
-            logger.importSamples(imported)
-            didPasteTimelineData = true
-        } catch {
-            didPasteTimelineData = false
-            timelineImportError = error.localizedDescription
+        importTimeline(pasted: true) { try GoogleTimelineImporter.samples(from: text) }
+    }
+
+    private func importTimeline(pasted: Bool, read: @escaping @Sendable () throws -> [LocationSample]) {
+        guard !isImportingTimeline else { return }
+        isImportingTimeline = true
+        didPasteTimelineData = false
+        Task { @MainActor in
+            defer { isImportingTimeline = false }
+            do {
+                let imported = try await Task.detached(priority: .userInitiated, operation: read).value
+                try logger.importSamples(imported)
+                didPasteTimelineData = pasted
+            } catch {
+                timelineImportError = error.localizedDescription
+            }
         }
     }
 
@@ -785,7 +789,7 @@ private struct MacSettingsView: View {
                     logger: model.locationLogger,
                     cameraClockOffsetMinutes: model.cameraClockOffsetMinutes,
                     isSaving: model.isSavingPhoto,
-                    save: model.saveDownloadedToPhotos
+                    save: model.saveDownloadedOriginal
                 )
             }
 
