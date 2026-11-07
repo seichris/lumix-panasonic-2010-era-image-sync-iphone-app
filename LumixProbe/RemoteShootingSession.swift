@@ -22,9 +22,10 @@ struct RemoteShootingTiming: Sendable {
     var shutterReleaseRetryInterval: Duration = .milliseconds(100)
     var shutterReleaseTimeout: TimeInterval = 5
     var manualFocusRepeatInterval: Duration = .milliseconds(150)
-    /// How long to keep retrying while the camera answers HTTP 503. A GM1S still
-    /// holding a remote session that ended abruptly (the app was force-quit while
-    /// streaming) refused new requests this way for over a minute.
+    /// How long to keep retrying while the camera answers HTTP 503 ("Service
+    /// Temporarily Overloaded"). A GM1S did so for about 10 s when remote shooting
+    /// opened while the app was still starting up, and for over a minute after the
+    /// app had been killed while streaming.
     var overloadWaitTimeout: TimeInterval = 90
     var overloadRetryDelay: Duration = .seconds(3)
 
@@ -581,8 +582,8 @@ final class RemoteShootingSession: ObservableObject {
         }
     }
 
-    /// Prepares the camera, waiting while it answers HTTP 503: it refuses new
-    /// requests that way until a previous remote session it still holds times out.
+    /// Prepares the camera, waiting while it answers HTTP 503: an overloaded camera
+    /// refuses every request that way for a while instead of queueing them.
     private func prepareWaitingOutOverload() async throws {
         let deadline = Date().addingTimeInterval(timing.overloadWaitTimeout)
         while true {
@@ -590,7 +591,7 @@ final class RemoteShootingSession: ObservableObject {
                 try await prepareCameraAndLiveView(requestAccess: true)
                 return
             } catch let LumixError.http(code, _) where code == 503 && Date() < deadline && lease != nil {
-                phase = .connecting("The camera is still busy with an earlier connection. Waiting for it…")
+                phase = .connecting("The camera is busy. Waiting for it to accept remote control…")
                 try await Task.sleep(for: timing.overloadRetryDelay)
                 guard lease != nil else { throw CancellationError() }
             }

@@ -289,7 +289,7 @@ final class RemoteShootingSessionTests: XCTestCase {
         XCTAssertNil(coordinator.exclusiveActivity)
     }
 
-    func testStartWaitsWhileTheCameraStillHoldsAnEarlierSession() async throws {
+    func testStartWaitsWhileTheCameraAnswersOverloaded() async throws {
         await camera.setOverloaded(3)
         await session.start()
         XCTAssertEqual(session.phase, .connecting("Starting live view…"))
@@ -387,7 +387,7 @@ actor ScriptedRemoteCamera: RemoteCameraControlling {
     func enqueue(_ command: String, _ replies: [String]) { overrides[command, default: []].append(contentsOf: replies) }
     func setMode(_ value: String) { mode = value }
     func setFailing(_ value: Bool) { isFailing = value }
-    /// Answers the next `count` requests the way a GM1S does while it still holds an earlier session.
+    /// Answers the next `count` requests the way an overloaded GM1S does.
     func setOverloaded(_ count: Int) { overloadedReplies = count }
     func setCaptureWritesToCard(_ value: Bool) { captureWritesToCard = value }
     func startRecording() { isRecording = true }
