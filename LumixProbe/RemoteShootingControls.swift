@@ -91,6 +91,35 @@ struct RemoteShootingSetting: Equatable, Identifiable, Sendable {
     }
 }
 
+extension RemoteShootingSetting {
+    /// Exposure compensation split around ±0, each side ordered outward from ±0, so a
+    /// long range (the GM1S offers −5…+5 in thirds) opens at the values used most.
+    struct CompensationGroups: Equatable, Sendable {
+        var neutral: [Option] = []
+        var brighter: [Option] = []
+        var darker: [Option] = []
+    }
+
+    /// True when the options are too many for one menu that opens at its first entry.
+    var groupsCompensationOptions: Bool { kind == .exposureCompensation && options.count > 9 }
+
+    var compensationGroups: CompensationGroups {
+        var groups = CompensationGroups()
+        var values: [String: Double] = [:]
+        for option in options {
+            guard let value = LumixAPEX.parse(option.value), abs(value) > 0.01 else {
+                groups.neutral.append(option)
+                continue
+            }
+            values[option.id] = value
+            if value > 0 { groups.brighter.append(option) } else { groups.darker.append(option) }
+        }
+        groups.brighter.sort { values[$0.id, default: 0] < values[$1.id, default: 0] }
+        groups.darker.sort { values[$0.id, default: 0] > values[$1.id, default: 0] }
+        return groups
+    }
+}
+
 /// Aperture or shutter speed, available in the A/S/M positions of the mode dial.
 struct RemoteExposureControl: Equatable, Sendable {
     let title: String

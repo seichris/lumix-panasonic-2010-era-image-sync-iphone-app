@@ -199,6 +199,11 @@ final class LumixRemoteProtocolTests: XCTestCase {
         XCTAssertEqual(exposure.options.last?.command(for: .exposureCompensation), .setSetting("exposure", value: "5"))
         XCTAssertEqual(RemoteShootingSetting.Kind.exposureCompensation.menuItemID(schema: schema, currentMenu: current),
                        "menu_item_id_exposure2")
+        XCTAssertFalse(exposure.groupsCompensationOptions, "Five options fit one menu")
+        let groups = exposure.compensationGroups
+        XCTAssertEqual(groups.neutral.map(\.label), ["±0"])
+        XCTAssertEqual(groups.brighter.map(\.label), ["+⅓", "+5"])
+        XCTAssertEqual(groups.darker.map(\.label), ["−⅓", "−4⅔"], "Each side starts next to ±0")
 
         let focus = try XCTUnwrap(controls.settings.first { $0.kind == .focusMode })
         XCTAssertFalse(focus.canChange, "The GM1S remote menu does not offer focus modes")
@@ -230,6 +235,21 @@ final class LumixRemoteProtocolTests: XCTestCase {
             capabilities: nil
         )
         XCTAssertEqual(unknownMode.shutter?.fallbackLabel, "1/250", "Without curmenu the mode is unknown, so the stored value stays")
+    }
+
+    func testTheFullGM1SExposureRangeIsSplitAroundZero() {
+        let values = (-15...15).map { thirds in thirds % 3 == 0 ? "\(thirds / 3)" : "\(thirds)/3" }
+        let setting = RemoteShootingSetting(
+            kind: .exposureCompensation, title: "Exposure", isEnabled: true, currentValue: "1", currentLabel: "+1",
+            options: values.map { .init(id: "ev\($0)", label: LumixAPEX.compensationLabel($0), value: $0, value2: nil, isEnabled: true) }
+        )
+        XCTAssertTrue(setting.groupsCompensationOptions)
+        let groups = setting.compensationGroups
+        XCTAssertEqual(groups.neutral.map(\.value), ["0"])
+        XCTAssertEqual(groups.brighter.count, 15)
+        XCTAssertEqual(groups.brighter.prefix(4).map(\.label), ["+⅓", "+⅔", "+1", "+1⅓"])
+        XCTAssertEqual(groups.darker.prefix(2).map(\.label), ["−⅓", "−⅔"])
+        XCTAssertEqual(groups.darker.last?.label, "−5")
     }
 
     func testCameraErrorPagesAreShownAsText() {

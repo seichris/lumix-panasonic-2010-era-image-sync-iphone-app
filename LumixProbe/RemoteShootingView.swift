@@ -234,23 +234,53 @@ struct RemoteShootingView: View {
 
     private func settingMenu(_ setting: RemoteShootingSetting) -> some View {
         Menu {
-            ForEach(setting.options) { option in
-                Button {
-                    Task { await session.apply(option, to: setting) }
-                } label: {
-                    if setting.isCurrent(option) {
-                        Label(option.label, systemImage: "checkmark")
-                    } else {
-                        Text(option.label)
-                    }
-                }
-                .disabled(!option.isEnabled)
+            if setting.groupsCompensationOptions {
+                let groups = setting.compensationGroups
+                ForEach(groups.neutral) { option in optionButton(option, of: setting) }
+                compensationSubmenu("Brighter", systemImage: "plus.circle", options: groups.brighter, of: setting)
+                compensationSubmenu("Darker", systemImage: "minus.circle", options: groups.darker, of: setting)
+            } else {
+                ForEach(setting.options) { option in optionButton(option, of: setting) }
             }
         } label: {
             settingChip(title: setting.title, value: setting.currentLabel, enabled: setting.canChange)
         }
         .disabled(!setting.canChange || !session.canOperate)
         .accessibilityIdentifier("remote-setting-\(setting.kind.rawValue)")
+    }
+
+    private func optionButton(_ option: RemoteShootingSetting.Option, of setting: RemoteShootingSetting) -> some View {
+        Button {
+            Task { await session.apply(option, to: setting) }
+        } label: {
+            if setting.isCurrent(option) {
+                Label(option.label, systemImage: "checkmark")
+            } else {
+                Text(option.label)
+            }
+        }
+        .disabled(!option.isEnabled)
+    }
+
+    @ViewBuilder
+    private func compensationSubmenu(
+        _ title: String,
+        systemImage: String,
+        options: [RemoteShootingSetting.Option],
+        of setting: RemoteShootingSetting
+    ) -> some View {
+        if !options.isEmpty {
+            Menu {
+                ForEach(options) { option in optionButton(option, of: setting) }
+            } label: {
+                // Name the current value on the side that holds it.
+                if let current = options.first(where: setting.isCurrent) {
+                    Label("\(title) (\(current.label))", systemImage: "checkmark")
+                } else {
+                    Label(title, systemImage: systemImage)
+                }
+            }
+        }
     }
 
     private func exposureMenu(_ control: RemoteExposureControl, id: String) -> some View {
