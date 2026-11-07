@@ -285,6 +285,40 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(mediaCount.waitForExistence(timeout: 8))
     }
 
+    func testWriteLocationsAndCameraClockFromTheGalleryMenu() throws {
+        app.launchArguments = ["-UITestConnectedGallery"]
+        app.launch()
+        XCTAssertTrue(app.scrollViews["camera-gallery"].waitForExistence(timeout: 8))
+
+        app.buttons["gallery-actions"].tap()
+        let openWriter = app.buttons["open-location-writer"]
+        XCTAssertTrue(openWriter.waitForExistence(timeout: 5))
+        openWriter.tap()
+        XCTAssertTrue(app.navigationBars["Write locations"].waitForExistence(timeout: 5))
+        XCTAssertTrue(element(labelContaining: "Can write locations from the app").waitForExistence(timeout: 8))
+        XCTAssertTrue(element(labelContaining: "The camera decides which photos receive a location").exists)
+
+        let write = app.buttons["geotag-write-start"]
+        scrollToElement(write)
+        write.tap()
+        let confirm = app.buttons["Write locations"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        XCTAssertTrue(element(labelContaining: "The camera reports that it finished").waitForExistence(timeout: 20))
+        let verify = app.buttons["geotag-verify"]
+        scrollToElement(verify)
+        XCTAssertTrue(verify.exists, "Verification is offered after the camera's finish")
+        app.navigationBars["Write locations"].buttons["Close"].tap()
+
+        app.buttons["gallery-actions"].tap()
+        let openClock = app.buttons["open-camera-clock"]
+        XCTAssertTrue(openClock.waitForExistence(timeout: 5))
+        openClock.tap()
+        XCTAssertTrue(app.navigationBars["Camera clock"].waitForExistence(timeout: 5))
+        XCTAssertTrue(element(labelContaining: "Camera reports").waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["camera-clock-set"].exists)
+    }
+
     private func element(labelContaining text: String) -> XCUIElement {
         app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
     }

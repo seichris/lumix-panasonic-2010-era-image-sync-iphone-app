@@ -24,6 +24,7 @@ Retro LUMIX Sync is not affiliated with or endorsed by Panasonic. Panasonic, LUM
 - Download all new photos and videos in one action.
 - Select images and assign a searched Apple Maps location before importing them.
 - Record an optional on-device location track and add a matched location during photo import.
+- Write a recorded location track into the photos on the camera's SD card (cameras that support it), and set the camera clock from the iPhone.
 - Shoot remotely from iPhone with a live viewfinder: still photos, video, touch AF and touch shutter, power zoom where the lens allows it, manual focus, and the exposure, ISO, white-balance, drive-mode, and focus settings the camera reports.
 - On Mac, join the camera Wi-Fi from the macOS menu bar, run the protocol probes, and copy downloaded originals to Downloads.
 - Keep camera traffic local between the iPhone and the camera, without accounts, analytics, ads, or cloud uploads.
@@ -85,6 +86,18 @@ For a direct override, select one or more images in the camera gallery and choos
 
 Matches more than 15 minutes from a usable track point are rejected. The original camera file remains unchanged; on iPhone the matched `CLLocation` is supplied separately when the asset is created in Apple Photos. On Mac the match is shown for review while the original is copied unchanged to Downloads.
 
+### Write the track to photos on the camera
+
+Cameras that support it can write the recorded track into the photos on their own SD card, as Panasonic's Image App does. In the camera gallery, open **Gallery actions → Write locations to camera photos…**, choose the track period (the latest continuous recording by default), and confirm.
+
+Retro LUMIX Sync uploads the track and asks the camera to write. The camera chooses the photos by comparing each photo's capture time on its own clock with the track. Panasonic excludes photos that already contain location information, AVCHD videos, photos taken after the upload, and photos taken while the clock was not set. The app cannot choose individual photos, and RAW and RAW+JPEG behavior has not been verified.
+
+Writing changes the original files on the card and cannot be undone from the app; use a backed-up or disposable card the first time. A "finished" report comes from the camera itself and is not treated as proof: **Check photos in this period** reads the original JPEGs back from the card and compares their GPS data with the track.
+
+### Set the camera clock
+
+**Gallery actions → Set camera clock…** sets the camera's date and time from the iPhone on the next whole minute and reads the clock back where the camera allows it. Do this before shooting. It is separate from location writing, which only tells the camera the iPhone's current time before the upload and does not change the camera's clock. Like Image App, the app sends UTC time with the standard (non-daylight-saving) offset, so the camera's own Daylight Saving setting must match.
+
 ## Privacy
 
 Retro LUMIX Sync has no accounts, advertising, analytics, tracking, or cloud service. Camera credentials are stored in the platform Keychain and are not written to diagnostics. Location tracks and camera diagnostics remain on the device or Mac. See [PRIVACY.md](PRIVACY.md) for details.
@@ -138,6 +151,20 @@ GET /cam.cgi?mode=getsetting&type=iso   /   setsetting&type=iso&value=800
 ```
 
 Each live-view datagram carries a 32-byte header, an optional extension with AF frames and the live exposure, and one JPEG. Malformed or incomplete frames are dropped, and only datagrams from the camera's address are accepted.
+
+Location writing and the clock use (from Panasonic Image App analysis; not yet confirmed on a GM1S):
+
+```text
+GET  /cam.cgi?mode=setsetting&type=clock&value=YYYYMMDDhhmmss%2BHHMM   (set the clock; UTC fields + standard offset)
+GET  /cam.cgi?mode=camcmd&value=playmode
+GET  /cam.cgi?mode=notify&type=clock&value=YYYYMMDDhhmmss%2BHHMM       (tell the camera the phone's time)
+GET  /cam.cgi?mode=startsenddata&type=geodata&value=<bytes>&value2=1   (expects <method>once</method>)
+POST /cam.cgi?mode=senddata&value2=1                                   (multipart, boundary xyzxyz, bindata.bin)
+GET  /cam.cgi?mode=camctrl&type=add_location_data&value=start | abort
+GET  /cam.cgi?mode=getprogress&type=add_location_data                  (prepare, exec, finish, or error)
+```
+
+The track is an 8-byte header followed by 16-byte little-endian records: GPS-epoch seconds, latitude and longitude × 10⁷, altitude in metres, and `A` for samples or `V` for the end of each continuous segment.
 
 Media enumeration uses a UPnP `ContentDirectory:1` SOAP request. Returned DIDL-Lite items may expose multiple resources for one camera item. Retro LUMIX Sync groups them by item ID and resolves profiles according to their purpose:
 
