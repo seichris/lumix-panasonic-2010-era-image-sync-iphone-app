@@ -256,6 +256,23 @@ final class RemoteShootingSessionTests: XCTestCase {
         let commands = await camera.commands
         XCTAssertTrue(commands.contains("mode=setsetting&type=iso&value=800"))
         XCTAssertEqual(session.controls.settings.first { $0.kind == .iso }?.currentValue, "800")
+        XCTAssertEqual(session.notice?.message, "ISO: \(option.label)")
+        XCTAssertEqual(session.notice?.style, .success)
+    }
+
+    func testASettingTheCameraAcknowledgesButDoesNotApplyIsReported() async throws {
+        await session.start()
+        source.emitFrame()
+        try await waitUntil { self.session.phase == .live }
+        // A GM1S answered ok to burst drive mode and still reported single shot.
+        await camera.ignoreSetting("iso")
+        let iso = try XCTUnwrap(session.controls.settings.first { $0.kind == .iso })
+        let option = try XCTUnwrap(iso.options.first { $0.value == "800" })
+
+        await session.apply(option, to: iso)
+        XCTAssertEqual(session.controls.settings.first { $0.kind == .iso }?.currentLabel, "i.Auto")
+        XCTAssertEqual(session.notice?.message, "The camera accepted ISO: \(option.label) but still reports i.Auto.")
+        XCTAssertEqual(session.notice?.style, .warning)
     }
 
     func testUnsupportedZoomIsReportedOnce() async throws {
@@ -373,6 +390,7 @@ actor ScriptedRemoteCamera: RemoteCameraControlling {
     private var isRecording = false
     private var isFailing = false
     private var overloadedReplies = 0
+    private var ignoredSettings: Set<String> = []
     private var settings = ["iso": "auto", "whitebalance": "auto", "drivemode": "normal",
                             "focusmode": "afs", "afmode": "1area", "exposure": "0",
                             "focal": "1024/256", "shtrspeed": "1536/256"]
@@ -392,6 +410,8 @@ actor ScriptedRemoteCamera: RemoteCameraControlling {
     func setCaptureWritesToCard(_ value: Bool) { captureWritesToCard = value }
     func startRecording() { isRecording = true }
     func setSetting(_ type: String, _ value: String) { settings[type] = value }
+    /// Answers `ok` to `setsetting` for this type without changing it.
+    func ignoreSetting(_ type: String) { ignoredSettings.insert(type) }
 
     func perform(_ command: LumixCommand, timeoutInterval: TimeInterval?) async throws -> LumixCommandReply {
         guard belongsToCurrentConnection else { throw LumixError.staleConnection }
@@ -437,7 +457,7 @@ actor ScriptedRemoteCamera: RemoteCameraControlling {
             guard let value = settings[type] else { return "<camrply><result>err_param</result></camrply>" }
             return "<camrply><result>ok</result><settingvalue \(type)=\"\(value)\"></settingvalue></camrply>"
         case ("setsetting", let type?, let value?):
-            settings[type] = value
+            if !ignoredSettings.contains(type) { settings[type] = value }
             return ok
         case ("getinfo", "capability"?, _):
             return "<camrply><result>ok</result><comm_proto_ver>1.3</comm_proto_ver><camcmdlist>" +

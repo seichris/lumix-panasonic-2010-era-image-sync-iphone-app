@@ -460,12 +460,21 @@ final class RemoteShootingSession: ObservableObject {
 
     func apply(_ option: RemoteShootingSetting.Option, to setting: RemoteShootingSetting) async {
         guard canOperate, option.isEnabled else { return }
-        await applySettingCommand(option.command(for: setting.kind), description: "\(setting.title): \(option.label)")
+        let kind = setting.kind
+        await applySettingCommand(option.command(for: kind), description: "\(setting.title): \(option.label)") { controls in
+            guard let current = controls.settings.first(where: { $0.kind == kind }), current.currentValue != nil else { return nil }
+            return current.isCurrent(option) ? nil : current.currentLabel
+        }
     }
 
     func apply(_ option: LumixExposureOption, to control: RemoteExposureControl) async {
         guard canOperate, control.isEnabled else { return }
-        await applySettingCommand(.setSetting(control.settingType, value: option.value), description: "\(control.title): \(option.label)")
+        let settingType = control.settingType
+        await applySettingCommand(.setSetting(control.settingType, value: option.value), description: "\(control.title): \(option.label)") { controls in
+            let refreshed = [controls.shutter, controls.aperture].compactMap { $0 }.first { $0.settingType == settingType }
+            guard let refreshed, refreshed.current != nil else { return nil }
+            return refreshed.isCurrent(option) ? nil : refreshed.currentLabel
+        }
     }
 
     func dismissNotice(_ notice: RemoteShootingNotice) {
@@ -753,18 +762,27 @@ final class RemoteShootingSession: ObservableObject {
         if !controls.isManualFocus, focusPosition != nil { focusPosition = nil }
     }
 
-    private func applySettingCommand(_ command: LumixCommand, description: String) async {
+    /// Sends a setting and reports success only once the camera reads back the new
+    /// value: a GM1S answered `ok` to burst drive mode and stayed in single shot.
+    /// `stillReported` returns the label the camera reports when it differs.
+    private func applySettingCommand(
+        _ command: LumixCommand,
+        description: String,
+        stillReported: (RemoteShootingControls) -> String?
+    ) async {
         let camera = self.camera
         let delay = timing.busyRetryDelay
         do {
             let reply = try await run { try await camera.send(command, busyRetries: 3, busyDelay: delay) }
-            if reply.isOK {
-                show(description, style: .success)
-            } else {
-                show(LumixResultCode.message(for: reply.result), style: .error)
-            }
             await refreshMenus(force: true)
             await refreshSettings(force: true)
+            if !reply.isOK {
+                show(LumixResultCode.message(for: reply.result), style: .error)
+            } else if let reported = stillReported(controls) {
+                show("The camera accepted \(description) but still reports \(reported).", style: .warning)
+            } else {
+                show(description, style: .success)
+            }
         } catch {
             await handleCommandError(error)
         }
