@@ -129,6 +129,94 @@ final class CameraGeotagVerifier: ObservableObject {
     }
 }
 
+/// Reads capture times from the card before a write. Some cameras (the GM1S)
+/// list their media without dates, so the period's photos are otherwise unknown.
+/// Newest photos come first; the scan stops after a run of photos older than the
+/// period, since the camera numbers its files in shooting order.
+@MainActor
+final class CameraGeotagPeriodScanner: ObservableObject {
+    static let olderPhotosBeforeStopping = 5
+
+    /// A scan that ran to its end for periods starting at `periodStart` or later.
+    struct Completion: Equatable {
+        let periodStart: Date
+        let checked: Int
+        /// It stopped at photos older than the period rather than at the end of the card.
+        let reachedOlderPhotos: Bool
+
+        func covers(_ period: ClosedRange<Date>) -> Bool { period.lowerBound >= periodStart }
+    }
+
+    @Published private(set) var isRunning = false
+    @Published private(set) var checkedCount = 0
+    @Published private(set) var completion: Completion?
+    private var task: Task<Void, Never>?
+
+    func start(store: CameraGalleryStore, period: ClosedRange<Date>, limit: Int = 120) {
+        guard task == nil else { return }
+        task = Task { [weak self] in
+            await self?.scan(store: store, period: period, limit: limit)
+            self?.task = nil
+        }
+    }
+
+    func cancel() { task?.cancel() }
+
+    func scan(store: CameraGalleryStore, period: ClosedRange<Date>, limit: Int) async {
+        isRunning = true
+        checkedCount = 0
+        completion = nil
+        defer { isRunning = false }
+        if store.canLoadMore { await store.loadAllPages() }
+        let photos = store.photos.filter { $0.kind == .photo && $0.originalJPEGResource != nil }
+        var olderInARow = 0
+        for photo in photos.prefix(max(1, limit)) {
+            if Task.isCancelled { return }
+            let state = await store.inspectOriginalMetadata(for: photo)
+            checkedCount += 1
+            guard case let .resolved(inspection) = state, let date = inspection.exifCaptureDate else { continue }
+            olderInARow = date < period.lowerBound ? olderInARow + 1 : 0
+            if olderInARow >= Self.olderPhotosBeforeStopping {
+                completion = Completion(periodStart: period.lowerBound, checked: checkedCount, reachedOlderPhotos: true)
+                return
+            }
+        }
+        if !Task.isCancelled, photos.count <= limit {
+            completion = Completion(periodStart: period.lowerBound, checked: checkedCount, reachedOlderPhotos: false)
+        }
+    }
+
+    /// The capture time the app knows for a photo: read from its original, from
+    /// the Photos import history, or from the camera's media list.
+    static func knownCaptureDate(of photo: LumixPhoto, in store: CameraGalleryStore) -> Date? {
+        if case let .resolved(inspection)? = store.metadataInspectionState(for: photo), let date = inspection.exifCaptureDate {
+            return date
+        }
+        return store.importHistoryRecord(for: photo)?.verifiedCaptureDate ?? photo.captureDate
+    }
+
+    struct PeriodPhoto: Identifiable {
+        let photo: LumixPhoto
+        let captureDate: Date
+        var id: LumixPhoto.ID { photo.id }
+    }
+
+    /// Photos whose known capture time falls inside the period, newest first, and
+    /// how many photos have no known time.
+    static func photos(in period: ClosedRange<Date>, store: CameraGalleryStore) -> (inside: [PeriodPhoto], unknown: Int) {
+        var inside: [PeriodPhoto] = []
+        var unknown = 0
+        for photo in store.photos where photo.kind == .photo {
+            guard let date = knownCaptureDate(of: photo, in: store) else {
+                unknown += 1
+                continue
+            }
+            if period.contains(date) { inside.append(PeriodPhoto(photo: photo, captureDate: date)) }
+        }
+        return (inside.sorted { $0.captureDate > $1.captureDate }, unknown)
+    }
+}
+
 // MARK: - Write screen
 
 struct CameraGeotagWriteView: View {
@@ -137,6 +225,7 @@ struct CameraGeotagWriteView: View {
     @ObservedObject var store: CameraGalleryStore
     @StateObject private var writer: CameraGeotagWriter
     @StateObject private var verifier = CameraGeotagVerifier()
+    @StateObject private var periodScanner = CameraGeotagPeriodScanner()
     private let camera: any CameraGeotagControlling
     private let samples: [LocationSample]
     @State private var support: CameraLocationWriteSupport = .unknown
@@ -202,6 +291,7 @@ struct CameraGeotagWriteView: View {
             }
             .interactiveDismissDisabled(writer.phase.isActive || verifier.isRunning)
             .task { await checkSupport() }
+            .onDisappear { periodScanner.cancel() }
             .onChange(of: scenePhase) { _, phase in
                 // Only a real background transition suspends polling; `.inactive` is transient.
                 if phase == .background { writer.setAppActive(false) }
@@ -309,6 +399,59 @@ struct CameraGeotagWriteView: View {
             }
             .font(.callout)
             .accessibilityIdentifier("geotag-photo-estimate")
+            captureTimeScan
+            periodPhotoList
+        }
+    }
+
+    @ViewBuilder
+    private var captureTimeScan: some View {
+        if periodScanner.isRunning {
+            HStack {
+                ProgressView()
+                Text("Reading capture times from the card (\(periodScanner.checkedCount) photos checked)…")
+            }
+            .font(.caption)
+            Button("Stop reading", role: .cancel) { periodScanner.cancel() }
+        } else if let completion = periodScanner.completion, completion.covers(period) {
+            let unknown = CameraGeotagPeriodScanner.photos(in: period, store: store).unknown
+            Text(completion.reachedOlderPhotos && unknown > 0
+                 ? "Read the newest \(completion.checked) photos. The other \(unknown) come before them on the card, so they are taken to be older than this period."
+                 : "Read capture times from \(completion.checked) photos on the card.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("geotag-capture-time-scan-result")
+        } else if CameraGeotagPeriodScanner.photos(in: period, store: store).unknown > 0 {
+            Button {
+                periodScanner.start(store: store, period: period)
+            } label: {
+                Label("Read capture times from the card", systemImage: "clock.arrow.circlepath")
+            }
+            .disabled(writer.phase.isActive || verifier.isRunning)
+            .accessibilityIdentifier("geotag-read-capture-times")
+            Text("The camera's media list does not include capture times for every photo. Reading them downloads the start of each original JPEG, newest first, until the photos are older than this period. Nothing on the card changes.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var periodPhotoList: some View {
+        let inside = CameraGeotagPeriodScanner.photos(in: period, store: store).inside
+        if !inside.isEmpty {
+            DisclosureGroup("Photos in this period (\(inside.count))") {
+                ForEach(inside.prefix(50)) { entry in
+                    LabeledContent(entry.photo.displayFilename) {
+                        Text(entry.captureDate.formatted(date: .abbreviated, time: .standard))
+                    }
+                    .font(.caption)
+                }
+                if inside.count > 50 {
+                    Text("and \(inside.count - 50) more").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .font(.callout)
+            .accessibilityIdentifier("geotag-period-photos")
         }
     }
 
@@ -322,7 +465,7 @@ struct CameraGeotagWriteView: View {
                 } label: {
                     Label("Write locations to camera photos…", systemImage: "mappin.and.ellipse")
                 }
-                .disabled(!support.isSupported || (try? selection.get()) == nil || isCheckingSupport)
+                .disabled(!support.isSupported || (try? selection.get()) == nil || isCheckingSupport || periodScanner.isRunning)
                 .accessibilityIdentifier("geotag-write-start")
             case let .preparing(message):
                 HStack { ProgressView(); Text(message) }
@@ -427,24 +570,13 @@ struct CameraGeotagWriteView: View {
     }
 
     private var photoEstimate: String {
-        var inside = 0
-        var unknown = 0
-        for photo in store.photos where photo.kind == .photo {
-            guard let date = knownCaptureDate(photo) else {
-                unknown += 1
-                continue
-            }
-            if period.contains(date) { inside += 1 }
+        let (inside, unknown) = CameraGeotagPeriodScanner.photos(in: period, store: store)
+        if let completion = periodScanner.completion, completion.covers(period), completion.reachedOlderPhotos {
+            // The unread photos precede the scanned ones on the card.
+            return "\(inside.count)"
         }
-        if inside == 0, unknown > 0 { return "Unknown (\(unknown) without a known time)" }
-        return unknown > 0 ? "\(inside) (+\(unknown) unknown)" : "\(inside)"
-    }
-
-    private func knownCaptureDate(_ photo: LumixPhoto) -> Date? {
-        if case let .resolved(inspection)? = store.metadataInspectionState(for: photo), let date = inspection.exifCaptureDate {
-            return date
-        }
-        return store.importHistoryRecord(for: photo)?.verifiedCaptureDate ?? photo.captureDate
+        if inside.isEmpty, unknown > 0 { return "Unknown (\(unknown) without a known time)" }
+        return unknown > 0 ? "\(inside.count) (+\(unknown) unknown)" : "\(inside.count)"
     }
 
     private var verificationSummary: String {
