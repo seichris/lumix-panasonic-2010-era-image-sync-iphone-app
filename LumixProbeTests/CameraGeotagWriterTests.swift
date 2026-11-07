@@ -222,6 +222,22 @@ final class CameraGeotagWriterTests: XCTestCase {
         XCTAssertTrue(message.contains("does not accept"))
     }
 
+    func testReadingTheClockOfACameraThatDoesNotReportItExplainsWhy() async throws {
+        // The GM1S (firmware 2.70) answers this way.
+        await camera.override("mode=getsetting&type=clock", with: ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<camrply><result>err_non_support</result></camrply>"])
+        let synchronizer = CameraClockSynchronizer(camera: camera, coordinator: coordinator, timeZone: plusSeven)
+        await synchronizer.readCameraClock()
+        XCTAssertNil(synchronizer.lastReading)
+        XCTAssertEqual(synchronizer.phase, .idle)
+        XCTAssertEqual(synchronizer.clockReadProblem,
+                       "This camera does not report its clock (err_non_support). Check the time on the camera itself.")
+        XCTAssertNil(coordinator.exclusiveActivity)
+
+        await synchronizer.readCameraClock()
+        XCTAssertEqual(synchronizer.lastReading?.raw, "20261021120000+0700", "A camera that does report it clears the note")
+        XCTAssertNil(synchronizer.clockReadProblem)
+    }
+
     func testCancellingTheClockCountdownLeavesTheClockUnchanged() async throws {
         let synchronizer = CameraClockSynchronizer(camera: camera, coordinator: coordinator, timeZone: plusSeven,
                                                    waitUntil: { _ in try await Task.sleep(for: .seconds(30)) })

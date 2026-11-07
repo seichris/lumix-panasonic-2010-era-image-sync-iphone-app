@@ -447,6 +447,9 @@ final class CameraClockSynchronizer: ObservableObject {
     @Published private(set) var phase: CameraClockSyncPhase = .idle
     @Published private(set) var lastReading: LumixCameraClockReading?
     @Published private(set) var lastReadingAt: Date?
+    /// Why the camera's clock cannot be shown. A GM1S answers the read with
+    /// `err_non_support`, so its clock can only be checked on the camera itself.
+    @Published private(set) var clockReadProblem: String?
 
     private let camera: any CameraGeotagControlling
     private let coordinator: CameraModeCoordinator
@@ -485,8 +488,17 @@ final class CameraClockSynchronizer: ObservableObject {
         do {
             let lease = try await coordinator.beginExclusive(.clockSync)
             defer { coordinator.endExclusive(lease) }
-            lastReading = try await camera.cameraClock()
-            lastReadingAt = now()
+            let reply = try await camera.send(.getSetting("clock"), busyRetries: 2, busyDelay: .milliseconds(500))
+            if let reading = LumixCameraClockReading(reply: reply) {
+                lastReading = reading
+                lastReadingAt = now()
+                clockReadProblem = nil
+            } else {
+                lastReading = nil
+                clockReadProblem = reply.isOK
+                    ? "The camera's clock reply could not be read."
+                    : "This camera does not report its clock (\(reply.result)). Check the time on the camera itself."
+            }
             phase = previous == .reading ? .idle : previous
         } catch {
             phase = .failed(error.localizedDescription)
