@@ -24,6 +24,7 @@ Retro LUMIX Sync is not affiliated with or endorsed by Panasonic. Panasonic, LUM
 - Download all new photos and videos in one action.
 - Select images and assign a searched Apple Maps location before importing them.
 - Record an optional on-device location track and add a matched location during photo import.
+- Receive each JPEG as it is taken with the camera's **Send Images While Recording → Smartphone** mode, in a foreground receiving session that saves every photo to Apple Photos.
 - Shoot remotely from iPhone with a live viewfinder: still photos, video, touch AF and touch shutter, power zoom where the lens allows it, manual focus, and the exposure, ISO, white-balance, drive-mode, and focus settings the camera reports.
 - On Mac, join the camera Wi-Fi from the macOS menu bar, run the protocol probes, and copy downloaded originals to Downloads.
 - Keep camera traffic local between the iPhone and the camera, without accounts, analytics, ads, or cloud uploads.
@@ -68,6 +69,18 @@ While connected through **Image App Direct**, tap the viewfinder button in the c
 Only one part of the app controls the camera's mode at a time. Opening or refreshing the gallery waits while remote shooting holds the camera in recording mode, and when you return to the gallery it switches the camera back to playback and reloads so new photos appear. Requests that belong to an earlier connection are refused, so a slow command cannot reach a camera that joined afterwards at the same address.
 
 Live view pauses while the app is in the background and resumes when you return. If the camera is switched to playback or operated directly, remote control pauses and resumes when the camera returns to recording mode. Leaving the screen stops a video recording started from it.
+
+## Send Images While Recording
+
+On the camera choose **Wi‑Fi → Wi‑Fi Function → New Connection → Send Images While Recording → Smartphone → Direct → Manual Connection**. In Retro LUMIX Sync tap **Receive photos while shooting**, join the network the camera shows, and tap **Start receiving**. When the camera lists "Retro LUMIX Sync", select it, choose **Size → Original** for full-size JPEGs, and press **Set**.
+
+- Each JPEG is reported as saved only after Photos has saved it.
+- Incomplete uploads are discarded, and repeated deliveries of the same bytes are skipped.
+- Files that cannot be saved yet, for example without Photos access, are kept on the iPhone until **Try saving again** succeeds.
+- Receiving is a foreground session that keeps the screen on. It pauses when the iPhone locks or the app leaves the foreground, and resumes when you return.
+- A received JPEG counts as the card original only after the gallery compares it with the file on the card. A byte-identical original is then recorded as imported without saving a duplicate.
+
+iOS allows the usual multicast discovery only after Apple grants the app its multicast networking entitlement. Until then the app announces itself directly to the camera. See [docs/send-images-while-recording.md](docs/send-images-while-recording.md) for the protocol, the entitlement request, and the hardware checks still to run.
 
 ## Geotagging
 
@@ -164,5 +177,6 @@ The implementation draws on behavior independently implemented or reverse-engine
 - `gphoto/libgphoto2`, `camlibs/lumix/lumix.c`
 - `peci1/lumix-link-desktop`
 - `SahajJain01/lumix-local` (GX80 live-view packet layout, menu schema, and Image App command analysis)
+- `KerbalNo15/Shutterlink` (Send Images While Recording receiver, tested by its author on a GM1 and a G85)
 - Panasonic Image App documentation and support history
 - Panasonic/Lumix UPnP device descriptions exposing `ContentDirectory:1`

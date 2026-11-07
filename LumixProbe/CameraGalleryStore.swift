@@ -207,6 +207,9 @@ final class CameraGalleryStore: ObservableObject {
     private let importHistoryStore: any CameraImportHistoryStoring
     private let locationOverrideStore: any CameraLocationOverrideStoring
     private let importReconciler: any CameraImportReconciling
+    /// Photos received through Send Images While Recording. An import whose original is
+    /// byte-identical to a saved transfer is recorded without saving a duplicate.
+    private let pushTransferHistory: CameraPushTransferHistory?
     private let photoMetadataReader: @Sendable (URL) -> PhotoOriginalMetadata
     private let metadataInspectionDownloadTimeout: Duration
     private let mediaCache: LumixMediaCache
@@ -236,6 +239,7 @@ final class CameraGalleryStore: ObservableObject {
         importHistoryStore: any CameraImportHistoryStoring = UserDefaultsCameraImportHistoryStore(),
         locationOverrideStore: any CameraLocationOverrideStoring = UserDefaultsCameraLocationOverrideStore(),
         importReconciler: any CameraImportReconciling = NoopCameraImportReconciler(),
+        pushTransferHistory: CameraPushTransferHistory? = nil,
         sourceIdentifier: String = "camera",
         pageSize: Int = 20,
         mediaCacheByteLimit: Int = 24 * 1024 * 1024,
@@ -252,6 +256,7 @@ final class CameraGalleryStore: ObservableObject {
         self.importHistoryStore = importHistoryStore
         self.locationOverrideStore = locationOverrideStore
         self.importReconciler = importReconciler
+        self.pushTransferHistory = pushTransferHistory
         self.photoMetadataReader = photoMetadataReader
         self.metadataInspectionDownloadTimeout = metadataInspectionDownloadTimeout
         self.pageSize = max(1, pageSize)
@@ -267,6 +272,7 @@ final class CameraGalleryStore: ObservableObject {
         importHistoryStore: any CameraImportHistoryStoring = UserDefaultsCameraImportHistoryStore(),
         locationOverrideStore: any CameraLocationOverrideStoring = UserDefaultsCameraLocationOverrideStore(),
         importReconciler: any CameraImportReconciling = NoopCameraImportReconciler(),
+        pushTransferHistory: CameraPushTransferHistory? = nil,
         pageSize: Int = 20,
         mediaCacheByteLimit: Int = 24 * 1024 * 1024,
         metadataInspectionDownloadTimeout: Duration = .seconds(45),
@@ -282,6 +288,7 @@ final class CameraGalleryStore: ObservableObject {
         self.importHistoryStore = importHistoryStore
         self.locationOverrideStore = locationOverrideStore
         self.importReconciler = importReconciler
+        self.pushTransferHistory = pushTransferHistory
         self.photoMetadataReader = photoMetadataReader
         self.metadataInspectionDownloadTimeout = metadataInspectionDownloadTimeout
         self.pageSize = max(1, pageSize)
@@ -304,6 +311,7 @@ final class CameraGalleryStore: ObservableObject {
         importHistoryStore = InMemoryCameraImportHistoryStore()
         locationOverrideStore = InMemoryCameraLocationOverrideStore()
         importReconciler = NoopCameraImportReconciler()
+        pushTransferHistory = nil
         photoMetadataReader = { PhotoOriginalMetadataReader.read(from: $0) }
         metadataInspectionDownloadTimeout = .seconds(45)
         pageSize = 20
@@ -1141,7 +1149,13 @@ final class CameraGalleryStore: ObservableObject {
 
                 importStates[photo.id] = .saving
                 try Task.checkCancellation()
-                try await importer.save(downloadedMedia, geotag: geotag)
+                let matchingTransfer = await matchingPushTransfer(for: downloadedMedia)
+                if let matchingTransfer {
+                    // Photos already holds these exact bytes from Send Images While Recording.
+                    pushTransferHistory?.markMatchesCardOriginal(matchingTransfer.id)
+                } else {
+                    try await importer.save(downloadedMedia, geotag: geotag)
+                }
                 // PhotoKit can commit a save while a reconnect is cancelling this batch.
                 importStates[photo.id] = .saved
                 recordImport(
@@ -1150,7 +1164,8 @@ final class CameraGalleryStore: ObservableObject {
                     verifiedCaptureDate: captureDate,
                     appliedLocation: originalMetadata?.embeddedLocation
                         ?? manualLocation
-                        ?? geotag.map { PhotoGeotagLocation(match: $0) }
+                        ?? geotag.map { PhotoGeotagLocation(match: $0) },
+                    evidence: matchingTransfer == nil ? .appImport : .sendWhileRecording
                 )
                 batchProgress?.saved += 1
                 selectedPhotoIDs.remove(photo.id)
@@ -1195,11 +1210,25 @@ final class CameraGalleryStore: ObservableObject {
         }
     }
 
+    /// A saved Send Images While Recording transfer byte-identical to this JPEG import.
+    /// Bytes, not names, decide: the camera's media server calls the card's `P1030516.JPG`
+    /// `DO1030516.JPG`, and only an identical file proves the transfer was the original.
+    private func matchingPushTransfer(for media: DownloadedCameraMedia) async -> CameraPushTransferRecord? {
+        guard let pushTransferHistory, media.variant == .jpeg, let jpeg = media.resources.first,
+              !pushTransferHistory.records.isEmpty else { return nil }
+        let fileURL = jpeg.fileURL
+        guard let sha256 = await Task.detached(priority: .userInitiated, operation: {
+            try? PushReceivedFile.sha256(of: fileURL)
+        }).value else { return nil }
+        return pushTransferHistory.savedRecord(sha256: sha256)
+    }
+
     private func recordImport(
         key: String,
         variant: CameraImportVariant,
         verifiedCaptureDate: Date?,
-        appliedLocation: PhotoGeotagLocation?
+        appliedLocation: PhotoGeotagLocation?,
+        evidence: CameraImportEvidence = .appImport
     ) {
         var record = importHistory[key] ?? CameraImportHistoryRecord(
             variants: [],
@@ -1207,7 +1236,7 @@ final class CameraGalleryStore: ObservableObject {
         )
         record.variants.insert(variant)
         record.lastImportedAt = .now
-        record.evidence = .appImport
+        record.evidence = evidence
         if let verifiedCaptureDate { record.verifiedCaptureDate = verifiedCaptureDate }
         if let appliedLocation { record.appliedLocation = appliedLocation }
         importHistory[key] = record
