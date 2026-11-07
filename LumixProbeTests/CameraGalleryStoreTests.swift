@@ -518,6 +518,55 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertTrue(CameraGeotagPeriodScanner.photos(in: olderPeriod, store: store).inside.isEmpty)
     }
 
+    /// On a GM1S the pre-write scan cached the newest photos, and the check after
+    /// the write then reported those cached, GPS-free results instead of the card.
+    func testVerificationAfterAWriteRereadsPhotosTheScanAlreadyRead() async throws {
+        let table = CaptureDateTable()
+        let client = MockGalleryClient(total: 3)
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 3,
+            photoMetadataReader: { fileURL in
+                PhotoOriginalMetadata(
+                    captureDate: table.date(forDownloadedFile: fileURL),
+                    embeddedLocation: table.location(forDownloadedFile: fileURL)
+                )
+            }
+        )
+        await store.loadInitial()
+        let base = Date(timeIntervalSince1970: 1_794_067_200)
+        for (position, photo) in store.photos.enumerated() {
+            table.set(base.addingTimeInterval(Double(-60 * position)), for: try XCTUnwrap(photo.originalJPEGResource).url)
+        }
+        let period = base.addingTimeInterval(-600)...base.addingTimeInterval(60)
+        let track = [
+            LocationSample(timestamp: period.lowerBound, latitude: 22.3, longitude: 114.17, horizontalAccuracy: 8),
+            LocationSample(timestamp: period.upperBound, latitude: 22.3, longitude: 114.17, horizontalAccuracy: 8)
+        ]
+
+        await CameraGeotagPeriodScanner().scan(store: store, period: period, limit: 120)
+        XCTAssertEqual(CameraGeotagPeriodScanner.photos(in: period, store: store).inside.count, 3)
+
+        // The camera writes GPS into the newest photo only.
+        let tagged = try XCTUnwrap(store.photos.first)
+        table.setLocation(PhotoGeotagLocation(latitude: 22.3, longitude: 114.17), for: try XCTUnwrap(tagged.originalJPEGResource).url)
+
+        let cached = await store.inspectOriginalMetadata(for: tagged)
+        guard case let .resolved(before) = cached else { return XCTFail("Expected the cached scan result") }
+        XCTAssertNil(before.embeddedLocation, "Without force the scan's result is reused")
+
+        let verifier = CameraGeotagVerifier()
+        await verifier.verify(store: store, period: period, samples: track, baseline: [:], limit: 120)
+        let statuses = Dictionary(uniqueKeysWithValues: verifier.results.map { ($0.id, $0.status) })
+        guard case .taggedNearTrack? = statuses[tagged.id] else {
+            return XCTFail("The written photo must be read again from the card, got \(String(describing: statuses[tagged.id]))")
+        }
+        XCTAssertEqual(statuses.values.filter { $0 == .notTagged }.count, 2)
+        let downloads = await client.downloadCount
+        XCTAssertEqual(downloads, 6, "Every photo is read once by the scan and once more by the check")
+    }
+
     func testConcurrentMetadataInspectionsShareOneCameraDownload() async throws {
         let client = MockGalleryClient(total: 1, downloadDelay: .milliseconds(100))
         let store = CameraGalleryStore(
@@ -897,14 +946,24 @@ private struct StubImportReconciler: CameraImportReconciling {
 private final class CaptureDateTable: @unchecked Sendable {
     private let lock = NSLock()
     private var dates: [String: Date] = [:]
+    private var locations: [String: PhotoGeotagLocation] = [:]
 
     func set(_ date: Date, for url: URL) {
         lock.withLock { dates[url.lastPathComponent] = date }
     }
 
+    func setLocation(_ location: PhotoGeotagLocation, for url: URL) {
+        lock.withLock { locations[url.lastPathComponent] = location }
+    }
+
     func date(forDownloadedFile fileURL: URL) -> Date? {
         let name = fileURL.lastPathComponent
         return lock.withLock { dates.first { name.hasSuffix("-" + $0.key) }?.value }
+    }
+
+    func location(forDownloadedFile fileURL: URL) -> PhotoGeotagLocation? {
+        let name = fileURL.lastPathComponent
+        return lock.withLock { locations.first { name.hasSuffix("-" + $0.key) }?.value }
     }
 }
 
