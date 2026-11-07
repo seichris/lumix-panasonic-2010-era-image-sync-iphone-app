@@ -14,17 +14,27 @@ struct RemoteShootingSetting: Equatable, Identifiable, Sendable {
 
         var id: String { rawValue }
 
-        /// The `allmenu` entry that lists this setting's options.
-        var menuItemID: String {
+        /// The `allmenu` entries that may list this setting's options, in order of
+        /// preference. Menu sets name some entries differently: the GM1S (menu set 2.0)
+        /// lists exposure compensation as `exposure2`.
+        var menuItemIDs: [String] {
             switch self {
-            case .iso: "menu_item_id_sensitivity"
-            case .exposureCompensation: "menu_item_id_exposure3"
-            case .whiteBalance: "menu_item_id_whitebalance"
-            case .driveMode: "menu_item_id_drivemode"
-            case .focusMode: "menu_item_id_focusmode"
-            case .afMode: "menu_item_id_afmode"
-            case .peaking: "menu_item_id_peaking"
+            case .iso: ["menu_item_id_sensitivity"]
+            case .exposureCompensation: ["menu_item_id_exposure3", "menu_item_id_exposure2"]
+            case .whiteBalance: ["menu_item_id_whitebalance"]
+            case .driveMode: ["menu_item_id_drivemode"]
+            case .focusMode: ["menu_item_id_focusmode"]
+            case .afMode: ["menu_item_id_afmode"]
+            case .peaking: ["menu_item_id_peaking"]
             }
+        }
+
+        /// The entry this camera uses: the first one its menu schema lists, else the
+        /// first one its current menu reports.
+        func menuItemID(schema: LumixMenuSchema?, currentMenu: LumixCurrentMenu?) -> String {
+            menuItemIDs.first { schema?.item($0) != nil }
+                ?? menuItemIDs.first { currentMenu?.entries[$0] != nil }
+                ?? menuItemIDs[0]
         }
 
         /// The `getsetting`/`setsetting` type.
@@ -89,6 +99,13 @@ struct RemoteExposureControl: Equatable, Sendable {
     let current: Double?
     let currentLabel: String
     let isEnabled: Bool
+    /// The camera picks this value itself in the current mode (P, or the other
+    /// control in A/S). `getsetting` then reports the stored A/S/M value, not the
+    /// one in use, so it must not be shown as current.
+    var isChosenByCamera = false
+
+    /// What to show when live view carries no exposure readout.
+    var fallbackLabel: String { isChosenByCamera ? "Auto" : currentLabel }
 
     func isCurrent(_ option: LumixExposureOption) -> Bool {
         guard let current else { return false }
@@ -124,11 +141,12 @@ struct RemoteShootingControls: Equatable, Sendable {
         controls.exposureMode = currentMenu?.exposureMode ?? .unknown
 
         for kind in RemoteShootingSetting.Kind.allCases {
-            let current = values[kind]?.value ?? currentMenu?.value(kind.menuItemID)
-            let menuItem = schema?.item(kind.menuItemID)
+            let menuItemID = kind.menuItemID(schema: schema, currentMenu: currentMenu)
+            let current = values[kind]?.value ?? currentMenu?.value(menuItemID)
+            let menuItem = schema?.item(menuItemID)
             let options = menuItem.map { flattenedOptions(of: $0, kind: kind, currentMenu: currentMenu) } ?? []
             guard menuItem != nil || current != nil else { continue }
-            let isEnabled = menuItem != nil && (currentMenu?.isEnabled(kind.menuItemID, default: !options.isEmpty) ?? true)
+            let isEnabled = menuItem != nil && (currentMenu?.isEnabled(menuItemID, default: !options.isEmpty) ?? true)
             controls.settings.append(
                 RemoteShootingSetting(
                     kind: kind,
@@ -151,7 +169,8 @@ struct RemoteShootingControls: Equatable, Sendable {
                 options: LumixAPEX.apertureOptions(open: open, closed: closed),
                 current: current,
                 currentLabel: LumixAPEX.apertureLabel(current),
-                isEnabled: controls.exposureMode.allowsApertureChange
+                isEnabled: controls.exposureMode.allowsApertureChange,
+                isChosenByCamera: controls.exposureMode != .unknown && !controls.exposureMode.allowsApertureChange
             )
         }
         if let lens, let fastest = lens.shutterFastest, let slowest = lens.shutterSlowest {
@@ -162,7 +181,8 @@ struct RemoteShootingControls: Equatable, Sendable {
                 options: LumixAPEX.shutterOptions(fastest: fastest, slowest: slowest),
                 current: current,
                 currentLabel: LumixAPEX.shutterLabel(current),
-                isEnabled: controls.exposureMode.allowsShutterChange
+                isEnabled: controls.exposureMode.allowsShutterChange,
+                isChosenByCamera: controls.exposureMode != .unknown && !controls.exposureMode.allowsShutterChange
             )
         }
 

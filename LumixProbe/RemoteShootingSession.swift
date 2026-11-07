@@ -22,6 +22,11 @@ struct RemoteShootingTiming: Sendable {
     var shutterReleaseRetryInterval: Duration = .milliseconds(100)
     var shutterReleaseTimeout: TimeInterval = 5
     var manualFocusRepeatInterval: Duration = .milliseconds(150)
+    /// How long to keep retrying while the camera answers HTTP 503. A GM1S still
+    /// holding a remote session that ended abruptly (the app was force-quit while
+    /// streaming) refused new requests this way for over a minute.
+    var overloadWaitTimeout: TimeInterval = 90
+    var overloadRetryDelay: Duration = .seconds(3)
 
     static let standard = RemoteShootingTiming()
 }
@@ -204,7 +209,7 @@ final class RemoteShootingSession: ObservableObject {
             let lease = try await coordinator.beginExclusive(.remoteShooting)
             lease.onRevoked = { [weak self] in self?.handleRevokedLease() }
             self.lease = lease
-            try await prepareCameraAndLiveView(requestAccess: true)
+            try await prepareWaitingOutOverload()
             // The screen may have closed while the camera was being prepared.
             guard self.lease != nil else { return }
             startPolling()
@@ -567,9 +572,27 @@ final class RemoteShootingSession: ObservableObject {
         } catch {
             // The camera may have dropped the remote session while the app was away.
             do {
-                try await prepareCameraAndLiveView(requestAccess: true)
+                try await prepareWaitingOutOverload()
+            } catch is CancellationError {
+                return
             } catch {
                 await finish(failure: error)
+            }
+        }
+    }
+
+    /// Prepares the camera, waiting while it answers HTTP 503: it refuses new
+    /// requests that way until a previous remote session it still holds times out.
+    private func prepareWaitingOutOverload() async throws {
+        let deadline = Date().addingTimeInterval(timing.overloadWaitTimeout)
+        while true {
+            do {
+                try await prepareCameraAndLiveView(requestAccess: true)
+                return
+            } catch let LumixError.http(code, _) where code == 503 && Date() < deadline && lease != nil {
+                phase = .connecting("The camera is still busy with an earlier connection. Waiting for it…")
+                try await Task.sleep(for: timing.overloadRetryDelay)
+                guard lease != nil else { throw CancellationError() }
             }
         }
     }

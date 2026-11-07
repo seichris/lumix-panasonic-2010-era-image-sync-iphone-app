@@ -152,6 +152,102 @@ final class LumixRemoteProtocolTests: XCTestCase {
         XCTAssertNil(controls.settings.first { $0.kind == .peaking }, "Settings the camera does not list are not offered")
     }
 
+    /// Trimmed from a GM1S (firmware 2.70) reply: menu set 2.0 names exposure
+    /// compensation `exposure2`, and in P mode `getsetting` still reports the stored
+    /// S/M shutter speed while the camera exposes at another one.
+    func testGM1SMenuSetOffersExposureCompensationAndLeavesProgramValuesToTheCamera() throws {
+        let schema = try XCTUnwrap(LumixMenuSchema.parse(Data("""
+        <?xml version="1.0" encoding="utf-8"?><camrply><result>ok</result><menuset model="GM1S" version="2.0" date="20140825">\
+        <photosettings><menu><item id="menu_item_id_aperture" title_id="title_aperture" func_type="sp_embeded_aperture" ></item>\
+        <item id="menu_item_id_shutter_speed" title_id="title_shutter_speed" func_type="sp_embeded_shutter_speed" ></item>\
+        <item id="menu_item_id_program_shift" title_id="title_program_shift" func_type="sp_embeded_program_shift" ></item>\
+        <item id="menu_item_id_exposure2" title_id="title_exposure2" func_type="sp_embeded_exposure2" ><group>\
+        <item id="menu_item_id_exposure_m14_3" title_id="title_exposure_m14_3" cmd_mode="setsetting" cmd_type="exposure" cmd_value="-14/3" ></item>\
+        <item id="menu_item_id_exposure_m1_3" title_id="title_exposure_m1_3" cmd_mode="setsetting" cmd_type="exposure" cmd_value="-1/3" ></item>\
+        <item id="menu_item_id_exposure_0" title_id="title_exposure_0" cmd_mode="setsetting" cmd_type="exposure" cmd_value="0" ></item>\
+        <item id="menu_item_id_exposure_p1_3" title_id="title_exposure_p1_3" cmd_mode="setsetting" cmd_type="exposure" cmd_value="1/3" ></item>\
+        <item id="menu_item_id_exposure_p5" title_id="title_exposure_p5" cmd_mode="setsetting" cmd_type="exposure" cmd_value="5" ></item>\
+        </group></item></menu></photosettings></menuset></camrply>
+        """.utf8)))
+        let current = LumixCurrentMenu.parse("""
+        <?xml version="1.0" encoding="utf-8"?>
+        <camrply><result>ok</result><menuinfo model="GM1S" version="2.0" ><photosettings>
+        <item id="menu_item_id_focusmode" enable="no" value="afs" />
+        <item id="menu_item_id_shutter_speed" enable="no" />
+        <item id="menu_item_id_aperture" enable="no" />
+        <item id="menu_item_id_program_shift" enable="yes" />
+        <item id="menu_item_id_exposure2" enable="yes" value="0" />
+        <item id="menu_item_id_exposure_m14_3" enable="yes" />
+        </photosettings></menuinfo></camrply>
+        """)
+
+        let controls = RemoteShootingControls.derive(
+            schema: schema,
+            currentMenu: current,
+            values: [.exposureCompensation: LumixSettingValue(type: "exposure", value: "0"),
+                     .focusMode: LumixSettingValue(type: "focusmode", value: "afs")],
+            aperture: LumixSettingValue(type: "focal", value: "392/256"),
+            shutter: LumixSettingValue(type: "shtrspeed", value: "2048/256"),
+            lens: LumixLensInfo(reply: LumixCommandReply.parse("ok,2048/256,392/256,3584/256,-1536/256,0,off,15,15,on,128/1024,on")),
+            capabilities: nil
+        )
+
+        let exposure = try XCTUnwrap(controls.settings.first { $0.kind == .exposureCompensation })
+        XCTAssertTrue(exposure.canChange, "P mode allows exposure compensation")
+        XCTAssertEqual(exposure.options.map(\.label), ["−4⅔", "−⅓", "±0", "+⅓", "+5"])
+        XCTAssertEqual(exposure.currentLabel, "±0")
+        XCTAssertEqual(exposure.options.last?.command(for: .exposureCompensation), .setSetting("exposure", value: "5"))
+        XCTAssertEqual(RemoteShootingSetting.Kind.exposureCompensation.menuItemID(schema: schema, currentMenu: current),
+                       "menu_item_id_exposure2")
+
+        let focus = try XCTUnwrap(controls.settings.first { $0.kind == .focusMode })
+        XCTAssertFalse(focus.canChange, "The GM1S remote menu does not offer focus modes")
+        XCTAssertEqual(focus.currentLabel, "AFS")
+
+        XCTAssertEqual(controls.exposureMode, .program)
+        let shutter = try XCTUnwrap(controls.shutter)
+        XCTAssertFalse(shutter.isEnabled)
+        XCTAssertTrue(shutter.isChosenByCamera)
+        XCTAssertEqual(shutter.fallbackLabel, "Auto", "The stored 1/250 is not the speed the camera uses in P")
+        XCTAssertEqual(controls.aperture?.fallbackLabel, "Auto")
+
+        let manual = RemoteShootingControls.derive(
+            schema: schema,
+            currentMenu: LumixCurrentMenu.parse("<menuinfo><item id=\"menu_item_id_f_and_ss\" enable=\"yes\" /></menuinfo>"),
+            values: [:],
+            aperture: LumixSettingValue(type: "focal", value: "392/256"),
+            shutter: LumixSettingValue(type: "shtrspeed", value: "2048/256"),
+            lens: LumixLensInfo(reply: LumixCommandReply.parse("ok,2048/256,392/256,3584/256,-1536/256,0,off,15,15,on,128/1024,on")),
+            capabilities: nil
+        )
+        XCTAssertEqual(manual.shutter?.isChosenByCamera, false)
+        XCTAssertEqual(manual.shutter?.fallbackLabel, "1/250")
+
+        let unknownMode = RemoteShootingControls.derive(
+            schema: nil, currentMenu: nil, values: [:], aperture: nil,
+            shutter: LumixSettingValue(type: "shtrspeed", value: "2048/256"),
+            lens: LumixLensInfo(reply: LumixCommandReply.parse("ok,2048/256,392/256,3584/256,-1536/256,0,off,15,15,on,128/1024,on")),
+            capabilities: nil
+        )
+        XCTAssertEqual(unknownMode.shutter?.fallbackLabel, "1/250", "Without curmenu the mode is unknown, so the stored value stays")
+    }
+
+    func testCameraErrorPagesAreShownAsText() {
+        let overloaded = """
+        <HTML><HEAD><TITLE>503 Service Temporarily Overloaded</TITLE></HEAD>
+        <BODY BGCOLOR="#cc9999"><H2>503 Service Temporarily Overloaded</H2>
+        <HR>The requested URL is temporarily overloaded. Please try again later.</BODY></HTML>
+        """
+        let busy = LumixError.http(503, overloaded).localizedDescription
+        XCTAssertFalse(busy.contains("<"))
+        XCTAssertTrue(busy.contains("busy"))
+        XCTAssertEqual(
+            LumixError.http(500, "<HTML><HEAD><TITLE>500</TITLE></HEAD><BODY><H2>Internal  Error</H2>\n</BODY></HTML>").localizedDescription,
+            "HTTP 500: Internal Error"
+        )
+        XCTAssertEqual(LumixError.http(404, "Not Found").localizedDescription, "HTTP 404: Not Found")
+    }
+
     func testWithoutAMenuSchemaSettingsAreReadOnly() {
         let controls = RemoteShootingControls.derive(
             schema: nil, currentMenu: nil,

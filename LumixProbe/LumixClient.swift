@@ -503,13 +503,27 @@ enum LumixError: LocalizedError, Equatable {
     /// The camera answered a `cam.cgi` command with a result other than `ok`.
     case cameraRejected(code: String, command: String)
 
+    /// Camera error pages are HTML; keep only their text.
+    static func readableText(_ body: String) -> String {
+        guard body.contains("<") else { return body }
+        let withoutTitle = body.replacingOccurrences(
+            of: "<title>.*?</title>", with: " ", options: [.regularExpression, .caseInsensitive]
+        )
+        return withoutTitle
+            .replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var errorDescription: String? {
         switch self {
         case .invalidURL: return "The address is invalid for the selected camera."
         case .staleConnection: return "The camera connection changed. Try again with the connected camera."
         case let .cameraRejected(code, _): return LumixResultCode.message(for: code)
         case .nonHTTPResponse: return "Camera returned a non-HTTP response."
-        case let .http(code, body): return "HTTP \(code): \(body.prefix(300))"
+        case .http(503, _):
+            return "The camera is busy and refused the request (HTTP 503). Wait a moment, then try again."
+        case let .http(code, body): return "HTTP \(code): \(Self.readableText(body).prefix(300))"
         case .missingBrowseResult: return "UPnP response did not contain a DIDL-Lite Result."
         case .incompleteBrowse: return "The camera stopped listing media before the end of the page. Retry to continue."
         case .noOriginalJPEG: return "This camera item does not advertise an original JPEG."

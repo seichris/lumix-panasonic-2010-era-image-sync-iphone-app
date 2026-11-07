@@ -289,6 +289,33 @@ final class RemoteShootingSessionTests: XCTestCase {
         XCTAssertNil(coordinator.exclusiveActivity)
     }
 
+    func testStartWaitsWhileTheCameraStillHoldsAnEarlierSession() async throws {
+        await camera.setOverloaded(3)
+        await session.start()
+        XCTAssertEqual(session.phase, .connecting("Starting live view…"))
+        let commands = await camera.commands
+        XCTAssertEqual(commands.filter { $0.hasPrefix("503 ") }.count, 3)
+        XCTAssertEqual(commands.last, "mode=startstream&value=49199")
+        source.emitFrame()
+        try await waitUntil { self.session.phase == .live }
+    }
+
+    func testStartGivesUpReadablyWhenTheCameraStaysOverloaded() async throws {
+        var timing = RemoteShootingTiming.fast
+        timing.overloadWaitTimeout = 0.05
+        let source = self.source!
+        session = RemoteShootingSession(camera: camera, coordinator: coordinator, timing: timing) { source }
+        await camera.setOverloaded(.max)
+        await session.start()
+        guard case let .failed(message) = session.phase else {
+            return XCTFail("Expected a failure, got \(session.phase)")
+        }
+        XCTAssertFalse(message.contains("<"), message)
+        XCTAssertTrue(message.contains("busy"), message)
+        XCTAssertNil(coordinator.exclusiveActivity, "The camera is returned to the rest of the app")
+        XCTAssertFalse(source.isRunning)
+    }
+
     // MARK: Helpers
 
     private func waitUntil(
@@ -325,6 +352,8 @@ extension RemoteShootingTiming {
         timing.captureConfirmationPollInterval = .milliseconds(10)
         timing.shutterReleaseRetryInterval = .milliseconds(2)
         timing.manualFocusRepeatInterval = .milliseconds(10)
+        timing.overloadRetryDelay = .milliseconds(5)
+        timing.overloadWaitTimeout = 2
         return timing
     }
 }
@@ -343,6 +372,7 @@ actor ScriptedRemoteCamera: RemoteCameraControlling {
     private var captureWritesToCard = true
     private var isRecording = false
     private var isFailing = false
+    private var overloadedReplies = 0
     private var settings = ["iso": "auto", "whitebalance": "auto", "drivemode": "normal",
                             "focusmode": "afs", "afmode": "1area", "exposure": "0",
                             "focal": "1024/256", "shtrspeed": "1536/256"]
@@ -357,6 +387,8 @@ actor ScriptedRemoteCamera: RemoteCameraControlling {
     func enqueue(_ command: String, _ replies: [String]) { overrides[command, default: []].append(contentsOf: replies) }
     func setMode(_ value: String) { mode = value }
     func setFailing(_ value: Bool) { isFailing = value }
+    /// Answers the next `count` requests the way a GM1S does while it still holds an earlier session.
+    func setOverloaded(_ count: Int) { overloadedReplies = count }
     func setCaptureWritesToCard(_ value: Bool) { captureWritesToCard = value }
     func startRecording() { isRecording = true }
     func setSetting(_ type: String, _ value: String) { settings[type] = value }
@@ -364,6 +396,11 @@ actor ScriptedRemoteCamera: RemoteCameraControlling {
     func perform(_ command: LumixCommand, timeoutInterval: TimeInterval?) async throws -> LumixCommandReply {
         guard belongsToCurrentConnection else { throw LumixError.staleConnection }
         if isFailing { throw URLError(.timedOut) }
+        if overloadedReplies > 0 {
+            overloadedReplies -= 1
+            commands.append("503 " + command.description)
+            throw LumixError.http(503, "<HTML><HEAD><TITLE>503 Service Temporarily Overloaded</TITLE></HEAD></HTML>")
+        }
         let key = command.description
         commands.append(key)
         if var queued = overrides[key], !queued.isEmpty {

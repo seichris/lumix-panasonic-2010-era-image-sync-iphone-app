@@ -205,8 +205,8 @@ struct RemoteShootingView: View {
     private var exposureReadout: some View {
         RemoteExposureReadout(
             feed: session.feed,
-            shutter: session.controls.shutter?.currentLabel,
-            aperture: session.controls.aperture?.currentLabel,
+            shutter: session.controls.shutter?.fallbackLabel,
+            aperture: session.controls.aperture?.fallbackLabel,
             iso: session.controls.settings.first { $0.kind == .iso }?.currentLabel
         )
     }
@@ -267,21 +267,24 @@ struct RemoteShootingView: View {
                 }
             }
         } label: {
-            settingChip(title: control.title, value: control.currentLabel, enabled: control.isEnabled)
+            if control.isChosenByCamera {
+                // Show the value the camera is using now, not the stored A/S/M setting.
+                RemoteLiveExposureChip(
+                    feed: session.feed,
+                    title: control.title,
+                    liveValue: id == "shutter" ? \.shutterLabel : \.apertureLabel,
+                    fallback: control.fallbackLabel
+                )
+            } else {
+                RemoteSettingChip(title: control.title, value: control.currentLabel, enabled: control.isEnabled)
+            }
         }
         .disabled(!control.isEnabled || !session.canOperate)
         .accessibilityIdentifier("remote-setting-\(id)")
     }
 
     private func settingChip(title: String, value: String, enabled: Bool) -> some View {
-        VStack(spacing: 2) {
-            Text(title).font(.caption2)
-            Text(value).font(.callout.weight(.semibold)).lineLimit(1)
-        }
-        .foregroundStyle(enabled ? .white : .white.opacity(0.45))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.white.opacity(enabled ? 0.16 : 0.07), in: RoundedRectangle(cornerRadius: 10))
+        RemoteSettingChip(title: title, value: value, enabled: enabled)
     }
 
     // MARK: Controls
@@ -475,6 +478,40 @@ private struct RemoteExposureReadout: View {
         .foregroundStyle(.white)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("remote-exposure-readout")
+    }
+}
+
+private struct RemoteSettingChip: View {
+    let title: String
+    let value: String
+    let enabled: Bool
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(title).font(.caption2)
+            Text(value).font(.callout.weight(.semibold)).lineLimit(1)
+        }
+        .foregroundStyle(enabled ? .white : .white.opacity(0.45))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.white.opacity(enabled ? 0.16 : 0.07), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+/// A read-only chip for a value the camera chooses, updated from each frame's readout.
+/// It observes the feed itself so the settings strip around it does not redraw per frame.
+private struct RemoteLiveExposureChip: View {
+    @ObservedObject var feed: RemoteLiveViewFeed
+    let title: String
+    let liveValue: KeyPath<LumixLiveViewFrameMetadata.Exposure, String>
+    let fallback: String
+
+    var body: some View {
+        RemoteSettingChip(
+            title: title,
+            value: feed.frame?.metadata.exposure?[keyPath: liveValue] ?? fallback,
+            enabled: false
+        )
     }
 }
 
