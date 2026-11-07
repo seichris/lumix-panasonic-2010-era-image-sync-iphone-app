@@ -11,22 +11,34 @@ struct ContentView: View {
     @StateObject private var model: ProbeViewModel
     @StateObject private var galleryStore = CameraGalleryStore()
     @StateObject private var modeCoordinator: CameraModeCoordinator
+    @StateObject private var pushTransferHistory: CameraPushTransferHistory
     @State private var presentedSheet: ConnectionSheet?
+    @State private var isShowingPushTransfer = false
     @State private var isConfirmingTrackClear = false
     @State private var isShowingSettings = false
     private let usesFixture: Bool
+    private let usesPushTransferFixture: Bool
 
     init() {
         let model = ProbeViewModel()
-        let usesFixture = ProcessInfo.processInfo.arguments.contains("-UITestConnectedGallery")
+        let arguments = ProcessInfo.processInfo.arguments
+        let usesFixture = arguments.contains("-UITestConnectedGallery")
+        let usesPushTransferFixture = arguments.contains("-UITestPushTransfer")
         let coordinator = CameraModeCoordinator(connectionScope: model.connectionScope)
+        let pushHistory = CameraPushTransferHistory(
+            store: usesFixture || usesPushTransferFixture
+                ? InMemoryCameraPushTransferHistoryStore()
+                : UserDefaultsCameraPushTransferHistoryStore()
+        )
         self.usesFixture = usesFixture
+        self.usesPushTransferFixture = usesPushTransferFixture
         _model = StateObject(wrappedValue: model)
         _modeCoordinator = StateObject(wrappedValue: coordinator)
+        _pushTransferHistory = StateObject(wrappedValue: pushHistory)
         if usesFixture {
             let client = CoordinatedCameraGalleryClient(base: DemoCameraGalleryClient(), coordinator: coordinator)
             _galleryStore = StateObject(
-                wrappedValue: CameraGalleryStore(clientProvider: { client })
+                wrappedValue: CameraGalleryStore(clientProvider: { client }, pushTransferHistory: pushHistory)
             )
         } else {
             _galleryStore = StateObject(
@@ -35,7 +47,7 @@ struct ContentView: View {
                 }, sourceIdentifierProvider: {
                     model.rememberedCameraNetwork?.ssid
                         ?? model.host.trimmingCharacters(in: .whitespacesAndNewlines)
-                }, importReconciler: SystemCameraImportReconciler())
+                }, importReconciler: SystemCameraImportReconciler(), pushTransferHistory: pushHistory)
             )
         }
     }
@@ -52,6 +64,31 @@ struct ContentView: View {
             makeCamera: { model.makeClient() },
             samples: { model.locationLogger.samples }
         )
+    }
+
+    private var cameraHost: String { model.host.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private func makePushTransferSession() -> PushTransferSession {
+        let host = cameraHost
+        let model = self.model
+        var dependencies = PushTransferDependencies.standard(
+            cameraHost: host,
+            importer: SystemCameraMediaImporter(),
+            history: pushTransferHistory,
+            registrationCamera: { LumixClient(host: host) },
+            locationSamples: { model.locationLogger.samples },
+            cameraClockOffset: { model.cameraClockOffsetMinutes * 60 }
+        )
+        if usesPushTransferFixture {
+            dependencies.localAddress = { _ in PushTransferNetwork.LocalAddress(address: "192.168.54.10", interface: "en0") }
+            dependencies.makeServer = { receiver, _ in DemoPushTransferServer(receiver: receiver) }
+            dependencies.makeAnnouncer = { _, _, _, emit in DemoSSDPAnnouncer(emit: emit) }
+            dependencies.registrationCamera = { DemoRemoteCamera() }
+            dependencies.importer = DemoPushTransferImporter()
+            dependencies.pendingDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("PushTransferUITest-\(UUID().uuidString)", isDirectory: true)
+        }
+        return PushTransferSession(dependencies: dependencies, coordinator: modeCoordinator)
     }
 
     private func makeRemoteShootingSession() -> RemoteShootingSession {
@@ -75,7 +112,8 @@ struct ContentView: View {
                         model: model,
                         modeCoordinator: modeCoordinator,
                         makeRemoteShootingSession: makeRemoteShootingSession,
-                        geotagEnvironment: geotagEnvironment
+                        geotagEnvironment: geotagEnvironment,
+                        openPushTransfer: { isShowingPushTransfer = true }
                     )
                 } else {
                     disconnectedHome
@@ -149,6 +187,29 @@ struct ContentView: View {
             } message: {
                 Text("Saved location samples will be removed from this iPhone. Downloaded camera originals are not affected.")
             }
+            // A full-screen cover survives the switch from the home screen to the gallery
+            // that happens when the iPhone joins the camera's Wi-Fi during setup.
+            .fullScreenCover(isPresented: $isShowingPushTransfer) {
+                PushTransferView(cameraHost: cameraHost, makeSession: makePushTransferSession) {
+                    isShowingPushTransfer = false
+                }
+            }
+        }
+    }
+
+    private var pushTransferEntry: some View {
+        Section {
+            Button {
+                isShowingPushTransfer = true
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("Receive photos while shooting", systemImage: "square.and.arrow.down.on.square")
+                    Text("For the camera's Send Images While Recording → Smartphone mode")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityIdentifier("open-push-transfer")
         }
     }
 
@@ -204,6 +265,8 @@ struct ContentView: View {
                 scanQRCode: { presentedSheet = .qrScanner },
                 joinManually: { presentedSheet = .manualJoin }
             )
+
+            pushTransferEntry
 
             GeotaggingControls(
                 logger: model.locationLogger,

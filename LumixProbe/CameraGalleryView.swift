@@ -9,6 +9,7 @@ struct CameraGalleryView: View {
     @ObservedObject var modeCoordinator: CameraModeCoordinator
     let makeRemoteShootingSession: @MainActor () -> RemoteShootingSession
     let geotagEnvironment: CameraGeotagEnvironment
+    var openPushTransfer: () -> Void = {}
     @State private var isShowingRemoteShooting = false
     @State private var isShowingLocationWriter = false
     @State private var isShowingClockSync = false
@@ -307,6 +308,8 @@ struct CameraGalleryView: View {
             Menu {
                 Button("Load all media") { Task { await store.loadAllPages() } }
                     .disabled(!store.canLoadMore)
+                Button("Receive photos while shooting…", action: openPushTransfer)
+                    .disabled(store.isImporting || modeCoordinator.exclusiveActivity != nil)
                 Button("Select all items") {
                     Task {
                         await store.loadAllPages()

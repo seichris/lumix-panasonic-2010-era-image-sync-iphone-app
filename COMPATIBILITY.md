@@ -129,6 +129,19 @@ Location writing follows Panasonic's documented GM1S workflow and the command se
 | Many photo reads in a row | Reads that took the first 512 KiB of an original and then dropped the connection: after about 150 in 20 minutes the GM1S answered HTTP 404 for every original, then stopped answering until it was switched off and on. With `Range: bytes=0-524287` the GM1S answers `206 Partial Content` and ends each transfer itself; after a restart it served 200 such reads in a row and kept answering. The app now asks for the range, reads as few photos as it can, and stops after two failed reads |
 | RAW and RAW+JPEG files | Unverified; not claimed |
 
+## Send Images While Recording validation
+
+The receiver follows Shutterlink's GM1/G85-tested exchange and has been verified with unit tests, a loopback TCP test, and a scripted camera in the simulator. On a physical DMC-GM1S it still needs:
+
+| Behavior | Status |
+|---|---|
+| Camera discovers the phone through unicast SSDP alone (no multicast entitlement) | Needs GM1S validation |
+| Camera discovers the phone through multicast | Needs the multicast entitlement, then GM1S validation |
+| Description, upload-profile, `CreateObject`, and chunked upload exchange | Needs GM1S validation |
+| Size → Original transfers byte-identical to the card's JPEG | Needs GM1S validation |
+| Smaller transfer sizes are not treated as originals | Needs GM1S validation |
+| Burst, app switch, iPhone lock, and camera Wi-Fi interruptions | Needs GM1S validation |
+
 ## Confirmation standard
 
 A camera should only move from candidate to confirmed after a real-device run records:

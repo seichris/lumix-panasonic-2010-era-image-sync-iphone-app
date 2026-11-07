@@ -49,6 +49,9 @@ targets:
       path: LumixProbe/LumixProbe.entitlements
       properties:
         com.apple.developer.networking.HotspotConfiguration: true
+        # Send Images While Recording discovery uses SSDP multicast. Enable after Apple
+        # grants the entitlement and the profiles include it (docs/send-images-while-recording.md):
+        # com.apple.developer.networking.multicast: true
         com.apple.security.application-groups:
           - group.com.web3.gm1sync
     settings:
@@ -107,6 +110,9 @@ targets:
           - ManualWiFiJoinSheet.swift
           - RemoteShootingView.swift
           - CameraGeotagWriteView.swift
+          - PushTransferView.swift
+          - PushTransferSession.swift
+          - DemoPushTransfer.swift
       - path: Shared
     info:
       path: LumixProbe/MacInfo.plist
@@ -171,6 +177,7 @@ targets:
           - CameraImportTests.swift
           - DemoCameraGalleryClientTests.swift
           - CameraGeotagVerificationTests.swift
+          - PushTransferSessionTests.swift
     dependencies:
       - target: GM1SyncMac
     settings:

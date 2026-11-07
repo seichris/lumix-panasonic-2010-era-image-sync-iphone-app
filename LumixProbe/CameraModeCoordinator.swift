@@ -5,6 +5,9 @@ struct CameraActivity: Hashable, Sendable, CustomStringConvertible {
     let id: String
     let title: String
     let mode: LumixCameraMode?
+    /// Bound activities end when the camera connection changes. An unbound activity
+    /// (receiving pushed photos) spans the Wi-Fi join that its own workflow requires.
+    var isBoundToConnection = true
 
     var description: String { title }
 
@@ -122,7 +125,7 @@ final class CameraModeCoordinator: ObservableObject {
             throw CameraModeCoordinatorError.busy(current)
         }
         guard exclusiveWaiter == nil else { throw CameraModeCoordinatorError.busy(activity) }
-        let connection = connectionScope?.current
+        let connection = activity.isBoundToConnection ? connectionScope?.current : nil
         exclusiveActivity = activity
 
         if sharedOperations > 0 {
@@ -174,11 +177,12 @@ final class CameraModeCoordinator: ObservableObject {
     /// Revokes the exclusive activity after the camera connection changed. The
     /// owner is told through `onRevoked` and must stop using the camera.
     func connectionDidChange() {
-        if let waiter = exclusiveWaiter {
+        if let waiter = exclusiveWaiter, exclusiveActivity?.isBoundToConnection != false {
             exclusiveWaiter = nil
             waiter.continuation.resume(throwing: CameraModeCoordinatorError.connectionChanged)
         }
         if let lease = exclusiveLease {
+            guard lease.activity.isBoundToConnection else { return }
             let onRevoked = lease.onRevoked
             endExclusive(lease)
             onRevoked?()
