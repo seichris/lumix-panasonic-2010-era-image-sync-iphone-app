@@ -115,9 +115,11 @@ Location writing follows Panasonic's documented GM1S workflow and the command se
 
 | Behavior | Status |
 |---|---|
-| Capability report (`geotag_add_enable` or protocol 1.3+) | Needs GM1S validation |
+| Capability report (`geotag_add_enable` or protocol 1.3+) | GM1S firmware 2.70 reports protocol 1.4 and does not list `geotag_add_enable` |
+| Capture times of the card's photos | The GM1S media list has none; the app reads them from the originals' EXIF before a write |
+| `getsetting&type=clock` | GM1S answers `err_non_support`: its clock cannot be read over Wi‑Fi |
 | `%2B` versus raw `+` in clock values | Needs GM1S validation |
-| `setsetting&type=clock` and the `getsetting&type=clock` reply format | Needs GM1S validation |
+| `setsetting&type=clock` | Needs GM1S validation |
 | Daylight-saving and time-zone handling of both clock commands | Needs GM1S validation |
 | Track upload accepted (`startsenddata`, multipart `senddata`) | Needs GM1S validation |
 | Progress, abort, and interruption behavior | Needs GM1S validation |
