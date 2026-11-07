@@ -6,6 +6,9 @@ import UIKit
 struct CameraGalleryView: View {
     @ObservedObject var store: CameraGalleryStore
     @ObservedObject var model: ProbeViewModel
+    @ObservedObject var modeCoordinator: CameraModeCoordinator
+    let makeRemoteShootingSession: @MainActor () -> RemoteShootingSession
+    @State private var isShowingRemoteShooting = false
     @State private var isSelecting = false
     @State private var importMode: CameraPhotoImportMode = .jpeg
     @State private var showNoNewMediaAlert = false
@@ -67,13 +70,20 @@ struct CameraGalleryView: View {
             }
         }
         .task {
-            if store.phase == .idle {
+            if store.phase == .idle || store.consumeReloadRequest() {
                 await store.reloadAllMedia()
             } else if store.canLoadMore {
                 await store.loadAllPages()
             }
         }
         .onDisappear { store.cancelLoading() }
+        .onChange(of: modeCoordinator.completedExclusiveActivities) { _, _ in
+            // Remote shooting changed the camera's mode and probably its card.
+            store.markNeedsReloadAfterCameraModeChange()
+        }
+        .navigationDestination(isPresented: $isShowingRemoteShooting) {
+            RemoteShootingView(makeSession: makeRemoteShootingSession)
+        }
         .onChange(of: store.selectedPhotoIDs) { _, _ in
             let modes = selectedPhotoImportModes
             if !modes.isEmpty, !modes.contains(importMode) {
@@ -270,6 +280,18 @@ struct CameraGalleryView: View {
             }
             .disabled(store.phase != .loaded || store.isImporting)
             .accessibilityIdentifier("toggle-photo-selection")
+        }
+
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                isSelecting = false
+                store.clearSelection()
+                isShowingRemoteShooting = true
+            } label: {
+                Label("Remote shooting", systemImage: "camera.viewfinder")
+            }
+            .disabled(store.isImporting || modeCoordinator.exclusiveActivity != nil)
+            .accessibilityIdentifier("open-remote-shooting")
         }
 
         ToolbarItem(placement: .topBarTrailing) {
@@ -1224,7 +1246,9 @@ private struct CameraMediaImage: View {
                 photos: DemoCameraGalleryClient.photos(12),
                 totalCount: 12
             ),
-            model: ProbeViewModel()
+            model: ProbeViewModel(),
+            modeCoordinator: CameraModeCoordinator(),
+            makeRemoteShootingSession: previewRemoteShootingSession
         )
     }
 }
@@ -1233,7 +1257,9 @@ private struct CameraMediaImage: View {
     NavigationStack {
         CameraGalleryView(
             store: CameraGalleryStore(previewPhase: .loading),
-            model: ProbeViewModel()
+            model: ProbeViewModel(),
+            modeCoordinator: CameraModeCoordinator(),
+            makeRemoteShootingSession: previewRemoteShootingSession
         )
     }
 }
@@ -1242,7 +1268,9 @@ private struct CameraMediaImage: View {
     NavigationStack {
         CameraGalleryView(
             store: CameraGalleryStore(previewPhase: .empty),
-            model: ProbeViewModel()
+            model: ProbeViewModel(),
+            modeCoordinator: CameraModeCoordinator(),
+            makeRemoteShootingSession: previewRemoteShootingSession
         )
     }
 }
@@ -1251,7 +1279,16 @@ private struct CameraMediaImage: View {
     NavigationStack {
         CameraGalleryView(
             store: CameraGalleryStore(previewPhase: .failed("The camera went to sleep.")),
-            model: ProbeViewModel()
+            model: ProbeViewModel(),
+            modeCoordinator: CameraModeCoordinator(),
+            makeRemoteShootingSession: previewRemoteShootingSession
         )
+    }
+}
+
+@MainActor
+private func previewRemoteShootingSession() -> RemoteShootingSession {
+    RemoteShootingSession(camera: DemoRemoteCamera(), coordinator: CameraModeCoordinator()) {
+        DemoLiveViewSource()
     }
 }

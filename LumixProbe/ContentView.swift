@@ -10,23 +10,28 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model: ProbeViewModel
     @StateObject private var galleryStore = CameraGalleryStore()
+    @StateObject private var modeCoordinator: CameraModeCoordinator
     @State private var presentedSheet: ConnectionSheet?
     @State private var isConfirmingTrackClear = false
     @State private var isShowingSettings = false
+    private let usesFixture: Bool
 
     init() {
         let model = ProbeViewModel()
         let usesFixture = ProcessInfo.processInfo.arguments.contains("-UITestConnectedGallery")
+        let coordinator = CameraModeCoordinator(connectionScope: model.connectionScope)
+        self.usesFixture = usesFixture
         _model = StateObject(wrappedValue: model)
+        _modeCoordinator = StateObject(wrappedValue: coordinator)
         if usesFixture {
-            let client = DemoCameraGalleryClient()
+            let client = CoordinatedCameraGalleryClient(base: DemoCameraGalleryClient(), coordinator: coordinator)
             _galleryStore = StateObject(
                 wrappedValue: CameraGalleryStore(clientProvider: { client })
             )
         } else {
             _galleryStore = StateObject(
                 wrappedValue: CameraGalleryStore(clientProvider: {
-                    LumixClient(host: model.host.trimmingCharacters(in: .whitespacesAndNewlines))
+                    CoordinatedCameraGalleryClient(base: model.makeClient(), coordinator: coordinator)
                 }, sourceIdentifierProvider: {
                     model.rememberedCameraNetwork?.ssid
                         ?? model.host.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -35,11 +40,28 @@ struct ContentView: View {
         }
     }
 
+    private func makeRemoteShootingSession() -> RemoteShootingSession {
+        if usesFixture {
+            return RemoteShootingSession(camera: DemoRemoteCamera(), coordinator: modeCoordinator) {
+                DemoLiveViewSource()
+            }
+        }
+        let client = model.makeClient()
+        return RemoteShootingSession(camera: client, coordinator: modeCoordinator) {
+            LumixLiveViewReceiver(cameraHost: client.host)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
                 if model.isCameraConnected {
-                    CameraGalleryView(store: galleryStore, model: model)
+                    CameraGalleryView(
+                        store: galleryStore,
+                        model: model,
+                        modeCoordinator: modeCoordinator,
+                        makeRemoteShootingSession: makeRemoteShootingSession
+                    )
                 } else {
                     disconnectedHome
                 }
@@ -71,6 +93,11 @@ struct ContentView: View {
             .onChange(of: model.isCameraConnected) { _, isConnected in
                 guard !isConnected else { return }
                 Task { await galleryStore.resetForReconnect() }
+            }
+            .onChange(of: model.connectionGeneration) { _, _ in
+                // A remote shooting session (or any exclusive activity) belongs to the
+                // connection that started it; revoke it when that connection ends.
+                modeCoordinator.connectionDidChange()
             }
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active else { return }

@@ -105,6 +105,7 @@ targets:
           - CameraImport.swift
           - DemoCameraGalleryClient.swift
           - ManualWiFiJoinSheet.swift
+          - RemoteShootingView.swift
       - path: Shared
     info:
       path: LumixProbe/MacInfo.plist

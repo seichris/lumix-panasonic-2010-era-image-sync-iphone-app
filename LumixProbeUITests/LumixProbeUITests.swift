@@ -250,6 +250,45 @@ final class LumixProbeUITests: XCTestCase {
 #endif
     }
 
+    func testRemoteShootingLiveViewShutterSettingsAndReturnToGallery() throws {
+        app.launchArguments = ["-UITestConnectedGallery"]
+        app.launch()
+        XCTAssertTrue(app.scrollViews["camera-gallery"].waitForExistence(timeout: 8))
+
+        let open = app.buttons["open-remote-shooting"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        open.tap()
+        XCTAssertTrue(app.navigationBars["Remote Shooting"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["remote-shooting-viewfinder"].waitForExistence(timeout: 5))
+
+        let status = app.descendants(matching: .any)["remote-shooting-status"]
+        let live = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: status)
+        XCTAssertEqual(XCTWaiter.wait(for: [live], timeout: 10), .completed, "Live view did not start")
+
+        XCTAssertTrue(element(labelContaining: "512 photos remaining").waitForExistence(timeout: 8))
+        app.buttons["remote-shutter-button"].tap()
+        XCTAssertTrue(element(labelContaining: "511 photos remaining").waitForExistence(timeout: 10),
+                      "The camera's remaining-shot count reflects the remote capture")
+
+        let iso = app.buttons["remote-setting-iso"]
+        XCTAssertTrue(iso.waitForExistence(timeout: 5))
+        iso.tap()
+        let option = app.buttons["800"]
+        XCTAssertTrue(option.waitForExistence(timeout: 5))
+        option.tap()
+        XCTAssertTrue(element(labelContaining: "ISO 800").waitForExistence(timeout: 10),
+                      "The readout shows the ISO value read back from the camera")
+
+        app.navigationBars["Remote Shooting"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.scrollViews["camera-gallery"].waitForExistence(timeout: 8))
+        let mediaCount = app.staticTexts["camera-gallery-count"]
+        XCTAssertTrue(mediaCount.waitForExistence(timeout: 8))
+    }
+
+    private func element(labelContaining text: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+    }
+
     private func openDiagnostics() {
         app.buttons["app-settings-link"].tap()
         let link = app.buttons["camera-diagnostics-link"]
