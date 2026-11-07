@@ -9,7 +9,7 @@ actor DemoRemoteCamera: RemoteCameraControlling {
     private var mode = "play"
     private var settings: [String: String] = [
         "iso": "auto", "whitebalance": "auto", "drivemode": "normal", "focusmode": "afs",
-        "afmode": "1area", "exposure": "0", "focal": "1024/256", "shtrspeed": "1536/256"
+        "afmode": "1area", "exposure": "0", "focal": "1024/256", "shtrspeed": "1536/256", "peaking": "off"
     ]
     private var remainingPhotos = 512
     private var isRecording = false
@@ -131,6 +131,11 @@ actor DemoRemoteCamera: RemoteCameraControlling {
     <item id="menu_item_id_afmode_23area" title_id="t_23" cmd_mode="setsetting" cmd_type="afmode" cmd_value="23area" />
     <item id="menu_item_id_afmode_1area" title_id="t_1" cmd_mode="setsetting" cmd_type="afmode" cmd_value="1area" />
     </group></item>
+    <item id="menu_item_id_peaking" title_id="t_peak" func_type="sp_embeded_peaking"><group>
+    <item id="menu_item_id_peaking_off" title_id="t_off" cmd_mode="setsetting" cmd_type="peaking" cmd_value="off" />
+    <item id="menu_item_id_peaking_low" title_id="t_low" cmd_mode="setsetting" cmd_type="peaking" cmd_value="low" />
+    <item id="menu_item_id_peaking_high" title_id="t_high" cmd_mode="setsetting" cmd_type="peaking" cmd_value="high" />
+    </group></item>
     </menu></photosettings>
     <qmenu2><menu>
     <item id="menu_item_id_sensitivity" title_id="t_iso" func_type="sp_embeded_sensitivity"><group>
@@ -169,6 +174,7 @@ actor DemoRemoteCamera: RemoteCameraControlling {
     <title id="t_m1">-1</title><title id="t_m13">-1/3</title><title id="t_0">0</title><title id="t_p13">+1/3</title><title id="t_p1">+1</title>
     <title id="t_wb">White Balance</title><title id="t_awb">Auto White Balance</title><title id="t_day">Daylight</title>
     <title id="t_cloud">Cloudy</title><title id="t_k">Color Temperature</title><title id="t_drive">Drive Mode</title>
+    <title id="t_peak">Peaking</title><title id="t_off">Off</title><title id="t_low">Low</title><title id="t_high">High</title>
     <title id="t_single">Single</title><title id="t_burst">Burst Shooting</title><title id="t_h">H</title><title id="t_l">L</title>
     </language></titlelist></menuset></camrply>
     """

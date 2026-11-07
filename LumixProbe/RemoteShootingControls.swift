@@ -10,6 +10,7 @@ struct RemoteShootingSetting: Equatable, Identifiable, Sendable {
         case driveMode
         case focusMode
         case afMode
+        case peaking
 
         var id: String { rawValue }
 
@@ -22,6 +23,7 @@ struct RemoteShootingSetting: Equatable, Identifiable, Sendable {
             case .driveMode: "menu_item_id_drivemode"
             case .focusMode: "menu_item_id_focusmode"
             case .afMode: "menu_item_id_afmode"
+            case .peaking: "menu_item_id_peaking"
             }
         }
 
@@ -34,6 +36,7 @@ struct RemoteShootingSetting: Equatable, Identifiable, Sendable {
             case .driveMode: "drivemode"
             case .focusMode: "focusmode"
             case .afMode: "afmode"
+            case .peaking: "peaking"
             }
         }
 
@@ -45,6 +48,7 @@ struct RemoteShootingSetting: Equatable, Identifiable, Sendable {
             case .driveMode: "Drive"
             case .focusMode: "Focus"
             case .afMode: "AF area"
+            case .peaking: "Peaking"
             }
         }
     }

@@ -149,6 +149,7 @@ final class LumixRemoteProtocolTests: XCTestCase {
         XCTAssertTrue(controls.isManualFocus)
         XCTAssertFalse(controls.supportsPowerZoom, "A prime lens cannot zoom even when the camera lists zoom commands")
         XCTAssertTrue(controls.hasCameraMenus)
+        XCTAssertNil(controls.settings.first { $0.kind == .peaking }, "Settings the camera does not list are not offered")
     }
 
     func testWithoutAMenuSchemaSettingsAreReadOnly() {

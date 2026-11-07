@@ -63,7 +63,7 @@ While connected through **Image App Direct**, tap the viewfinder button in the c
 - **Touch:** in **AF** mode a tap moves the camera's AF area; in **Shutter** mode a tap focuses at that point and takes a photo.
 - **Zoom:** shown only when the camera lists its power-zoom commands and the lens reports a focal-length range.
 - **Manual focus:** near/far buttons appear in MF focus mode and show the position the camera reports.
-- **Settings:** shutter speed and aperture follow the mode dial (A, S, or M). ISO, exposure compensation, white balance, drive mode, focus mode, and AF area list only the values the camera's own menu offers, with values the current mode disables shown as unavailable. If a camera does not provide its menu, current values are shown read-only.
+- **Settings:** shutter speed and aperture follow the mode dial (A, S, or M). ISO, exposure compensation, white balance, drive mode, focus mode, AF area, and focus peaking list only the values the camera's own menu offers, with values the current mode disables shown as unavailable. If a camera does not provide its menu, current values are shown read-only.
 
 Only one part of the app controls the camera's mode at a time. Opening or refreshing the gallery waits while remote shooting holds the camera in recording mode, and when you return to the gallery it switches the camera back to playback and reloads so new photos appear. Requests that belong to an earlier connection are refused, so a slow command cannot reach a camera that joined afterwards at the same address.
 

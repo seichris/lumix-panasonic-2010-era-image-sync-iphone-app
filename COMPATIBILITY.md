@@ -97,7 +97,7 @@ Remote shooting is built from the Image App protocol as documented by libgphoto2
 | Video start/stop and the elapsed-time field | Needs GM1S validation |
 | Touch AF, touch shutter, and manual-focus feedback | Needs GM1S validation |
 | `getinfo&type=allmenu`/`curmenu` availability (otherwise settings are read-only) | Needs GM1S validation |
-| ISO, exposure compensation, white balance, drive mode, focus mode, AF area, aperture, shutter | Needs GM1S validation |
+| ISO, exposure compensation, white balance, drive mode, focus mode, AF area, peaking, aperture, shutter | Needs GM1S validation |
 | Power zoom with a power-zoom lens | Needs GM1S validation with a power-zoom lens |
 | Background, reconnect, and return-to-gallery transitions | Needs GM1S validation |
 
