@@ -37,17 +37,76 @@ struct CameraGeotagVerificationResult: Identifiable, Equatable {
     let status: Status
 }
 
+/// Decides when a newest-first read of the card can stop.
+///
+/// Each read downloads the start of an original JPEG and then drops the
+/// connection. A GM1S stopped serving files after about 150 such reads in 20
+/// minutes and needed to be switched off and on, so the reads before and after
+/// a write stop as early as they can:
+/// - The camera numbers its files in shooting order, so after a run of photos
+///   older than the period the rest of the card is older too.
+/// - Two failed reads in a row usually mean the camera has stopped serving
+///   files. The remaining photos would only time out one by one.
+struct CameraCardReadRun {
+    static let olderPhotosBeforeStopping = 5
+    static let failedReadsBeforeStopping = 2
+    static let cameraStoppedAnsweringMessage =
+        "Stopped after \(failedReadsBeforeStopping) photos in a row could not be read. " +
+        "The camera may have stopped sending files: switch it off and on, reconnect, then try again."
+
+    enum Decision: Equatable {
+        case keepReading
+        case pastThePeriod
+        case cameraStoppedAnswering
+    }
+
+    let periodStart: Date
+    private var olderInARow = 0
+    private var failedInARow = 0
+
+    init(periodStart: Date) {
+        self.periodStart = periodStart
+    }
+
+    mutating func record(_ state: CameraPhotoMetadataInspectionState) -> Decision {
+        switch state {
+        case .checking:
+            return .keepReading
+        case .failed:
+            failedInARow += 1
+            return failedInARow >= Self.failedReadsBeforeStopping ? .cameraStoppedAnswering : .keepReading
+        case let .resolved(inspection):
+            failedInARow = 0
+            guard let date = inspection.exifCaptureDate else { return .keepReading }
+            olderInARow = date < periodStart ? olderInARow + 1 : 0
+            return olderInARow >= Self.olderPhotosBeforeStopping ? .pastThePeriod : .keepReading
+        }
+    }
+}
+
 /// Re-reads the original JPEGs from the card after a write and compares their
 /// GPS data with the uploaded track. A camera `finish` alone proves nothing.
+/// Like the scan before the write it reads newest first and stops once it is
+/// past the period (see `CameraCardReadRun`); the camera only writes photos
+/// inside the period.
 @MainActor
 final class CameraGeotagVerifier: ObservableObject {
     static let nearTrackDistance: CLLocationDistance = 250
 
+    /// Why a check ended before the end of the card.
+    enum Stop: Equatable {
+        /// Photos older than the period were reached; `unread` older ones follow.
+        case reachedOlderPhotos(unread: Int)
+        /// Reads kept failing, usually because the camera stopped serving files.
+        case cameraStoppedAnswering
+        /// The read limit was reached before the period's start.
+        case limit(unread: Int)
+    }
+
     @Published private(set) var results: [CameraGeotagVerificationResult] = []
     @Published private(set) var isRunning = false
     @Published private(set) var checkedCount = 0
-    @Published private(set) var candidateCount = 0
-    @Published private(set) var skippedCount = 0
+    @Published private(set) var stop: Stop?
     private var task: Task<Void, Never>?
 
     func start(
@@ -76,19 +135,32 @@ final class CameraGeotagVerifier: ObservableObject {
         isRunning = true
         results = []
         checkedCount = 0
+        stop = nil
         defer { isRunning = false }
         await store.reloadAllMedia()
         let photos = store.photos.filter { $0.kind == .photo && $0.originalJPEGResource != nil }
-        let candidates = Array(photos.prefix(max(1, limit)))
-        candidateCount = candidates.count
-        skippedCount = max(0, photos.count - candidates.count)
         let trackSamples = LumixGeodata.usableSamples(samples, in: period)
+        var run = CameraCardReadRun(periodStart: period.lowerBound)
 
-        for photo in candidates {
+        for (index, photo) in photos.enumerated() {
             if Task.isCancelled { return }
+            guard index < max(1, limit) else {
+                stop = .limit(unread: photos.count - index)
+                return
+            }
             let state = await store.inspectOriginalMetadata(for: photo, force: true)
             checkedCount += 1
             results.append(Self.classify(photo, state: state, period: period, trackSamples: trackSamples, baseline: baseline))
+            switch run.record(state) {
+            case .keepReading:
+                continue
+            case .pastThePeriod:
+                stop = .reachedOlderPhotos(unread: photos.count - index - 1)
+                return
+            case .cameraStoppedAnswering:
+                stop = .cameraStoppedAnswering
+                return
+            }
         }
     }
 
@@ -132,11 +204,9 @@ final class CameraGeotagVerifier: ObservableObject {
 /// Reads capture times from the card before a write. Some cameras (the GM1S)
 /// list their media without dates, so the period's photos are otherwise unknown.
 /// Newest photos come first; the scan stops after a run of photos older than the
-/// period, since the camera numbers its files in shooting order.
+/// period, or when the camera stops returning photos (see `CameraCardReadRun`).
 @MainActor
 final class CameraGeotagPeriodScanner: ObservableObject {
-    static let olderPhotosBeforeStopping = 5
-
     /// A scan that ran to its end for periods starting at `periodStart` or later.
     struct Completion: Equatable {
         let periodStart: Date
@@ -150,6 +220,8 @@ final class CameraGeotagPeriodScanner: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var checkedCount = 0
     @Published private(set) var completion: Completion?
+    /// The last scan stopped because reads kept failing.
+    @Published private(set) var cameraStoppedAnswering = false
     private var task: Task<Void, Never>?
 
     func start(store: CameraGalleryStore, period: ClosedRange<Date>, limit: Int = 120) {
@@ -166,18 +238,27 @@ final class CameraGeotagPeriodScanner: ObservableObject {
         isRunning = true
         checkedCount = 0
         completion = nil
+        cameraStoppedAnswering = false
         defer { isRunning = false }
         if store.canLoadMore { await store.loadAllPages() }
         let photos = store.photos.filter { $0.kind == .photo && $0.originalJPEGResource != nil }
-        var olderInARow = 0
+        var run = CameraCardReadRun(periodStart: period.lowerBound)
         for photo in photos.prefix(max(1, limit)) {
             if Task.isCancelled { return }
-            let state = await store.inspectOriginalMetadata(for: photo)
+            // Earlier results are reused, but a photo that failed is read again:
+            // the camera may have been unavailable then.
+            var failedBefore = false
+            if case .failed? = store.metadataInspectionState(for: photo) { failedBefore = true }
+            let state = await store.inspectOriginalMetadata(for: photo, force: failedBefore)
             checkedCount += 1
-            guard case let .resolved(inspection) = state, let date = inspection.exifCaptureDate else { continue }
-            olderInARow = date < period.lowerBound ? olderInARow + 1 : 0
-            if olderInARow >= Self.olderPhotosBeforeStopping {
+            switch run.record(state) {
+            case .keepReading:
+                continue
+            case .pastThePeriod:
                 completion = Completion(periodStart: period.lowerBound, checked: checkedCount, reachedOlderPhotos: true)
+                return
+            case .cameraStoppedAnswering:
+                cameraStoppedAnswering = true
                 return
             }
         }
@@ -429,6 +510,12 @@ struct CameraGeotagWriteView: View {
             }
             .disabled(writer.phase.isActive || verifier.isRunning)
             .accessibilityIdentifier("geotag-read-capture-times")
+            if periodScanner.cameraStoppedAnswering {
+                Label(CameraCardReadRun.cameraStoppedAnsweringMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("geotag-capture-time-scan-stopped")
+            }
             Text("The camera's media list does not include capture times for every photo. Reading them downloads the start of each original JPEG, newest first, until the photos are older than this period. Nothing on the card changes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -517,8 +604,9 @@ struct CameraGeotagWriteView: View {
     private var verificationSection: some View {
         Section {
             if verifier.isRunning {
-                ProgressView(value: Double(verifier.checkedCount), total: Double(max(1, verifier.candidateCount))) {
-                    Text("Reading original JPEGs from the card (\(verifier.checkedCount) of \(verifier.candidateCount))")
+                HStack {
+                    ProgressView()
+                    Text("Reading photos from the card, newest first (\(verifier.checkedCount) checked)…")
                 }
                 Button("Stop checking", role: .cancel) { verifier.cancel() }
             } else {
@@ -529,6 +617,12 @@ struct CameraGeotagWriteView: View {
                     Label(verifier.results.isEmpty ? "Check photos in this period" : "Check again", systemImage: "checklist")
                 }
                 .accessibilityIdentifier("geotag-verify")
+            }
+            if verifier.stop == .cameraStoppedAnswering {
+                Label(CameraCardReadRun.cameraStoppedAnsweringMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("geotag-verification-stopped")
             }
             if !verifier.results.isEmpty {
                 Text(verificationSummary).font(.callout)
@@ -544,7 +638,7 @@ struct CameraGeotagWriteView: View {
         } header: {
             Text("Verify on the card")
         } footer: {
-            Text("Downloads the start of each original JPEG from the card and reads its EXIF GPS. Positions are compared with this app's own interpolation of the track, which may differ slightly from the camera's choice.\(verifier.skippedCount > 0 ? " \(verifier.skippedCount) older photos were not checked." : "")")
+            Text("Downloads the start of each original JPEG, newest first, and reads its EXIF GPS, until \(CameraCardReadRun.olderPhotosBeforeStopping) photos in a row are older than the period. Positions are compared with this app's own interpolation of the track, which may differ slightly from the camera's choice.\(verificationStopNote)")
         }
     }
 
@@ -577,6 +671,17 @@ struct CameraGeotagWriteView: View {
         }
         if inside.isEmpty, unknown > 0 { return "Unknown (\(unknown) without a known time)" }
         return unknown > 0 ? "\(inside.count) (+\(unknown) unknown)" : "\(inside.count)"
+    }
+
+    private var verificationStopNote: String {
+        switch verifier.stop {
+        case let .reachedOlderPhotos(unread) where unread > 0:
+            return " The \(unread) older photos come before them on the card and were not read."
+        case let .limit(unread):
+            return " Stopped at the read limit; \(unread) older photos were not read."
+        default:
+            return ""
+        }
     }
 
     private var verificationSummary: String {
