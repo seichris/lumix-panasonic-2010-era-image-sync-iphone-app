@@ -86,20 +86,27 @@ These are included for completeness because Panasonic still lists them with Imag
 
 ## Remote shooting validation
 
-Remote shooting is built from the Image App protocol as documented by libgphoto2, lumix-link-desktop, and GX80 captures. It has been verified with unit tests, a scripted camera, and the simulator. The following still need confirmation on a physical DMC-GM1S before the feature is described as validated:
+Remote shooting is built from the Image App protocol as documented by libgphoto2, lumix-link-desktop, and GX80 captures, and is covered by unit tests, a scripted camera, and the simulator. It was then checked on a DMC-GM1S (firmware 2.70, protocol 1.4, menu set 2.0) with a 15 mm f/1.7 lens and an iPhone 16 Pro Max, joined through Image App → Direct.
 
 | Behavior | Status |
 |---|---|
-| `req_acc` reply and any approval prompt on the camera | Needs GM1S validation |
-| Record-mode switch and UDP live view (frame rate, header layout, AF frames) | Needs GM1S validation |
-| Remote shutter, card-write confirmation, and burst while holding | Needs GM1S validation |
+| `req_acc` reply and any approval prompt on the camera | GM1S answers `err_non_support`; no prompt appears |
+| Record-mode switch and UDP live view (header layout, AF frames, readout) | Works on GM1S: 17–24 KB frames with a 149-byte header extension carrying the AF frame and exposure |
+| Remote shutter and card-write confirmation | Works on GM1S |
+| Touch AF and touch shutter | Work on GM1S |
+| Video start/stop and the elapsed time | Works on GM1S (`rec` and `progress_time` in `getstate`) |
+| `getinfo&type=allmenu`/`curmenu` availability | Both available on GM1S |
+| ISO, exposure compensation (`menu_item_id_exposure2`), white balance | Work on GM1S |
+| Shutter and aperture chosen by the camera (P) | GM1S `getsetting` reports the stored S/M value; the app shows the live readout instead |
+| Focus mode | Read-only on GM1S: not in its remote menu |
+| Background and return-to-gallery transitions | Work on GM1S |
+| HTTP 503 right after the app relaunches | GM1S answered 503 for about 10 seconds (once for over a minute); remote shooting waits for it |
+| Burst while holding the shutter | Needs GM1S validation |
 | Physical shutter use and playback button while connected | Needs GM1S validation |
-| Video start/stop and the elapsed-time field | Needs GM1S validation |
-| Touch AF, touch shutter, and manual-focus feedback | Needs GM1S validation |
-| `getinfo&type=allmenu`/`curmenu` availability (otherwise settings are read-only) | Needs GM1S validation |
-| ISO, exposure compensation, white balance, drive mode, focus mode, AF area, peaking, aperture, shutter | Needs GM1S validation |
-| Power zoom with a power-zoom lens | Needs GM1S validation with a power-zoom lens |
-| Background, reconnect, and return-to-gallery transitions | Needs GM1S validation |
+| Manual-focus feedback and peaking | Needs GM1S validation (MF is set on the camera body) |
+| Drive mode, AF area, aperture and shutter in A/S/M | Needs GM1S validation |
+| Reconnect after the camera's Wi‑Fi drops | Needs GM1S validation |
+| Power zoom | Needs validation with a power-zoom lens |
 
 ## Confirmation standard
 
