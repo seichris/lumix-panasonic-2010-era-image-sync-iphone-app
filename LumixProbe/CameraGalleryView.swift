@@ -8,6 +8,7 @@ struct CameraGalleryView: View {
     @ObservedObject var model: ProbeViewModel
     @ObservedObject var modeCoordinator: CameraModeCoordinator
     let makeRemoteShootingSession: @MainActor () -> RemoteShootingSession
+    var openPushTransfer: () -> Void = {}
     @State private var isShowingRemoteShooting = false
     @State private var isSelecting = false
     @State private var importMode: CameraPhotoImportMode = .jpeg
@@ -298,6 +299,8 @@ struct CameraGalleryView: View {
             Menu {
                 Button("Load all media") { Task { await store.loadAllPages() } }
                     .disabled(!store.canLoadMore)
+                Button("Receive photos while shooting…", action: openPushTransfer)
+                    .disabled(store.isImporting || modeCoordinator.exclusiveActivity != nil)
                 Button("Select all items") {
                     Task {
                         await store.loadAllPages()

@@ -285,6 +285,30 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(mediaCount.waitForExistence(timeout: 8))
     }
 
+    func testSendWhileRecordingReceivesAndSavesAPhoto() throws {
+        app.launchArguments += ["-UITestPushTransfer"]
+        app.launch()
+
+        let open = app.buttons["open-push-transfer"]
+        XCTAssertTrue(open.waitForExistence(timeout: 8))
+        scrollToElement(open)
+        open.tap()
+        XCTAssertTrue(app.navigationBars["Send While Recording"].waitForExistence(timeout: 5))
+
+        let start = app.buttons["start-push-transfer"]
+        XCTAssertTrue(start.waitForExistence(timeout: 5))
+        start.tap()
+        XCTAssertTrue(element(labelContaining: "Ready to receive").waitForExistence(timeout: 10),
+                      "The scripted camera reads the receiver's description")
+        XCTAssertTrue(element(labelContaining: "P1000001.JPG").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(labelContaining: "Saved to Photos").waitForExistence(timeout: 10),
+                      "A received JPEG is reported saved once the importer finishes")
+        XCTAssertTrue(element(labelContaining: "640 × 480").exists, "The received size is shown")
+
+        app.buttons["close-push-transfer"].tap()
+        XCTAssertTrue(app.buttons["open-push-transfer"].waitForExistence(timeout: 5))
+    }
+
     private func element(labelContaining text: String) -> XCUIElement {
         app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
     }

@@ -338,6 +338,8 @@ enum CameraImportReconciliationError: LocalizedError {
 enum CameraImportEvidence: String, Codable, Equatable, Sendable {
     case appImport
     case photosLibrary
+    /// The card original matched a photo already received through Send Images While Recording.
+    case sendWhileRecording
 }
 
 struct CameraImportHistoryRecord: Codable, Equatable, Sendable {

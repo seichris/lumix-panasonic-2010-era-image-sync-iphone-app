@@ -101,6 +101,19 @@ Remote shooting is built from the Image App protocol as documented by libgphoto2
 | Power zoom with a power-zoom lens | Needs GM1S validation with a power-zoom lens |
 | Background, reconnect, and return-to-gallery transitions | Needs GM1S validation |
 
+## Send Images While Recording validation
+
+The receiver follows Shutterlink's GM1/G85-tested exchange and has been verified with unit tests, a loopback TCP test, and a scripted camera in the simulator. On a physical DMC-GM1S it still needs:
+
+| Behavior | Status |
+|---|---|
+| Camera discovers the phone through unicast SSDP alone (no multicast entitlement) | Needs GM1S validation |
+| Camera discovers the phone through multicast | Needs the multicast entitlement, then GM1S validation |
+| Description, upload-profile, `CreateObject`, and chunked upload exchange | Needs GM1S validation |
+| Size → Original transfers byte-identical to the card's JPEG | Needs GM1S validation |
+| Smaller transfer sizes are not treated as originals | Needs GM1S validation |
+| Burst, app switch, iPhone lock, and camera Wi-Fi interruptions | Needs GM1S validation |
+
 ## Confirmation standard
 
 A camera should only move from candidate to confirmed after a real-device run records:
