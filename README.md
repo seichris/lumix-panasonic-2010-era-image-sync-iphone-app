@@ -24,6 +24,7 @@ Retro LUMIX Sync is not affiliated with or endorsed by Panasonic. Panasonic, LUM
 - Download all new photos and videos in one action.
 - Select images and assign a searched Apple Maps location before importing them.
 - Record an optional on-device location track and add a matched location during photo import.
+- Shoot remotely from iPhone with a live viewfinder: still photos, video, touch AF and touch shutter, power zoom where the lens allows it, manual focus, and the exposure, ISO, white-balance, drive-mode, and focus settings the camera reports.
 - On Mac, join the camera Wi-Fi from the macOS menu bar, run the protocol probes, and copy downloaded originals to Downloads.
 - Keep camera traffic local between the iPhone and the camera, without accounts, analytics, ads, or cloud uploads.
 
@@ -52,6 +53,21 @@ Real-device testing confirms that Retro LUMIX Sync can:
 - save supported originals to Apple Photos.
 
 The protocol is unofficial and can vary by camera model and firmware.
+
+## Remote shooting
+
+While connected through **Image App Direct**, tap the viewfinder button in the camera gallery's toolbar. Retro LUMIX Sync asks the camera for remote control (accept the request on the camera if it asks), switches it to recording mode, and shows the camera's UDP live view.
+
+- **Shutter:** tap to take one photo, or touch and hold for burst shooting when the camera's drive mode is set to burst. A photo is reported as saved only after the camera shows card activity or a lower remaining-shot count; an accepted shutter command alone is not treated as proof.
+- **Video:** start and stop recording on the camera's card.
+- **Touch:** in **AF** mode a tap moves the camera's AF area; in **Shutter** mode a tap focuses at that point and takes a photo.
+- **Zoom:** shown only when the camera lists its power-zoom commands and the lens reports a focal-length range.
+- **Manual focus:** near/far buttons appear in MF focus mode and show the position the camera reports.
+- **Settings:** shutter speed and aperture follow the mode dial (A, S, or M). ISO, exposure compensation, white balance, drive mode, focus mode, and AF area list only the values the camera's own menu offers, with values the current mode disables shown as unavailable. If a camera does not provide its menu, current values are shown read-only.
+
+Only one part of the app controls the camera's mode at a time. Opening or refreshing the gallery waits while remote shooting holds the camera in recording mode, and when you return to the gallery it switches the camera back to playback and reloads so new photos appear. Requests that belong to an earlier connection are refused, so a slow command cannot reach a camera that joined afterwards at the same address.
+
+Live view pauses while the app is in the background and resumes when you return. If the camera is switched to playback or operated directly, remote control pauses and resumes when the camera returns to recording mode. Leaving the screen stops a video recording started from it.
 
 ## Geotagging
 
@@ -107,6 +123,22 @@ GET http://192.168.54.1/cam.cgi?mode=camcmd&value=playmode
 GET http://192.168.54.1/cam.cgi?mode=get_content_info
 ```
 
+Remote shooting adds:
+
+```text
+GET /cam.cgi?mode=accctrl&type=req_acc&value=0&value2=GM1Sync
+GET /cam.cgi?mode=camcmd&value=recmode
+GET /cam.cgi?mode=startstream&value=<phone UDP port>      (keep-alive: getstate about once a second)
+GET /cam.cgi?mode=camcmd&value=capture | capture_cancel | video_recstart | video_recstop
+GET /cam.cgi?mode=camctrl&type=touch&value=<x>/<y>&value2=on      (0–1000 grid)
+GET /cam.cgi?mode=camcmd&value=tele-normal | wide-normal | zoomstop
+GET /cam.cgi?mode=camctrl&type=focus&value=tele-normal | wide-normal   (far | near)
+GET /cam.cgi?mode=getinfo&type=allmenu | curmenu | lens
+GET /cam.cgi?mode=getsetting&type=iso   /   setsetting&type=iso&value=800
+```
+
+Each live-view datagram carries a 32-byte header, an optional extension with AF frames and the live exposure, and one JPEG. Malformed or incomplete frames are dropped, and only datagrams from the camera's address are accepted.
+
 Media enumeration uses a UPnP `ContentDirectory:1` SOAP request. Returned DIDL-Lite items may expose multiple resources for one camera item. Retro LUMIX Sync groups them by item ID and resolves profiles according to their purpose:
 
 | Purpose | Preferred profiles |
@@ -131,5 +163,6 @@ The implementation draws on behavior independently implemented or reverse-engine
 
 - `gphoto/libgphoto2`, `camlibs/lumix/lumix.c`
 - `peci1/lumix-link-desktop`
+- `SahajJain01/lumix-local` (GX80 live-view packet layout, menu schema, and Image App command analysis)
 - Panasonic Image App documentation and support history
 - Panasonic/Lumix UPnP device descriptions exposing `ContentDirectory:1`

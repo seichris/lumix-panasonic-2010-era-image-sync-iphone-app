@@ -84,6 +84,23 @@ These are included for completeness because Panasonic still lists them with Imag
 | Panasonic DC-TZ99 / ZS99 | 2025 | Later, unverified candidate |
 | Panasonic DC-TZ300 / ZS300 | 2026 | Later, unverified candidate |
 
+## Remote shooting validation
+
+Remote shooting is built from the Image App protocol as documented by libgphoto2, lumix-link-desktop, and GX80 captures. It has been verified with unit tests, a scripted camera, and the simulator. The following still need confirmation on a physical DMC-GM1S before the feature is described as validated:
+
+| Behavior | Status |
+|---|---|
+| `req_acc` reply and any approval prompt on the camera | Needs GM1S validation |
+| Record-mode switch and UDP live view (frame rate, header layout, AF frames) | Needs GM1S validation |
+| Remote shutter, card-write confirmation, and burst while holding | Needs GM1S validation |
+| Physical shutter use and playback button while connected | Needs GM1S validation |
+| Video start/stop and the elapsed-time field | Needs GM1S validation |
+| Touch AF, touch shutter, and manual-focus feedback | Needs GM1S validation |
+| `getinfo&type=allmenu`/`curmenu` availability (otherwise settings are read-only) | Needs GM1S validation |
+| ISO, exposure compensation, white balance, drive mode, focus mode, AF area, aperture, shutter | Needs GM1S validation |
+| Power zoom with a power-zoom lens | Needs GM1S validation with a power-zoom lens |
+| Background, reconnect, and return-to-gallery transitions | Needs GM1S validation |
+
 ## Confirmation standard
 
 A camera should only move from candidate to confirmed after a real-device run records:

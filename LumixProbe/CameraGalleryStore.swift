@@ -16,6 +16,50 @@ protocol CameraGalleryClient: Sendable {
 
 extension LumixClient: CameraGalleryClient {}
 
+/// Routes the gallery's switch into playback mode through the camera mode
+/// coordinator, so browsing waits while remote shooting or another exclusive
+/// activity holds the camera, and that activity waits for an in-flight preparation.
+struct CoordinatedCameraGalleryClient: CameraGalleryClient {
+    let base: any CameraGalleryClient
+    let coordinator: CameraModeCoordinator
+
+    func prepareForBrowsing() async throws -> Int {
+        let base = self.base
+        return try await coordinator.performSharedOperation { try await base.prepareForBrowsing() }
+    }
+
+    func fetchCapabilities() async throws -> CameraCapabilities {
+        try await base.fetchCapabilities()
+    }
+
+    func browsePhotos(start: Int, count: Int) async throws -> LumixPhotoPage {
+        try await base.browsePhotos(start: start, count: count)
+    }
+
+    func browseMetadata(itemID: String) async throws -> LumixPhoto {
+        try await base.browseMetadata(itemID: itemID)
+    }
+
+    func downloadJPEGData(_ resource: LumixResource) async throws -> Data {
+        try await base.downloadJPEGData(resource)
+    }
+
+    func download(_ resource: LumixResource) async throws -> URL {
+        try await base.download(resource)
+    }
+
+    func downloadMetadataPrefix(_ resource: LumixResource) async throws -> URL {
+        try await base.downloadMetadataPrefix(resource)
+    }
+
+    func makeAVCHDPlaybackSession(
+        for resource: LumixResource,
+        availableResources: [LumixResource]
+    ) async throws -> any CameraPlaybackSession {
+        try await base.makeAVCHDPlaybackSession(for: resource, availableResources: availableResources)
+    }
+}
+
 extension CameraGalleryClient {
     func fetchCapabilities() async throws -> CameraCapabilities {
         CameraCapabilities(model: nil, version: nil, date: nil, entries: [])
@@ -146,6 +190,9 @@ final class CameraGalleryStore: ObservableObject {
     @Published private(set) var hasCompletePhotoLibraryImportHistory = false
     @Published private(set) var capabilities: CameraCapabilities?
     @Published private(set) var metadataInspectionStates: [LumixPhoto.ID: CameraPhotoMetadataInspectionState] = [:]
+    /// Set when another activity (such as remote shooting) changed the camera's
+    /// mode or card contents; the gallery reloads the next time it appears.
+    @Published private(set) var needsReloadAfterCameraModeChange = false
 
     private struct PageRequest: Equatable {
         let start: Int
@@ -370,6 +417,8 @@ final class CameraGalleryStore: ObservableObject {
                 let reportedTotal = try await client.prepareForBrowsing()
                 try Task.checkCancellation()
                 guard loadGeneration == generation else { return }
+                // This load prepared the camera after any earlier mode change.
+                needsReloadAfterCameraModeChange = false
 
                 let fetchedCapabilities: CameraCapabilities?
                 do {
@@ -532,6 +581,18 @@ final class CameraGalleryStore: ObservableObject {
         isReconcilingImportHistory = false
         hasCompletePhotoLibraryImportHistory = false
         importHistoryReconciliationError = nil
+    }
+
+    func markNeedsReloadAfterCameraModeChange() {
+        needsReloadAfterCameraModeChange = true
+    }
+
+    /// Returns true once after another activity changed the camera, unless a
+    /// load is already running (it will pick up the new camera state itself).
+    func consumeReloadRequest() -> Bool {
+        guard needsReloadAfterCameraModeChange else { return false }
+        needsReloadAfterCameraModeChange = false
+        return phase != .loading
     }
 
     func cancelLoading() {

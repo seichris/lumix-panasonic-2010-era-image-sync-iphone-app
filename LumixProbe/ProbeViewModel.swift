@@ -2,7 +2,14 @@ import Foundation
 
 @MainActor
 final class ProbeViewModel: ObservableObject {
-    @Published var host = "192.168.54.1"
+    @Published var host = "192.168.54.1" {
+        didSet {
+            if host.trimmingCharacters(in: .whitespacesAndNewlines)
+                != oldValue.trimmingCharacters(in: .whitespacesAndNewlines) {
+                endCameraConnection()
+            }
+        }
+    }
     @Published var log = "Join the camera's Wi-Fi network, then probe it.\n"
     @Published var isRunning = false
     @Published var resources: [LumixResource] = []
@@ -17,7 +24,15 @@ final class ProbeViewModel: ObservableObject {
             if autoStartGeotagging { locationLogger.start() }
         }
     }
-    @Published private(set) var isCameraConnected = false
+    @Published private(set) var isCameraConnected = false {
+        didSet {
+            // Every connect or disconnect starts a new connection generation, so
+            // nothing created for the previous camera can reach the next one.
+            if isCameraConnected != oldValue { endCameraConnection() }
+        }
+    }
+    /// Changes whenever the camera connection ends or is replaced.
+    @Published private(set) var connectionGeneration: UInt64 = 0
     @Published private(set) var connectionStatusMessage = "Checking for the camera…"
     @Published private(set) var rememberedCameraNetwork: RememberedCameraNetwork?
     @Published private(set) var lastResult = "Ready"
@@ -31,7 +46,19 @@ final class ProbeViewModel: ObservableObject {
     private var joiningWiFi = false
     private let simulatedConnection: Bool?
     let locationLogger: GeotagLocationLogger
-    private var client: LumixClient { LumixClient(host: host.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    /// Owns the camera connection generation consulted by every scoped `LumixClient`.
+    let connectionScope = CameraConnectionScope()
+    private var client: LumixClient { makeClient() }
+
+    /// A client bound to the current camera connection. It refuses to send
+    /// anything once that connection ends.
+    func makeClient() -> LumixClient {
+        LumixClient(host: host.trimmingCharacters(in: .whitespacesAndNewlines), connectionScope: connectionScope)
+    }
+
+    private func endCameraConnection() {
+        connectionGeneration = connectionScope.invalidate().generation
+    }
     private static let cameraClockOffsetKey = "cameraClockOffsetMinutes"
     private static let autoStartGeotaggingKey = "autoStartGeotagging"
 
@@ -202,6 +229,7 @@ final class ProbeViewModel: ObservableObject {
         guard let network = rememberedCameraNetwork else { return }
         connectionAttempt = UUID()
         joiningWiFi = false
+        endCameraConnection()
         wifiConnector.removeConfiguration(forSSID: network.ssid)
 
         do {
@@ -395,6 +423,8 @@ final class ProbeViewModel: ObservableObject {
         let id = UUID()
         connectionAttempt = id
         joiningWiFi = true
+        // Joining a network starts a new camera connection even at the same address.
+        endCameraConnection()
         defer { if connectionAttempt == id { joiningWiFi = false } }
         let target = host.trimmingCharacters(in: .whitespacesAndNewlines)
         let ssid: String

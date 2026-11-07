@@ -307,6 +307,36 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertEqual(store.phase, .idle)
     }
 
+    func testRefreshDuringRemoteShootingWaitsThenLoadsTheNewPhotos() async throws {
+        let coordinator = CameraModeCoordinator()
+        let camera = MockGalleryClient(total: 2)
+        let store = CameraGalleryStore(
+            client: CoordinatedCameraGalleryClient(base: camera, coordinator: coordinator),
+            importer: RecordingImporter(),
+            pageSize: 5
+        )
+        await store.loadInitial()
+        XCTAssertEqual(store.photos.count, 2)
+
+        let shooting = try await coordinator.beginExclusive(.remoteShooting)
+        await camera.setTotal(3)
+        let refresh = Task { await store.reloadAllMedia() }
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(store.phase, .loading, "The gallery must wait instead of switching the camera to playback")
+        let requestsWhileShooting = await camera.browseRequests.count
+        XCTAssertEqual(requestsWhileShooting, 1, "Only the original load browsed the camera")
+
+        store.markNeedsReloadAfterCameraModeChange()
+        coordinator.endExclusive(shooting)
+        await refresh.value
+        XCTAssertEqual(store.photos.count, 3, "The photo taken while shooting appears after returning")
+        XCTAssertFalse(store.consumeReloadRequest(), "The waiting refresh already reflects the new camera state")
+
+        store.markNeedsReloadAfterCameraModeChange()
+        XCTAssertTrue(store.consumeReloadRequest())
+        XCTAssertFalse(store.consumeReloadRequest(), "A reload request is consumed once")
+    }
+
     func testEachRefreshUsesTheCurrentClientProvider() async {
         let first = MockGalleryClient(total: 3)
         let second = MockGalleryClient(total: 1)
