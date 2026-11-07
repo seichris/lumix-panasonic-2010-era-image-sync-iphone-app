@@ -111,14 +111,9 @@ struct RemoteShootingView: View {
             let imageRect = Self.aspectFitRect(for: imageSize, in: proxy.size)
             ZStack(alignment: .topLeading) {
                 Color.black
-                if let frame = session.frame {
-                    Image(decorative: frame.image, scale: 1)
-                        .resizable()
-                        .frame(width: imageRect.width, height: imageRect.height)
-                        .offset(x: imageRect.minX, y: imageRect.minY)
-                        .opacity(session.phase == .live ? 1 : 0.45)
-                    afFrameOverlay(frame.metadata, in: imageRect)
-                }
+                // Only this layer observes the per-frame feed, so a new frame
+                // redraws the picture without rebuilding menus elsewhere on screen.
+                RemoteLiveFrameLayer(feed: session.feed, imageRect: imageRect, isLive: session.phase == .live)
                 if let point = session.lastTouchPoint, session.phase == .live {
                     Circle()
                         .stroke(Color.yellow, lineWidth: 2)
@@ -143,21 +138,6 @@ struct RemoteShootingView: View {
         .aspectRatio(4 / 3, contentMode: .fit)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote-shooting-viewfinder")
-    }
-
-    private func afFrameOverlay(_ metadata: LumixLiveViewFrameMetadata, in rect: CGRect) -> some View {
-        ForEach(Array(metadata.afFrames.enumerated()), id: \.offset) { _, frame in
-            let x0 = rect.minX + CGFloat(frame.x0) / 1000 * rect.width
-            let y0 = rect.minY + CGFloat(frame.y0) / 1000 * rect.height
-            let width = max(4, CGFloat(frame.x1 - frame.x0) / 1000 * rect.width)
-            let height = max(4, CGFloat(frame.y1 - frame.y0) / 1000 * rect.height)
-            Rectangle()
-                .stroke(Color(red: Double(frame.red) / 255, green: Double(frame.green) / 255, blue: Double(frame.blue) / 255),
-                        lineWidth: 2)
-                .frame(width: width, height: height)
-                .position(x: x0 + width / 2, y: y0 + height / 2)
-                .allowsHitTesting(false)
-        }
     }
 
     @ViewBuilder
@@ -223,18 +203,12 @@ struct RemoteShootingView: View {
     // MARK: Exposure and settings
 
     private var exposureReadout: some View {
-        let exposure = session.frame?.metadata.exposure
-        let iso = session.controls.settings.first { $0.kind == .iso }?.currentLabel
-        return HStack(spacing: 18) {
-            Text(exposure?.shutterLabel ?? session.controls.shutter?.currentLabel ?? "–")
-            Text(exposure?.apertureLabel ?? session.controls.aperture?.currentLabel ?? "–")
-            Text(exposure?.exposureLabel ?? "±0")
-            if let iso { Text("ISO \(iso)") }
-        }
-        .font(.callout.monospacedDigit().weight(.semibold))
-        .foregroundStyle(.white)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("remote-exposure-readout")
+        RemoteExposureReadout(
+            feed: session.feed,
+            shutter: session.controls.shutter?.currentLabel,
+            aperture: session.controls.aperture?.currentLabel,
+            iso: session.controls.settings.first { $0.kind == .iso }?.currentLabel
+        )
     }
 
     private var settingsStrip: some View {
@@ -448,6 +422,59 @@ struct RemoteShootingView: View {
         case .warning: return .orange
         case .error: return .red
         }
+    }
+}
+
+/// The live picture and the camera's AF frames, redrawn for every frame.
+private struct RemoteLiveFrameLayer: View {
+    @ObservedObject var feed: RemoteLiveViewFeed
+    let imageRect: CGRect
+    let isLive: Bool
+
+    var body: some View {
+        if let frame = feed.frame {
+            Image(decorative: frame.image, scale: 1)
+                .resizable()
+                .frame(width: imageRect.width, height: imageRect.height)
+                .offset(x: imageRect.minX, y: imageRect.minY)
+                .opacity(isLive ? 1 : 0.45)
+                .allowsHitTesting(false)
+            ForEach(Array(frame.metadata.afFrames.enumerated()), id: \.offset) { _, af in
+                let x0 = imageRect.minX + CGFloat(af.x0) / 1000 * imageRect.width
+                let y0 = imageRect.minY + CGFloat(af.y0) / 1000 * imageRect.height
+                let width = max(4, CGFloat(af.x1 - af.x0) / 1000 * imageRect.width)
+                let height = max(4, CGFloat(af.y1 - af.y0) / 1000 * imageRect.height)
+                Rectangle()
+                    .stroke(Color(red: Double(af.red) / 255, green: Double(af.green) / 255, blue: Double(af.blue) / 255),
+                            lineWidth: 2)
+                    .frame(width: width, height: height)
+                    .position(x: x0 + width / 2, y: y0 + height / 2)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+/// Shutter, aperture, and exposure as the camera reports them in each frame,
+/// falling back to the last values read with getsetting.
+private struct RemoteExposureReadout: View {
+    @ObservedObject var feed: RemoteLiveViewFeed
+    let shutter: String?
+    let aperture: String?
+    let iso: String?
+
+    var body: some View {
+        let exposure = feed.frame?.metadata.exposure
+        HStack(spacing: 18) {
+            Text(exposure?.shutterLabel ?? shutter ?? "–")
+            Text(exposure?.apertureLabel ?? aperture ?? "–")
+            Text(exposure?.exposureLabel ?? "±0")
+            if let iso { Text("ISO \(iso)") }
+        }
+        .font(.callout.monospacedDigit().weight(.semibold))
+        .foregroundStyle(.white)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("remote-exposure-readout")
     }
 }
 

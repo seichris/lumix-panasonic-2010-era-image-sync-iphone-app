@@ -115,7 +115,9 @@ enum RemoteShootingError: LocalizedError, Equatable {
 @MainActor
 final class RemoteShootingSession: ObservableObject {
     @Published private(set) var phase: RemoteShootingPhase = .idle
-    @Published private(set) var frame: LumixLiveViewFrame?
+    /// Per-frame state lives in its own object so only the viewfinder redraws for
+    /// each live-view frame; redrawing the whole screen rebuilt open settings menus.
+    let feed = RemoteLiveViewFeed()
     @Published private(set) var cameraState: LumixCameraState?
     @Published private(set) var controls = RemoteShootingControls()
     @Published private(set) var focusPosition: LumixFocusPosition?
@@ -123,8 +125,6 @@ final class RemoteShootingSession: ObservableObject {
     @Published private(set) var isConfirmingCapture = false
     @Published private(set) var notice: RemoteShootingNotice?
     @Published private(set) var capabilities: CameraCapabilities?
-    @Published private(set) var framesReceived = 0
-    @Published private(set) var malformedFrames = 0
     @Published private(set) var lastTouchPoint: CGPoint?
     @Published private(set) var zoomUnavailableMessage: String?
     @Published var touchMode: RemoteTouchMode = .focus
@@ -181,6 +181,10 @@ final class RemoteShootingSession: ObservableObject {
 
     /// Uses the camera's `rec` field when it reports one; otherwise the last
     /// start/stop command this screen sent.
+    var frame: LumixLiveViewFrame? { feed.frame }
+    var framesReceived: Int { feed.framesReceived }
+    var malformedFrames: Int { feed.malformedFrames }
+
     var isRecordingVideo: Bool {
         if let rec = cameraState?.values["rec"] { return rec == "on" }
         return requestedVideoRecording
@@ -712,7 +716,7 @@ final class RemoteShootingSession: ObservableObject {
     }
 
     private func recomputeControls() {
-        controls = RemoteShootingControls.derive(
+        let derived = RemoteShootingControls.derive(
             schema: schema,
             currentMenu: currentMenu,
             values: settingValues,
@@ -721,7 +725,8 @@ final class RemoteShootingSession: ObservableObject {
             lens: lensInfo,
             capabilities: capabilities
         )
-        if !controls.isManualFocus { focusPosition = nil }
+        if derived != controls { controls = derived }
+        if !controls.isManualFocus, focusPosition != nil { focusPosition = nil }
     }
 
     private func applySettingCommand(_ command: LumixCommand, description: String) async {
@@ -772,10 +777,10 @@ final class RemoteShootingSession: ObservableObject {
 
     private func drainMailbox() {
         let delivery = mailbox.take()
-        malformedFrames += delivery.malformedCount
+        feed.malformedFrames += delivery.malformedCount
         guard let frame = delivery.frame, liveViewSource != nil, !isInBackground else { return }
-        self.frame = frame
-        framesReceived += delivery.frameCount
+        feed.frame = frame
+        feed.framesReceived += delivery.frameCount
         lastFrameAt = frame.receivedAt
         failedStreamRestarts = 0
         switch phase {
@@ -802,7 +807,9 @@ final class RemoteShootingSession: ObservableObject {
     // MARK: Helpers
 
     private func apply(_ state: LumixCameraState) {
-        cameraState = state
+        // Publish only real changes: the keep-alive runs every second, and each
+        // publish redraws the screen, including any settings menu that is open.
+        if cameraState != state { cameraState = state }
     }
 
     /// Runs one camera command through the serial gate, refusing to touch a camera
@@ -862,6 +869,14 @@ final class RemoteShootingSession: ObservableObject {
     private func show(_ message: String, style: RemoteShootingNotice.Style) {
         notice = RemoteShootingNotice(message: message, style: style)
     }
+}
+
+/// The newest live-view frame and frame counters, observed only by the viewfinder.
+@MainActor
+final class RemoteLiveViewFeed: ObservableObject {
+    @Published fileprivate(set) var frame: LumixLiveViewFrame?
+    @Published fileprivate(set) var framesReceived = 0
+    @Published fileprivate(set) var malformedFrames = 0
 }
 
 /// Coalesces live-view frames so the main actor only ever renders the newest one.
