@@ -40,6 +40,20 @@ struct ContentView: View {
         }
     }
 
+    private var geotagEnvironment: CameraGeotagEnvironment {
+        if usesFixture {
+            return CameraGeotagEnvironment(
+                makeCamera: { DemoGeotagCamera() },
+                samples: { DemoGeotagCamera.demoSamples() }
+            )
+        }
+        let model = self.model
+        return CameraGeotagEnvironment(
+            makeCamera: { model.makeClient() },
+            samples: { model.locationLogger.samples }
+        )
+    }
+
     private func makeRemoteShootingSession() -> RemoteShootingSession {
         if usesFixture {
             return RemoteShootingSession(camera: DemoRemoteCamera(), coordinator: modeCoordinator) {
@@ -60,7 +74,8 @@ struct ContentView: View {
                         store: galleryStore,
                         model: model,
                         modeCoordinator: modeCoordinator,
-                        makeRemoteShootingSession: makeRemoteShootingSession
+                        makeRemoteShootingSession: makeRemoteShootingSession,
+                        geotagEnvironment: geotagEnvironment
                     )
                 } else {
                     disconnectedHome
