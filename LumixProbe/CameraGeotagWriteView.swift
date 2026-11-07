@@ -673,6 +673,11 @@ struct CameraClockSyncView: View {
                         }
                         Text("The difference assumes the camera reports UTC time plus its time zone, the format it accepts. Its reply format has not been verified on a GM1S.")
                             .font(.caption2).foregroundStyle(.secondary)
+                    } else if let problem = synchronizer.clockReadProblem {
+                        Label(problem, systemImage: "clock.badge.questionmark")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("camera-clock-read-problem")
                     } else {
                         Button("Read camera clock") { Task { await synchronizer.readCameraClock() } }
                             .disabled(synchronizer.phase.isActive)
