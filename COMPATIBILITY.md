@@ -103,8 +103,9 @@ Remote shooting is built from the Image App protocol as documented by libgphoto2
 | HTTP 503 right after the app relaunches | GM1S answered 503 for about 10 seconds (once for over a minute); remote shooting waits for it |
 | Burst while holding the shutter | Not available this way on GM1S: it answered `ok` to Burst L (`setsetting drivemode=burst`, `value2=l`) but stayed in single shot, so a held shutter took one frame. The app now says when a camera keeps its old value. Other burst speeds are untested. |
 | Physical shutter use and playback button while connected | Needs GM1S validation |
-| Manual-focus feedback and peaking | Needs GM1S validation (MF is set on the camera body) |
-| Drive mode, AF area, aperture and shutter in A/S/M | Needs GM1S validation |
+| AF area and peaking | Work on GM1S (1-Area and peaking Low applied and read back) |
+| Manual-focus feedback | Needs GM1S validation (MF is set on the camera body) |
+| Aperture and shutter in A/S/M | Needs GM1S validation |
 | Reconnect after the camera's Wi‑Fi drops | Needs GM1S validation |
 | Power zoom | Needs validation with a power-zoom lens |
 
