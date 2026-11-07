@@ -574,6 +574,36 @@ actor LumixClient {
         return LumixCommandReply.parse(response.data)
     }
 
+    /// Sends a `cam.cgi` request whose query is already percent-encoded (needed
+    /// when a value must carry `%2B`), optionally as a POST with a body. It uses
+    /// the same connection-scope and same-host redirect checks as every request.
+    func perform(
+        percentEncodedQuery: String,
+        body: Data? = nil,
+        contentType: String? = nil,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> LumixCommandReply {
+        // Only already-encoded query text is accepted; anything else would make
+        // URLComponents trap or silently change the camera command.
+        let allowed = CharacterSet.urlQueryAllowed.union(["%"])
+        guard percentEncodedQuery.unicodeScalars.allSatisfy(allowed.contains) else { throw LumixError.invalidURL }
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = host
+        components.path = "/cam.cgi"
+        components.percentEncodedQuery = percentEncodedQuery
+        guard let url = components.url else { throw LumixError.invalidURL }
+        var request = URLRequest(url: url)
+        if let body {
+            request.httpMethod = "POST"
+            request.httpBody = body
+            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        }
+        if let timeoutInterval { request.timeoutInterval = timeoutInterval }
+        let response = try await send(request)
+        return LumixCommandReply.parse(response.data)
+    }
+
     func getState(timeoutInterval: TimeInterval? = nil) async throws -> LumixHTTPResponse {
         try await cameraGET(["mode": "getstate"], timeoutInterval: timeoutInterval)
     }

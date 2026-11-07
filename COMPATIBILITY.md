@@ -109,6 +109,21 @@ Remote shooting is built from the Image App protocol as documented by libgphoto2
 | Reconnect after the camera's Wi‑Fi drops | Needs GM1S validation |
 | Power zoom | Needs validation with a power-zoom lens |
 
+## Location writing and clock validation
+
+Location writing follows Panasonic's documented GM1S workflow and the command sequence recovered from Image App. It has been verified only against a scripted camera. On a physical GM1S, use a disposable or backed-up SD card:
+
+| Behavior | Status |
+|---|---|
+| Capability report (`geotag_add_enable` or protocol 1.3+) | Needs GM1S validation |
+| `%2B` versus raw `+` in clock values | Needs GM1S validation |
+| `setsetting&type=clock` and the `getsetting&type=clock` reply format | Needs GM1S validation |
+| Daylight-saving and time-zone handling of both clock commands | Needs GM1S validation |
+| Track upload accepted (`startsenddata`, multipart `senddata`) | Needs GM1S validation |
+| Progress, abort, and interruption behavior | Needs GM1S validation |
+| GPS written into JPEGs inside the period; none outside it; existing GPS kept | Needs GM1S validation by reading the originals back |
+| RAW and RAW+JPEG files | Unverified; not claimed |
+
 ## Confirmation standard
 
 A camera should only move from candidate to confirmed after a real-device run records:
