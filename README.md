@@ -42,9 +42,13 @@ The iPhone app opens on a home screen organized by what you want to do. The app 
   - **Receive photos as you shoot** uses **Send Images While Recording**.
 
   Each job shows the camera steps for its connection and joins the camera's network: the remembered network, its QR code, or a name and password.
-- **About:** a note from the developer, the source code on GitHub, **Feature requests welcome** (opens a new GitHub issue), the list of potentially compatible cameras, the app icon, **Developer settings** (connection, remembered camera, camera address, and protocol tests), and the app version.
+- **About:** a note from the developer (including the price of the custom app icons), the source code on GitHub, **Feature requests welcome** (opens a new GitHub issue), the list of potentially compatible cameras, the app icon, **Developer settings** (connection, remembered camera, camera address, and protocol tests), and the app version.
 
 Once connected, the camera screen switches between **Photos** and **Live view** at the top; going back to the home screen keeps the connection.
+
+## Custom app icons
+
+Blue Camera is the free app icon. **Lens** and **Black Camera** are an optional one-time In-App Purchase that supports development; someone already using one of them when this version first runs keeps them free. **App Icon** offers **Restore purchase**. See [docs/custom-app-icons.md](docs/custom-app-icons.md) for the App Store Connect setup and testing.
 
 ## Connect a GM1S
 

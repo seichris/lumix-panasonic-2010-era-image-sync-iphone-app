@@ -223,6 +223,32 @@ final class LumixProbeUITests: XCTestCase {
         )
     }
 
+    func testCustomIconsUnlockWithAPurchase() throws {
+        app.launchArguments += ["-UITestIconPurchase"]
+        app.launch()
+
+        // The About section is at the bottom; the list only builds rows on screen.
+        let iconLink = app.buttons["app-icon-link"]
+        XCTAssertTrue(app.buttons["open-camera-photos"].waitForExistence(timeout: 8))
+        scrollToElement(iconLink)
+        XCTAssertTrue(element(labelContaining: "unlocking the custom app icons for $0.99").exists,
+                      "The About note names the price")
+        iconLink.tap()
+        XCTAssertTrue(app.navigationBars["App Icon"].waitForExistence(timeout: 5))
+        let unlock = app.buttons["unlock-custom-icons"]
+        XCTAssertTrue(unlock.waitForExistence(timeout: 5))
+        XCTAssertTrue(unlock.label.contains("$0.99"))
+        XCTAssertTrue(app.buttons["restore-custom-icons"].exists, "Apple requires a way to restore the purchase")
+        XCTAssertEqual(app.buttons["app-icon-BlackCamera"].value as? String, "Locked")
+        XCTAssertNotEqual(app.buttons["app-icon-primary"].value as? String, "Locked", "Blue Camera is free")
+
+        unlock.tap()
+        let unlocked = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: unlock)
+        XCTAssertEqual(XCTWaiter.wait(for: [unlocked], timeout: 5), .completed, "The purchase unlocks the icons")
+        XCTAssertNotEqual(app.buttons["app-icon-BlackCamera"].value as? String, "Locked")
+        XCTAssertTrue(element(labelContaining: "Thank you for supporting Retro LUMIX Sync").exists)
+    }
+
     func testLocationLogCanStartAndStop() throws {
         app.launch()
 

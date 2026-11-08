@@ -12,6 +12,7 @@ struct ContentView: View {
     @StateObject private var galleryStore = CameraGalleryStore()
     @StateObject private var modeCoordinator: CameraModeCoordinator
     @StateObject private var pushTransferHistory: CameraPushTransferHistory
+    @StateObject private var iconStore: AppIconStore
     @State private var presentedSheet: ConnectionSheet?
     @State private var isShowingPushTransfer = false
     @State private var path = NavigationPath()
@@ -23,6 +24,9 @@ struct ContentView: View {
         let arguments = ProcessInfo.processInfo.arguments
         let usesFixture = arguments.contains("-UITestConnectedGallery")
         let usesPushTransferFixture = arguments.contains("-UITestPushTransfer")
+        let usesIconPurchaseFixture = arguments.contains("-UITestIconPurchase")
+        // As the host of unit tests the app doesn't contact the App Store.
+        let hostsUnitTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         let coordinator = CameraModeCoordinator(connectionScope: model.connectionScope)
         let pushHistory = CameraPushTransferHistory(
             store: usesFixture || usesPushTransferFixture
@@ -34,6 +38,14 @@ struct ContentView: View {
         _model = StateObject(wrappedValue: model)
         _modeCoordinator = StateObject(wrappedValue: coordinator)
         _pushTransferHistory = StateObject(wrappedValue: pushHistory)
+        // The fixture starts locked: a fresh defaults suite, and no custom icon in use.
+        _iconStore = StateObject(wrappedValue: usesIconPurchaseFixture || hostsUnitTests
+            ? AppIconStore(
+                service: DemoIconPurchaseService(),
+                defaults: UserDefaults(suiteName: "IconPurchaseUITest-\(UUID().uuidString)") ?? .standard,
+                currentIcon: .primary
+            )
+            : AppIconStore(service: StoreKitIconPurchaseService(), currentIcon: AppIconChoice.current))
         if usesFixture {
             let client = CoordinatedCameraGalleryClient(base: DemoCameraGalleryClient(), coordinator: coordinator)
             _galleryStore = StateObject(
@@ -113,6 +125,7 @@ struct ContentView: View {
             HomeView(
                 model: model,
                 logger: model.locationLogger,
+                iconStore: iconStore,
                 openCompatibleCameras: { path.append(AppRoute.compatibleCameras) },
                 openAppIcon: { path.append(AppRoute.appIcon) },
                 openReceive: { isShowingPushTransfer = true }
@@ -125,6 +138,7 @@ struct ContentView: View {
             model.startGeotaggingIfEnabled()
             await model.refreshConnectionStatus(waitingForRememberedCamera: true)
         }
+        .task { await iconStore.refresh() }
         .onOpenURL { url in
             guard model.handleLocationTrackingURL(url) else { return }
             presentedSheet = nil
@@ -208,7 +222,7 @@ struct ContentView: View {
         case .compatibleCameras:
             CameraCompatibilityView()
         case .appIcon:
-            AppIconPickerView()
+            AppIconPickerView(store: iconStore)
         case .developerSettings:
             CameraDiagnosticsView(model: model) {
                 Task {
