@@ -101,11 +101,11 @@ Remote shooting is built from the Image App protocol as documented by libgphoto2
 | Focus mode | Read-only on GM1S: not in its remote menu |
 | Background and return-to-gallery transitions | Work on GM1S |
 | HTTP 503 right after the app relaunches | GM1S answered 503 for about 10 seconds (once for over a minute); remote shooting waits for it |
-| Burst while holding the shutter | Not available this way on GM1S: it answered `ok` to Burst L (`setsetting drivemode=burst`, `value2=l`) but stayed in single shot, so a held shutter took one frame. The app now says when a camera keeps its old value. Other burst speeds are untested. |
-| Physical shutter use and playback button while connected | Needs GM1S validation |
+| Burst while holding the shutter | Not available this way on GM1S: it answered `ok` to Burst L (`setsetting drivemode=burst`, `value2=l`) but stayed in single shot, so a held shutter took one frame. The app now says when a camera keeps its old value. Other burst speeds, and burst set on the camera body, are untested. |
+| Physical shutter use and playback button while connected | Work on GM1S: a photo taken with the camera's shutter lowers the remaining count without an app command and live view keeps running. The playback button switches the camera to playback (`cammode` `play`); the app pauses and restarts live view when the camera returns to recording |
 | AF area and peaking | Work on GM1S (1-Area and peaking Low applied and read back) |
-| Manual-focus feedback | Needs GM1S validation (MF is set on the camera body) |
-| Aperture and shutter in A/S/M | Needs GM1S validation |
+| Manual-focus feedback | Partly checked on GM1S: with the lens set to MF the camera reports `mf` and answers `camctrl focus` steps with a position (`ok,139,1024`), but the position did not change, so focus movement is unverified. Touch shutter in MF captures without an AF point |
+| Aperture and shutter in A/S/M | Work on GM1S: each mode is recognized from `curmenu`, and aperture (`focal`) and shutter (`shtrspeed`) values are accepted and read back. In M, `getinfo&type=lens` reports `16384/256` (Bulb) as the slowest shutter speed; the app keeps the timed speeds down to 60 s and does not offer Bulb |
 | Reconnect after the camera's Wi‑Fi drops | Needs GM1S validation |
 | Power zoom | Needs validation with a power-zoom lens |
 
