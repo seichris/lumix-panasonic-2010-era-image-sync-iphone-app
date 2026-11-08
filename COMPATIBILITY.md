@@ -84,6 +84,31 @@ These are included for completeness because Panasonic still lists them with Imag
 | Panasonic DC-TZ99 / ZS99 | 2025 | Later, unverified candidate |
 | Panasonic DC-TZ300 / ZS300 | 2026 | Later, unverified candidate |
 
+## Remote shooting validation
+
+Remote shooting is built from the Image App protocol as documented by libgphoto2, lumix-link-desktop, and GX80 captures, and is covered by unit tests, a scripted camera, and the simulator. It was then checked on a DMC-GM1S (firmware 2.70, protocol 1.4, menu set 2.0) with a 15 mm f/1.7 lens and an iPhone 16 Pro Max, joined through Image App → Direct.
+
+| Behavior | Status |
+|---|---|
+| `req_acc` reply and any approval prompt on the camera | GM1S answers `err_non_support`; no prompt appears |
+| Record-mode switch and UDP live view (header layout, AF frames, readout) | Works on GM1S: 17–24 KB frames with a 149-byte header extension carrying the AF frame and exposure |
+| Remote shutter and card-write confirmation | Works on GM1S |
+| Touch AF and touch shutter | Work on GM1S |
+| Video start/stop and the elapsed time | Works on GM1S (`rec` and `progress_time` in `getstate`) |
+| `getinfo&type=allmenu`/`curmenu` availability | Both available on GM1S |
+| ISO, exposure compensation (`menu_item_id_exposure2`), white balance | Work on GM1S |
+| Shutter and aperture chosen by the camera (P) | GM1S `getsetting` reports the stored S/M value; the app shows the live readout instead |
+| Focus mode | Read-only on GM1S: not in its remote menu |
+| Background and return-to-gallery transitions | Work on GM1S |
+| HTTP 503 right after the app relaunches | GM1S answered 503 for about 10 seconds (once for over a minute); remote shooting waits for it |
+| Burst while holding the shutter | Not available this way on GM1S: it answered `ok` to Burst L (`setsetting drivemode=burst`, `value2=l`) but stayed in single shot, so a held shutter took one frame. The app now says when a camera keeps its old value. Other burst speeds, and burst set on the camera body, are untested. |
+| Physical shutter use and playback button while connected | Work on GM1S: a photo taken with the camera's shutter lowers the remaining count without an app command and live view keeps running. The playback button switches the camera to playback (`cammode` `play`); the app pauses and restarts live view when the camera returns to recording |
+| AF area and peaking | Work on GM1S (1-Area and peaking Low applied and read back) |
+| Manual-focus feedback | Partly checked on GM1S: with the lens set to MF the camera reports `mf` and answers `camctrl focus` steps with a position (`ok,139,1024`), but the position did not change, so focus movement is unverified. Touch shutter in MF captures without an AF point |
+| Aperture and shutter in A/S/M | Work on GM1S: each mode is recognized from `curmenu`, and aperture (`focal`) and shutter (`shtrspeed`) values are accepted and read back. In M, `getinfo&type=lens` reports `16384/256` (Bulb) as the slowest shutter speed; the app keeps the timed speeds down to 60 s and does not offer Bulb |
+| Reconnect after the camera's Wi‑Fi drops | Needs GM1S validation |
+| Power zoom | Needs validation with a power-zoom lens |
+
 ## Confirmation standard
 
 A camera should only move from candidate to confirmed after a real-device run records:

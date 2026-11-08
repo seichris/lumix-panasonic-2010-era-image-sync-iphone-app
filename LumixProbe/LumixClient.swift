@@ -94,6 +94,18 @@ struct CameraCapabilities: Hashable, Sendable {
     let version: String?
     let date: String?
     let entries: [CameraCapabilityEntry]
+    /// `comm_proto_ver`, for example `1.6` on the GX80.
+    var protocolVersion: String? = nil
+    /// `productinfo/modelname`, for example `GX80`.
+    var productModelName: String? = nil
+    /// `camcmdlist` entries such as the power-zoom commands `tele-normal`/`wide-fast`.
+    var commands: Set<String> = []
+    /// `camspeclist` feature flags such as `oneshot_af_enable` or `geotag_add_enable`.
+    var specs: Set<String> = []
+
+    var supportsPowerZoom: Bool {
+        !commands.isDisjoint(with: ["tele-normal", "tele-fast", "wide-normal", "wide-fast"])
+    }
 
     func actions(for resource: LumixResource) -> ContentActions? {
         guard let entry = entries.first(where: { $0.matches(resource) }) else { return nil }
@@ -486,12 +498,32 @@ enum LumixError: LocalizedError, Equatable {
     case videoImportNotSupported
     case videoPlaybackNotSupported
     case missingContentCount
+    /// The request belongs to a camera connection that has since ended.
+    case staleConnection
+    /// The camera answered a `cam.cgi` command with a result other than `ok`.
+    case cameraRejected(code: String, command: String)
+
+    /// Camera error pages are HTML; keep only their text.
+    static func readableText(_ body: String) -> String {
+        guard body.contains("<") else { return body }
+        let withoutTitle = body.replacingOccurrences(
+            of: "<title>.*?</title>", with: " ", options: [.regularExpression, .caseInsensitive]
+        )
+        return withoutTitle
+            .replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     var errorDescription: String? {
         switch self {
         case .invalidURL: return "The address is invalid for the selected camera."
+        case .staleConnection: return "The camera connection changed. Try again with the connected camera."
+        case let .cameraRejected(code, _): return LumixResultCode.message(for: code)
         case .nonHTTPResponse: return "Camera returned a non-HTTP response."
-        case let .http(code, body): return "HTTP \(code): \(body.prefix(300))"
+        case .http(503, _):
+            return "The camera is busy and refused the request (HTTP 503). Wait a moment, then try again."
+        case let .http(code, body): return "HTTP \(code): \(Self.readableText(body).prefix(300))"
         case .missingBrowseResult: return "UPnP response did not contain a DIDL-Lite Result."
         case .incompleteBrowse: return "The camera stopped listing media before the end of the page. Retry to continue."
         case .noOriginalJPEG: return "This camera item does not advertise an original JPEG."
@@ -507,16 +539,39 @@ enum LumixError: LocalizedError, Equatable {
 }
 
 actor LumixClient {
-    let host: String
+    nonisolated let host: String
     private let session: URLSession
+    private nonisolated let connectionScope: CameraConnectionScope?
+    private nonisolated let connectionToken: CameraConnectionToken?
 
-    init(host: String = "192.168.54.1") {
+    /// - Parameter connectionScope: When provided, the client belongs to the scope's
+    ///   current connection and refuses every request once that connection ends.
+    init(host: String = "192.168.54.1", connectionScope: CameraConnectionScope? = nil) {
         self.host = host
+        self.connectionScope = connectionScope
+        connectionToken = connectionScope?.current
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 8
         config.timeoutIntervalForResource = 30
         config.waitsForConnectivity = false
         self.session = URLSession(configuration: config)
+    }
+
+    /// True while the connection that created this client is still current.
+    nonisolated var belongsToCurrentConnection: Bool {
+        guard let connectionScope, let connectionToken else { return true }
+        return connectionScope.isCurrent(connectionToken)
+    }
+
+    private func ensureCurrentConnection() throws {
+        guard belongsToCurrentConnection else { throw LumixError.staleConnection }
+    }
+
+    /// Sends one `cam.cgi` command and parses the camera's reply. Camera result
+    /// codes (such as `err_busy`) are returned to the caller, not thrown.
+    func perform(_ command: LumixCommand, timeoutInterval: TimeInterval? = nil) async throws -> LumixCommandReply {
+        let response = try await cameraGET(command.queryItems, timeoutInterval: timeoutInterval)
+        return LumixCommandReply.parse(response.data)
     }
 
     func getState(timeoutInterval: TimeInterval? = nil) async throws -> LumixHTTPResponse {
@@ -675,6 +730,7 @@ actor LumixClient {
     }
 
     private func cameraMediaURL(for resource: LumixResource) throws -> URL {
+        try ensureCurrentConnection()
         let url = resource.downloadURL
         guard url.scheme?.lowercased() == "http", url.user == nil, url.password == nil,
               url.host?.caseInsensitiveCompare(host) == .orderedSame else { throw LumixError.invalidURL }
@@ -694,11 +750,21 @@ actor LumixClient {
         _ query: [String: String],
         timeoutInterval: TimeInterval? = nil
     ) async throws -> LumixHTTPResponse {
+        try await cameraGET(
+            query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) },
+            timeoutInterval: timeoutInterval
+        )
+    }
+
+    private func cameraGET(
+        _ queryItems: [URLQueryItem],
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> LumixHTTPResponse {
         var components = URLComponents()
         components.scheme = "http"
         components.host = host
         components.path = "/cam.cgi"
-        components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+        components.queryItems = queryItems
         guard let url = components.url else { throw LumixError.invalidURL }
         var request = URLRequest(url: url)
         if let timeoutInterval {
@@ -711,7 +777,11 @@ actor LumixClient {
         let maximumAttempts = 5
 
         for attempt in 0..<maximumAttempts {
+            // Check before every attempt, including 503 retries, and again after the
+            // reply: neither a request nor its result may cross into a newer connection.
+            try ensureCurrentConnection()
             let (data, response) = try await session.data(for: request, delegate: CameraControlRedirects.shared)
+            try ensureCurrentConnection()
             guard let http = response as? HTTPURLResponse else { throw LumixError.nonHTTPResponse }
             let headers = http.allHeaderFields.reduce(into: [String: String]()) { result, header in
                 result[String(describing: header.key)] = String(describing: header.value)
@@ -1618,6 +1688,11 @@ final class CameraCapabilityParser: NSObject, XMLParserDelegate {
     private var currentProfiles: Set<String> = []
     private var currentActions: [CameraContentAction] = []
     private var entries: [CameraCapabilityEntry] = []
+    private var protocolVersion: String?
+    private var productModelName: String?
+    private var commands: Set<String> = []
+    private var specs: Set<String> = []
+    private var text = ""
 
     static func parse(_ data: Data) -> CameraCapabilities {
         let delegate = CameraCapabilityParser()
@@ -1629,8 +1704,16 @@ final class CameraCapabilityParser: NSObject, XMLParserDelegate {
             model: delegate.model,
             version: delegate.version,
             date: delegate.date,
-            entries: delegate.entries
+            entries: delegate.entries,
+            protocolVersion: delegate.protocolVersion,
+            productModelName: delegate.productModelName,
+            commands: delegate.commands,
+            specs: delegate.specs
         )
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        text += string
     }
 
     func parser(
@@ -1641,7 +1724,8 @@ final class CameraCapabilityParser: NSObject, XMLParserDelegate {
         attributes attributeDict: [String: String] = [:]
     ) {
         let name = elementName.split(separator: ":").last.map(String.init)?.lowercased() ?? elementName.lowercased()
-        let attributes = Dictionary(uniqueKeysWithValues: attributeDict.map { ($0.key.lowercased(), $0.value) })
+        let attributes = Dictionary(attributeDict.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { first, _ in first })
+        text = ""
 
         switch name {
         case "contents_action_info":
@@ -1685,6 +1769,20 @@ final class CameraCapabilityParser: NSObject, XMLParserDelegate {
         qualifiedName qName: String?
     ) {
         let name = elementName.split(separator: ":").last.map(String.init)?.lowercased() ?? elementName.lowercased()
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        text = ""
+        switch name {
+        case "comm_proto_ver" where !value.isEmpty:
+            protocolVersion = value
+        case "modelname" where !value.isEmpty:
+            productModelName = value
+        case "camcmd" where !value.isEmpty:
+            commands.insert(value.lowercased())
+        case "camspec" where !value.isEmpty:
+            specs.insert(value.lowercased())
+        default:
+            break
+        }
         guard name == "content", let currentMimeType else { return }
         entries.append(
             CameraCapabilityEntry(
