@@ -87,7 +87,7 @@ struct PushTransferView: View {
                 .accessibilityIdentifier("start-push-transfer")
             }
         } footer: {
-            Text("Receiving works while Retro LUMIX Sync is open. The screen stays on; if the iPhone locks or you switch apps, receiving pauses and resumes when you return. Photos the camera could not send in the meantime may need to be imported from the gallery later.")
+            Text("Receiving works only while Retro LUMIX Sync is open, so the screen stays on. If the iPhone locks or you switch apps, receiving pauses until you return. A photo taken meanwhile is not sent: the camera shows “Connection error” and stops sending until you start its connection again. Those photos stay on the card and can be imported from the gallery.")
         }
     }
 
@@ -133,7 +133,7 @@ struct PushTransferView: View {
         Section {
             step(1, "On the camera choose MENU → Wi‑Fi → Wi‑Fi Function → New Connection → Send Images While Recording → Smartphone.")
             step(2, "Choose Direct → Manual Connection. The camera shows its network name and password.")
-            step(3, "Join that network on this iPhone, then tap Start receiving.")
+            step(3, "Tap Start receiving, join that network on this iPhone, and come straight back to Retro LUMIX Sync. If the camera shows “Connection failed”, start its connection again while this screen is open.")
             step(4, "When the camera lists “Retro LUMIX Sync”, select it. In the image settings choose Size → Original to receive full-size JPEGs, then press Set.")
             step(5, "Take photos. Each JPEG is saved to Photos after it arrives. RAW files are not sent.")
         } header: {
@@ -146,17 +146,17 @@ struct PushTransferView: View {
     private var discoverySection: some View {
         Section("Discovery") {
             LabeledContent("Camera", value: cameraHost)
-            LabeledContent("Camera answered", value: session.cameraAnsweredSearch ? "Yes" : "Not yet")
+            LabeledContent("Camera's search", value: session.cameraSearched ? "Received" : "Not yet")
             if let endpoint = session.localEndpoint {
                 LabeledContent("Receiver", value: endpoint)
                     .font(.caption.monospaced())
             }
-            if let registration = session.registration {
-                LabeledContent("Camera access", value: registrationLabel(registration))
+            if let registration = session.registration, let label = registrationLabel(registration) {
+                LabeledContent("Camera access", value: label)
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text("Multicast: \(multicastLabel)").font(.subheadline)
-                Text("Retro LUMIX Sync announces itself directly to the camera. iOS allows the usual multicast discovery only after Apple grants the app its multicast networking entitlement.")
+                Text("Multicast sending: \(multicastLabel)").font(.subheadline)
+                Text("Receiving does not need it. The camera's search reaches Retro LUMIX Sync, which answers the camera directly and also announces itself straight to the camera.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -192,6 +192,8 @@ struct PushTransferView: View {
         case .waitingForCameraNetwork: return "Join the network the camera shows. Retro LUMIX Sync looks for the camera at \(cameraHost)."
         case .starting: return "Opening the receiver on this iPhone."
         case .advertising: return "Retro LUMIX Sync is announcing itself. Select it on the camera when it appears."
+        case .linked where session.resumedAfterPause:
+            return "Receiving again. If the camera shows “Connection error”, it tried to send while Retro LUMIX Sync was away: start its connection again."
         case .linked: return "The camera found Retro LUMIX Sync. Take a photo."
         case .paused: return "Retro LUMIX Sync is in the background. Return to the app to resume."
         case .stopped: return "The camera can no longer send to this iPhone until you start again."
@@ -222,16 +224,17 @@ struct PushTransferView: View {
         switch session.multicastStatus {
         case .unknown: return "not checked yet"
         case .available: return "available"
-        case let .blocked(reason): return "blocked. \(reason)"
+        case .blocked: return "blocked by iOS"
         }
     }
 
-    private func registrationLabel(_ registration: PushTransferSession.RegistrationResult) -> String {
+    /// The access request matters only on cameras that answer it; a GM1S refuses it
+    /// (`err_non_support`, or no web server while sending) and receives photos anyway.
+    private func registrationLabel(_ registration: PushTransferSession.RegistrationResult) -> String? {
         switch registration {
         case .accepted: return "Accepted"
         case .awaitingApprovalOnCamera: return "Accept on the camera"
-        case let .refused(message): return message
-        case let .noReply(message): return message
+        case .refused, .noReply: return nil
         }
     }
 }

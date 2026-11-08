@@ -135,7 +135,12 @@ final class PushTransferSession: ObservableObject {
     @Published private(set) var items: [PushTransferItem] = []
     @Published private(set) var savedCount = 0
     @Published private(set) var multicastStatus: SSDPMulticastStatus = .unknown
-    @Published private(set) var cameraAnsweredSearch = false
+    /// The camera's own SSDP search reached this iPhone. On a GM1S this is how the camera
+    /// finds the receiver: the search arrives as multicast and the reply goes back as unicast.
+    @Published private(set) var cameraSearched = false
+    /// Receiving resumed after the app was away while the camera already knew it. A GM1S
+    /// that tried to send meanwhile shows "Connection error" and stops sending.
+    @Published private(set) var resumedAfterPause = false
     @Published private(set) var lastCameraContact: Date?
     @Published private(set) var registration: RegistrationResult?
     @Published private(set) var needsPhotosAccess = false
@@ -150,6 +155,7 @@ final class PushTransferSession: ObservableObject {
     private var lastPort: UInt16?
     private var isInBackground = false
     private var networkWaitTask: Task<Void, Never>?
+    private var networkWatchTask: Task<Void, Never>?
     private var importQueue: [URL] = []
     private var queuedFiles: Set<URL> = []
     private var isProcessingImports = false
@@ -201,6 +207,7 @@ final class PushTransferSession: ObservableObject {
         if isActive {
             guard isInBackground else { return }
             isInBackground = false
+            if lastCameraContact != nil { resumedAfterPause = true }
             await bringUp()
             announcer?.announceNow()
             await processImports()
@@ -229,6 +236,9 @@ final class PushTransferSession: ObservableObject {
         let generation = bringUpGeneration
         guard lease != nil, !isInBackground else { return }
         guard let local = dependencies.localAddress(dependencies.cameraHost) else {
+            // Off the camera's network (for example after returning from the background):
+            // the camera has to find this receiver again once the iPhone is back.
+            forgetCameraContact()
             phase = .waitingForCameraNetwork
             waitForCameraNetwork(generation: generation)
             return
@@ -283,11 +293,14 @@ final class PushTransferSession: ObservableObject {
             announcer.setInterval(dependencies.linkedAnnouncementInterval)
         }
         phase = lastCameraContact == nil ? .advertising : .linked
+        watchCameraNetwork(advertisedAddress: local.address)
         await registerWithCamera()
     }
 
     private func tearDown(sayGoodbye: Bool) {
         bringUpGeneration += 1
+        networkWatchTask?.cancel()
+        networkWatchTask = nil
         announcer?.stop(sayGoodbye: sayGoodbye)
         announcer = nil
         server?.stop()
@@ -308,6 +321,40 @@ final class PushTransferSession: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Notices when the iPhone leaves the camera's network or gets a different address.
+    /// The GM1S turns its Wi-Fi off after "Connection error" or "Connection failed"; the
+    /// receiver then waits for the network and announces its new address when it returns.
+    private func watchCameraNetwork(advertisedAddress: String) {
+        networkWatchTask?.cancel()
+        let generation = bringUpGeneration
+        let interval = dependencies.networkPollInterval
+        networkWatchTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled, let self, generation == self.bringUpGeneration else { return }
+                let current = self.dependencies.localAddress(self.dependencies.cameraHost)?.address
+                if current != advertisedAddress {
+                    self.cameraNetworkWasLost()
+                    return
+                }
+            }
+        }
+    }
+
+    private func cameraNetworkWasLost() {
+        // The camera forgets this receiver when its Wi-Fi goes down, so it has to find it again.
+        tearDown(sayGoodbye: false)
+        forgetCameraContact()
+        phase = .waitingForCameraNetwork
+        waitForCameraNetwork(generation: bringUpGeneration)
+    }
+
+    private func forgetCameraContact() {
+        lastCameraContact = nil
+        cameraSearched = false
+        resumedAfterPause = false
     }
 
     /// Announces this phone to the camera as Shutterlink does; the camera then lists
@@ -336,8 +383,10 @@ final class PushTransferSession: ObservableObject {
     private func handle(_ event: SSDPAnnouncerEvent) {
         switch event {
         case .cameraResponded:
-            cameraAnsweredSearch = true
+            // The camera's own media server answering a search is not a sign that it found this iPhone.
+            break
         case .cameraSearched:
+            cameraSearched = true
             noteCameraContact()
         case let .multicastStatus(status):
             multicastStatus = status
@@ -386,6 +435,7 @@ final class PushTransferSession: ObservableObject {
 
     private func noteCameraContact() {
         lastCameraContact = Date()
+        resumedAfterPause = false
         if phase == .advertising {
             phase = .linked
             announcer?.setInterval(dependencies.linkedAnnouncementInterval)

@@ -149,6 +149,72 @@ final class PushTransferSessionTests: XCTestCase {
         XCTAssertEqual(harness.announcers.last?.announcements, 1)
     }
 
+    func testTheCameraSearchShowsTheCameraIsLookingForTheReceiver() async throws {
+        await session.start()
+        XCTAssertFalse(session.cameraSearched)
+        harness.announcers.last?.simulate(.cameraSearched(SSDPMessage(
+            startLine: "M-SEARCH * HTTP/1.1",
+            headers: ["ST": PushTransferProtocol.mediaServerType, "MX": "5"]
+        )))
+        try await waitUntil { self.session.cameraSearched }
+        XCTAssertEqual(session.phase, .linked)
+    }
+
+    func testLosingTheCameraNetworkWaitsForItAndAnnouncesTheNewAddress() async throws {
+        await session.start()
+        let receiver = try XCTUnwrap(harness.servers.last?.receiver)
+        _ = exchange(receiver, "GET /dms/ddd.xml HTTP/1.1\r\n\r\n")
+        try await waitUntil { self.session.phase == .linked }
+
+        // The GM1S turns its Wi-Fi off after "Connection error".
+        network.address = nil
+        try await waitUntil { self.session.phase == .waitingForCameraNetwork }
+        XCTAssertEqual(harness.servers.first?.stops, 1)
+        XCTAssertEqual(harness.announcers.first?.goodbyes, [false])
+        XCTAssertEqual(coordinator.exclusiveActivity, .pushTransfer, "Receiving continues once the network is back")
+
+        network.address = "192.168.54.11"
+        try await waitUntil { self.session.phase == .advertising }
+        XCTAssertEqual(session.localEndpoint, "http://192.168.54.11:49152", "The new address is announced")
+        XCTAssertEqual(harness.servers.count, 2)
+        XCTAssertEqual(harness.servers.last?.requestedPorts.first, 49152, "The previous port is tried first")
+        XCTAssertFalse(session.cameraSearched)
+    }
+
+    func testReturningAfterTheCameraFoundTheReceiverWarnsAboutAMissedPhoto() async throws {
+        await session.start()
+        let receiver = try XCTUnwrap(harness.servers.last?.receiver)
+        _ = exchange(receiver, "GET /dms/ddd.xml HTTP/1.1\r\n\r\n")
+        try await waitUntil { self.session.phase == .linked }
+        XCTAssertFalse(session.resumedAfterPause)
+
+        await session.setAppActive(false)
+        await session.setAppActive(true)
+        XCTAssertEqual(session.phase, .linked)
+        XCTAssertTrue(session.resumedAfterPause, "A GM1S that tried to send meanwhile shows Connection error")
+
+        let resumed = try XCTUnwrap(harness.servers.last?.receiver)
+        upload(jpeg, title: "P1000030", to: resumed)
+        try await waitUntil { self.session.savedCount == 1 }
+        XCTAssertFalse(session.resumedAfterPause, "A photo from the camera shows it is still sending")
+    }
+
+    func testReturningOffTheCameraNetworkWaitsForTheCameraToFindTheReceiverAgain() async throws {
+        await session.start()
+        let receiver = try XCTUnwrap(harness.servers.last?.receiver)
+        _ = exchange(receiver, "GET /dms/ddd.xml HTTP/1.1\r\n\r\n")
+        try await waitUntil { self.session.phase == .linked }
+
+        await session.setAppActive(false)
+        network.address = nil
+        await session.setAppActive(true)
+        XCTAssertEqual(session.phase, .waitingForCameraNetwork)
+        XCTAssertFalse(session.resumedAfterPause)
+
+        network.address = "192.168.54.10"
+        try await waitUntil { self.session.phase == .advertising }
+    }
+
     func testStopSaysGoodbyeAndReleasesTheCamera() async throws {
         await session.start()
         await session.stop()
@@ -265,7 +331,7 @@ private final class Harness {
     }
 
     func makeAnnouncer(_ emit: @escaping @Sendable (SSDPAnnouncerEvent) -> Void) -> any SSDPAnnouncing {
-        let announcer = FakeAnnouncer()
+        let announcer = FakeAnnouncer(emit: emit)
         announcers.append(announcer)
         return announcer
     }
@@ -292,6 +358,13 @@ private final class FakePushServer: PushTransferHTTPServing, @unchecked Sendable
 
 private final class FakeAnnouncer: SSDPAnnouncing, @unchecked Sendable {
     private let lock = NSLock()
+    private let emit: @Sendable (SSDPAnnouncerEvent) -> Void
+
+    init(emit: @escaping @Sendable (SSDPAnnouncerEvent) -> Void) { self.emit = emit }
+
+    /// Delivers an SSDP event as the real announcer would from its network queue.
+    func simulate(_ event: SSDPAnnouncerEvent) { emit(event) }
+
     private var startCount = 0
     private var goodbyeList: [Bool] = []
     private var announceCount = 0

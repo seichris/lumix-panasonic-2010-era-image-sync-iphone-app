@@ -76,7 +76,10 @@ final class DemoSSDPAnnouncer: SSDPAnnouncing, @unchecked Sendable {
 
     func start() throws {
         emit(.multicastStatus(.blocked("The demo camera does not use multicast.")))
-        emit(.cameraResponded(SSDPMessage(startLine: "HTTP/1.1 200 OK", headers: [:])))
+        emit(.cameraSearched(SSDPMessage(
+            startLine: "M-SEARCH * HTTP/1.1",
+            headers: ["ST": PushTransferProtocol.mediaServerType, "MX": "5"]
+        )))
     }
 
     func announceNow() {}
