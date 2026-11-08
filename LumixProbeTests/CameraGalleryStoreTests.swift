@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import XCTest
 @testable import GM1Sync
@@ -335,6 +336,54 @@ final class CameraGalleryStoreTests: XCTestCase {
         store.markNeedsReloadAfterCameraModeChange()
         XCTAssertTrue(store.consumeReloadRequest())
         XCTAssertFalse(store.consumeReloadRequest(), "A reload request is consumed once")
+    }
+
+    func testImportOfAnOriginalAlreadyReceivedWhileShootingIsNotSavedTwice() async throws {
+        let history = CameraPushTransferHistory(store: InMemoryCameraPushTransferHistoryStore())
+        let mockOriginal = Data([0xff, 0xd8, 0xff, 0xd9])
+        history.append(CameraPushTransferRecord(
+            filename: "P1000000.JPG", byteCount: 4, sha256: Self.sha256(mockOriginal),
+            receivedAt: .now, savedToPhotosAt: .now
+        ))
+        let importer = RecordingImporter()
+        let store = CameraGalleryStore(
+            client: MockGalleryClient(total: 1), importer: importer,
+            importHistoryStore: InMemoryCameraImportHistoryStore(), pushTransferHistory: history, pageSize: 5
+        )
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+
+        await store.importPhoto(photo, samples: [], cameraClockOffset: 0)
+        XCTAssertEqual(store.importStates[photo.id], .saved)
+        let saved = await importer.filenames
+        XCTAssertTrue(saved.isEmpty, "Photos already holds these exact bytes")
+        XCTAssertEqual(store.importHistoryRecord(for: photo)?.effectiveEvidence, .sendWhileRecording)
+        XCTAssertTrue(history.records[0].matchesCardOriginal, "The transfer is now known to be the original")
+    }
+
+    func testImportOfAnOriginalThatDiffersFromTheTransferStillSavesIt() async throws {
+        let history = CameraPushTransferHistory(store: InMemoryCameraPushTransferHistoryStore())
+        history.append(CameraPushTransferRecord(
+            filename: "P1000000.JPG", byteCount: 2_000, sha256: Self.sha256(Data("resized copy".utf8)),
+            receivedAt: .now, savedToPhotosAt: .now
+        ))
+        let importer = RecordingImporter()
+        let store = CameraGalleryStore(
+            client: MockGalleryClient(total: 1), importer: importer,
+            importHistoryStore: InMemoryCameraImportHistoryStore(), pushTransferHistory: history, pageSize: 5
+        )
+        await store.loadInitial()
+        let photo = try XCTUnwrap(store.photos.first)
+
+        await store.importPhoto(photo, samples: [], cameraClockOffset: 0)
+        let saved = await importer.filenames
+        XCTAssertEqual(saved, ["photo-0.jpg"], "A resized transfer never stands in for the original")
+        XCTAssertEqual(store.importHistoryRecord(for: photo)?.effectiveEvidence, .appImport)
+        XCTAssertFalse(history.records[0].matchesCardOriginal)
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     func testEachRefreshUsesTheCurrentClientProvider() async {
