@@ -193,6 +193,10 @@ schemes:
         GM1Sync: all
         LumixProbeTests: [test]
         LumixProbeUITests: [test]
+    run:
+      config: Debug
+      # Purchases in a debug run from Xcode use the local App Store configuration.
+      storeKitConfiguration: StoreKit/RetroLUMIXSync.storekit
     test:
       config: Debug
       targets:

@@ -66,6 +66,7 @@ enum AppRoute: Hashable {
 struct HomeView: View {
     @ObservedObject var model: ProbeViewModel
     @ObservedObject var logger: GeotagLocationLogger
+    @ObservedObject var iconStore: AppIconStore
     let openCompatibleCameras: () -> Void
     let openAppIcon: () -> Void
     let openReceive: () -> Void
@@ -204,7 +205,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Made by a solo developer")
                     .font(.headline)
-                Text("Retro LUMIX Sync is built by one person who loves shooting on retro LUMIX cameras. It's free, with no ads, accounts, or tracking.")
+                Text("Retro LUMIX Sync is built by one person who loves shooting on retro LUMIX cameras. It's free, with no ads, accounts, or tracking. \(supportSentence)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -243,6 +244,17 @@ struct HomeView: View {
                 .padding(.top, 8)
                 .accessibilityIdentifier("app-version")
         }
+    }
+
+    /// How to support development: the custom app icons, with their App Store price.
+    private var supportSentence: String {
+        if iconStore.ownsPurchase { return "Thank you for supporting development." }
+        // Someone who already used a custom icon keeps the icons free and has nothing to buy.
+        if iconStore.isUnlocked { return "" }
+        if let price = iconStore.price {
+            return "You can support development by unlocking the custom app icons for \(price)."
+        }
+        return "You can support development by unlocking the custom app icons."
     }
 
     /// A link that leaves the app, styled like the rows around it, with an outward arrow.
