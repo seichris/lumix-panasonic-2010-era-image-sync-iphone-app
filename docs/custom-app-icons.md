@@ -38,6 +38,7 @@ The app sells nothing else and has no accounts.
 
 - **Source:** the owner's `Downloads/app icons` folder: nine 1254 × 1254 opaque PNGs.
 - **Corners:** six of them (GX85, GX9, G85, FZ80, FZ300, FZ1000) had rounded corners with black outside, slightly rounder than the corners iOS cuts. Their corners were filled from the neighboring edge colors to give square, full-bleed artwork; iOS rounds icons itself.
+- **Preview:** [custom-app-icons-preview.jpg](custom-app-icons-preview.jpg) shows the nine icons with a Home Screen-style mask.
 - **Sizes:** each icon is a 1024 × 1024 PNG in its own `.appiconset`, with a 256 × 256 `…IconPreview` image for the picker. The alternate icon names are listed in `project.yml` (`ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES`).
 - **Release risk:** the camera model icons show the **LUMIX** logo, and FZ300 and FZ1000 also show **LEICA** on the lens. These are Panasonic's and Leica's trademarks. App Review may reject them under guideline 5.2.1 (protected third-party material), especially as a paid feature, and they conflict with the app's statement that it isn't affiliated with Panasonic. Logo-free versions of the same artwork would avoid this.
 
