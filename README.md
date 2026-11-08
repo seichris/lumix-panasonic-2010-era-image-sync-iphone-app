@@ -1,34 +1,45 @@
 # Retro LUMIX Sync
 
 <p align="center">
-  <img src="docs/screenshots/01-sync-pictures.png" alt="Retro LUMIX Sync camera media gallery" width="32%" />
-  <img src="docs/screenshots/02-geotag.png" alt="Retro LUMIX Sync geotagging" width="32%" />
-  <img src="docs/screenshots/03-image-details.png" alt="Retro LUMIX Sync image details" width="32%" />
+  <img src="AppStore/Screenshots/iphone/en-US/iphone-6.9/01-sync-old-lumix-en-us-iphone-6.9-1320x2868.png" alt="Retro LUMIX Sync: Sync photos from the camera to iPhone" width="24%" />
+  <img src="AppStore/Screenshots/iphone/en-US/iphone-6.9/02-image-details-en-us-iphone-6.9-1320x2868.png" alt="Retro LUMIX Sync: View image details and choose import formats" width="24%" />
+  <img src="AppStore/Screenshots/iphone/en-US/iphone-6.9/03-geo-locations-en-us-iphone-6.9-1320x2868.png" alt="Retro LUMIX Sync: Geotag camera photos" width="24%" />
+  <img src="AppStore/Screenshots/iphone/en-US/iphone-6.9/04-live-view-en-us-iphone-6.9-1320x2868.png" alt="Retro LUMIX Sync: Shoot from iPhone with live view" width="24%" />
 </p>
 
 [![Download Retro LUMIX Sync on the App Store](https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83)](https://apps.apple.com/us/app/gm1-sync/id6801485290)
 
-Retro LUMIX Sync is an independent iPhone and Mac app for browsing, importing, and geotagging media from compatible Panasonic Wi-Fi cameras. It is an alternative to Panasonic's **Image App** for people who still use these cameras.
+Retro LUMIX Sync connects classic Panasonic Lumix Wi-Fi cameras to your iPhone. Browse the camera's card, import originals into Apple Photos, shoot remotely with live view, receive JPEGs as you take them, and add locations to your photos. It is an independent alternative to Panasonic's **Image App** for people who still shoot with these cameras.
+
+Every camera feature is free. An optional one-time purchase unlocks custom app icons and supports this solo-developed project. The Mac companion provides camera browsing, downloads, and location logging; remote shooting and the receiving flow described below are iPhone features.
 
 The Panasonic Lumix DMC-GM1S is the primary camera validated on real hardware. The GM1, GM5, and other Image App-era Panasonic Lumix cameras from roughly the 2010s may use a compatible protocol, but model and firmware support must be verified individually. See [COMPATIBILITY.md](COMPATIBILITY.md).
 
 Retro LUMIX Sync is not affiliated with or endorsed by Panasonic. Panasonic, LUMIX, Image App, and the camera model names belong to their respective owners.
 
-## Features
+## What's new in 1.1.0
 
-- Connect by scanning the camera's Wi-Fi QR code or entering its Wi-Fi name and password.
-- Browse photos and videos stored on the camera.
-- Preview photos and play camera-provided MP4 videos.
-- Import JPEG, JPEG + RAW, RAW-only, and supported MP4 originals into Apple Photos on iPhone.
-- Mark previously imported items by reconciling camera filenames with the Photos library.
-- Download all new photos and videos in one action.
-- Select images and assign a searched Apple Maps location before importing them.
-- Record an optional on-device location track and add a matched location during photo import.
-- Write a recorded location track into the photos on the camera's SD card (cameras that support it), and set the camera clock from the iPhone.
-- Receive each JPEG as it is taken with the camera's **Send Images While Recording → Smartphone** mode, in a foreground receiving session that saves every photo to Apple Photos.
-- Shoot remotely from iPhone with a live viewfinder: still photos, video, touch AF and touch shutter, power zoom where the lens allows it, manual focus, and the exposure, ISO, white-balance, drive-mode, and focus settings the camera reports.
-- On Mac, join the camera Wi-Fi from the macOS menu bar, run the protocol probes, and copy downloaded originals to Downloads.
-- Keep camera traffic local between the iPhone and the camera, without accounts, analytics, ads, or cloud uploads.
+- **A home screen organized by camera task:** choose what you want to do, follow the camera's connection steps, and join its Wi-Fi from the app.
+- **Remote shooting with live view:** take photos and videos, tap to focus or shoot, and adjust settings the camera exposes. Power zoom and manual-focus controls depend on the lens and camera.
+- **Receive photos as you shoot:** use **Send Images While Recording** to save incoming JPEGs to Apple Photos while the receiving screen is open.
+- **Write locations to the camera's photos and set its clock:** send a recorded track to supported cameras, check written JPEG GPS data, and align the camera's time with your iPhone.
+- **Custom app icons:** eleven alternate icons, including nine classic-camera designs, in one optional purchase. Blue Camera and every camera feature remain free.
+
+These features are in the 1.1.0 source; the App Store download may be an earlier version while the update is being prepared or reviewed.
+
+## iPhone features
+
+| What you want to do | What the app provides |
+|---|---|
+| Get photos from the card | Browse photos and videos, preview images and supported MP4s, select a batch, or download all new items. Import JPEG, JPEG + RAW, RAW-only, and supported MP4 originals into Apple Photos. |
+| Avoid duplicate imports | Reconcile camera items with the Photos library and identify previously imported originals. |
+| Shoot from your iPhone | Live view, shutter, video recording, touch AF/shutter, and the exposure, ISO, white-balance, drive-mode, AF-area, and peaking options the camera reports. |
+| Receive photos as you shoot | Join the camera's sending network, receive new JPEGs, save them to Photos, and retry files that could not be saved yet. |
+| Geotag imported photos | Record a local location track, control logging from a Home Screen widget, import Google Timeline JSON, or search Apple Maps for a manual location. |
+| Write locations to camera photos | Upload a recorded track to supported cameras and read back JPEG GPS data to check the result. This changes files on the card. |
+| Set the camera clock | Send the iPhone's date and time to a supported camera so photo times line up with the track. |
+
+Connect using a remembered camera network, its Wi-Fi QR code, or its Wi-Fi name and password. Camera traffic stays local, without accounts, ads, analytics, or cloud uploads.
 
 AVCHD items can appear in the gallery when advertised by the camera. The tested GM1S advertises an AVCHD `.TS` URL that its media server does not serve, so AVCHD playback and import are shown as unavailable rather than promised as supported.
 
@@ -48,7 +59,7 @@ Once connected, the camera screen switches between **Photos** and **Live view** 
 
 ## Custom app icons
 
-Blue Camera is the free app icon. **Lens**, **Black Camera**, and nine camera model icons (GM1S, GM1, GX85, GX9, G85, FZ80, FZ300, FZ1000) are an optional one-time In-App Purchase that supports development. Someone already using Lens or Black Camera when this version first runs keeps those two free. **App Icon** offers **Restore purchase**, and the camera list offers each camera's icon. See [docs/custom-app-icons.md](docs/custom-app-icons.md) for the App Store Connect setup and testing.
+Blue Camera is the free app icon. One optional, non-consumable purchase unlocks **Lens**, **Black Camera**, and nine camera model icons (GM1S, two GM1 designs, GX85, GX9, G85, FZ80, FZ300, FZ1000). The US price is **$0.99**; the app displays the local App Store price. The purchase supports development and does not unlock or restrict any camera feature. Someone already using Lens or Black Camera when this version first runs keeps those two free. **App Icon** offers **Restore purchase**, and the camera list offers each camera's icon. See [docs/custom-app-icons.md](docs/custom-app-icons.md) for the App Store Connect setup and testing.
 
 ## Connect a GM1S
 
@@ -72,7 +83,9 @@ Real-device testing confirms that Retro LUMIX Sync can:
 - import supported MP4 resources; and
 - save supported originals to Apple Photos.
 
-The protocol is unofficial and can vary by camera model and firmware.
+The protocol is unofficial and can vary by camera model and firmware. Real GM1S checks also cover live view, shutter, video, touch AF/shutter, exposure settings, JPEG receiving, setting the clock, and writing GPS to JPEGs. See the detailed results in [COMPATIBILITY.md](COMPATIBILITY.md).
+
+Remaining physical checks are tracked separately: [remote shooting (#30)](https://github.com/seichris/lumix-panasonic-2010-era-image-sync-iphone-app/issues/30), [location writing and clock (#31)](https://github.com/seichris/lumix-panasonic-2010-era-image-sync-iphone-app/issues/31), and [receiving photos (#32)](https://github.com/seichris/lumix-panasonic-2010-era-image-sync-iphone-app/issues/32). Burst, manual-focus movement, power zoom, interruption cases, daylight saving, and distribution-build receiving are not all qualified yet.
 
 ## Remote shooting
 
@@ -183,7 +196,7 @@ GET /cam.cgi?mode=getsetting&type=iso   /   setsetting&type=iso&value=800
 
 Each live-view datagram carries a 32-byte header, an optional extension with AF frames and the live exposure, and one JPEG. Malformed or incomplete frames are dropped, and only datagrams from the camera's address are accepted.
 
-Location writing and the clock use (from Panasonic Image App analysis; not yet confirmed on a GM1S):
+Location writing and the clock use the following commands, exercised on a GM1S as recorded in [COMPATIBILITY.md](COMPATIBILITY.md#location-writing-and-clock-validation):
 
 ```text
 GET  /cam.cgi?mode=setsetting&type=clock&value=YYYYMMDDhhmmss%2BHHMM   (set the clock; UTC fields + standard offset)
