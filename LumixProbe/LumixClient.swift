@@ -750,13 +750,32 @@ actor LumixClient {
         )
     }
 
+    /// Reads the start of an original JPEG for its EXIF. The request asks for only
+    /// that prefix, so the camera ends the transfer itself (a GM1S answers
+    /// `206 Partial Content`). Dropping the connection in the middle of a whole
+    /// photo instead is what a GM1S stopped serving files after, at about 150
+    /// reads. A camera that ignores the range sends the whole photo, which is cut
+    /// off at the limit as before; one that rejects the header is asked again
+    /// without it.
     func downloadMetadataPrefix(_ resource: LumixResource) async throws -> URL {
-        try await LegacyLumixMediaDownloader.downloadFile(
-            from: cameraMediaURL(for: resource),
-            requestStyle: .legacy,
-            maximumBodyBytes: 512 * 1024,
-            socketTimeoutSeconds: 12
-        )
+        let url = try cameraMediaURL(for: resource)
+        let limit = LumixMediaPrefixRange.byteCount
+        do {
+            return try await LegacyLumixMediaDownloader.downloadFile(
+                from: url,
+                requestStyle: .legacy,
+                maximumBodyBytes: limit,
+                socketTimeoutSeconds: 12,
+                rangeHeader: LumixMediaPrefixRange.header
+            )
+        } catch where LumixMediaPrefixRange.shouldRetryWithoutRange(error) {
+            return try await LegacyLumixMediaDownloader.downloadFile(
+                from: url,
+                requestStyle: .legacy,
+                maximumBodyBytes: limit,
+                socketTimeoutSeconds: 12
+            )
+        }
     }
 
     private func cameraMediaURL(for resource: LumixResource) throws -> URL {
@@ -905,7 +924,8 @@ enum LumixMediaHTTPRequest {
         switch style {
         case .legacy:
             let port = url.port.map { ":\($0)" } ?? ""
-            return "GET \(requestTarget) HTTP/1.0\r\nHost: \(host)\(port)\r\nAccept: */*\r\nUser-Agent: GM1Sync/1.0\r\n\r\n"
+            let range = rangeHeader?.nonEmpty.map { "Range: \($0)\r\n" } ?? ""
+            return "GET \(requestTarget) HTTP/1.0\r\nHost: \(host)\(port)\r\nAccept: */*\r\n\(range)User-Agent: GM1Sync/1.0\r\n\r\n"
         case .panasonicDLNAInitial:
             // Panasonic's native DLNA transport starts with this exact plain
             // request. Range and TimeSeekRange are only added after a seek.
@@ -934,7 +954,8 @@ private enum LegacyLumixMediaDownloader {
         validatesJPEG: Bool = false,
         requestStyle: LumixMediaRequestStyle = .legacy,
         maximumBodyBytes: Int? = nil,
-        socketTimeoutSeconds: Int = 90
+        socketTimeoutSeconds: Int = 90,
+        rangeHeader: String? = nil
     ) async throws -> URL {
         let suggestedName = url.lastPathComponent.isEmpty ? "lumix-media" : url.lastPathComponent
         let traceID = "\(String(UUID().uuidString.prefix(8))) \(suggestedName)"
@@ -974,6 +995,7 @@ private enum LegacyLumixMediaDownloader {
                                     requestStyle: requestStyle,
                                     maximumBodyBytes: maximumBodyBytes,
                                     socketTimeoutSeconds: socketTimeoutSeconds,
+                                    rangeHeader: rangeHeader,
                                     operation: operation,
                                     traceID: traceID
                                 )
@@ -1020,6 +1042,7 @@ private enum LegacyLumixMediaDownloader {
         requestStyle: LumixMediaRequestStyle,
         maximumBodyBytes: Int?,
         socketTimeoutSeconds: Int,
+        rangeHeader: String?,
         operation: LegacyLumixDownloadOperation,
         traceID: String
     ) throws -> URL {
@@ -1083,7 +1106,7 @@ private enum LegacyLumixMediaDownloader {
             traceID: traceID
         )
 
-        let request = try LumixMediaHTTPRequest.make(for: url, style: requestStyle)
+        let request = try LumixMediaHTTPRequest.make(for: url, style: requestStyle, rangeHeader: rangeHeader)
         try sendAll(
             Data(request.utf8),
             to: fileDescriptor,
@@ -1497,6 +1520,21 @@ enum LumixMediaDownloadCompletion {
                 "camera closed an incomplete media response (\(bodyCount) of \(expectedLength) bytes)"
             )
         }
+    }
+}
+
+/// The byte range requested when only a photo's EXIF is needed.
+enum LumixMediaPrefixRange {
+    /// Enough for the EXIF block, which JPEG limits to 64 KiB, plus Panasonic's
+    /// maker notes and preview segments that may come before it.
+    static let byteCount = 512 * 1024
+    static let header = "bytes=0-\(byteCount - 1)"
+
+    /// Replies from a server that refused the `Range` header itself. A missing
+    /// file (404) or a busy camera (503) would fail the same way without it.
+    static func shouldRetryWithoutRange(_ error: Error) -> Bool {
+        guard case let LumixError.http(statusCode, _) = error else { return false }
+        return [400, 416, 500, 501].contains(statusCode)
     }
 }
 

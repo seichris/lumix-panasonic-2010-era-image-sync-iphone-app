@@ -39,10 +39,12 @@ struct CameraGeotagVerificationResult: Identifiable, Equatable {
 
 /// Decides when a newest-first read of the card can stop.
 ///
-/// Each read downloads the start of an original JPEG and then drops the
-/// connection. A GM1S stopped serving files after about 150 such reads in 20
-/// minutes and needed to be switched off and on, so the reads before and after
-/// a write stop as early as they can:
+/// Each read downloads the start of an original JPEG. When those reads dropped
+/// the connection mid-photo, a GM1S stopped serving files after about 150 of
+/// them and needed to be switched off and on. They now ask for only the prefix
+/// (see `LumixMediaPrefixRange`), and the same GM1S then served 200 in a row,
+/// but a camera may ignore the range, so the reads before and after a write
+/// still stop as early as they can:
 /// - The camera numbers its files in shooting order, so after a run of photos
 ///   older than the period the rest of the card is older too.
 /// - Two failed reads in a row usually mean the camera has stopped serving

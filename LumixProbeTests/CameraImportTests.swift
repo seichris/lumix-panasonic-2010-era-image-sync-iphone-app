@@ -331,6 +331,40 @@ final class CameraImportTests: XCTestCase {
         )
     }
 
+    /// A GM1S answers this with `206 Partial Content` and exactly 524,288 bytes, so
+    /// the camera ends the transfer instead of the app dropping it mid-photo.
+    func testPhotoMetadataPrefixRequestAsksForOnlyThePrefix() throws {
+        let url = try XCTUnwrap(URL(string: "http://192.168.54.1:50001/DO1290890.JPG"))
+
+        XCTAssertEqual(
+            try LumixMediaHTTPRequest.make(for: url, style: .legacy, rangeHeader: LumixMediaPrefixRange.header),
+            "GET /DO1290890.JPG HTTP/1.0\r\n" +
+                "Host: 192.168.54.1:50001\r\n" +
+                "Accept: */*\r\n" +
+                "Range: bytes=0-524287\r\n" +
+                "User-Agent: GM1Sync/1.0\r\n\r\n"
+        )
+        XCTAssertEqual(
+            try LumixMediaHTTPRequest.make(for: url, style: .legacy),
+            "GET /DO1290890.JPG HTTP/1.0\r\n" +
+                "Host: 192.168.54.1:50001\r\n" +
+                "Accept: */*\r\n" +
+                "User-Agent: GM1Sync/1.0\r\n\r\n",
+            "Whole-photo downloads keep the plain request"
+        )
+    }
+
+    func testPrefixReadRetriesWithoutRangeOnlyWhenTheHeaderWasRefused() {
+        for code in [400, 416, 500, 501] {
+            XCTAssertTrue(LumixMediaPrefixRange.shouldRetryWithoutRange(LumixError.http(code, "")), "\(code)")
+        }
+        for code in [0, 403, 404, 503] {
+            XCTAssertFalse(LumixMediaPrefixRange.shouldRetryWithoutRange(LumixError.http(code, "")), "\(code)")
+        }
+        XCTAssertFalse(LumixMediaPrefixRange.shouldRetryWithoutRange(CancellationError()))
+        XCTAssertFalse(LumixMediaPrefixRange.shouldRetryWithoutRange(LumixError.invalidURL))
+    }
+
     func testPanasonicZeroBytePlayerProbeRemainsInitialPlainRequest() throws {
         XCTAssertNil(PanasonicDLNARemoteRange.fromLocalPlayerRange("bytes=0-1"))
         XCTAssertNil(PanasonicDLNARemoteRange.fromLocalPlayerRange("bytes=0-"))
