@@ -220,7 +220,7 @@ struct ContentView: View {
         case .geotagging:
             GeotaggingSettingsView(model: model)
         case .compatibleCameras:
-            CameraCompatibilityView()
+            CameraCompatibilityView(iconStore: iconStore)
         case .appIcon:
             AppIconPickerView(store: iconStore)
         case .developerSettings:
@@ -715,7 +715,7 @@ private struct MacSettingsView: View {
                     CameraCompatibilityView()
                 } label: {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Potentially compatible cameras")
+                        Text("Cameras that work with this app")
                         Text("GM-family and Panasonic Image App models by era")
                             .font(.caption)
                             .foregroundStyle(.secondary)

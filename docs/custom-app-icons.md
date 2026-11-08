@@ -31,7 +31,8 @@ The app sells nothing else and has no accounts.
 - `AppIconStore` (`LumixProbe/AppIconStore.swift`) loads the price, checks `Transaction.currentEntitlements`, buys with `Product.purchase()`, and listens to `Transaction.updates` for Ask to Buy approvals, purchases on other devices, and refunds. A refund locks the icons again.
 - **App Icon** shows the price, **Unlock for $0.99**, and **Restore purchase**, which App Review requires for non-consumables. Tapping a locked icon also starts the purchase, then switches to that icon.
 - **Already using a custom icon:** someone with Lens or Black Camera set when this version first runs keeps Lens and Black Camera free (`AppIconChoice.wasFreeBefore`). The app decides this once and stores it in `UserDefaults` (`customIconsGrandfathered.v1`). The camera model icons were never free, so everyone needs the purchase for them.
-- The About note on the home screen names the price ("You can support development by unlocking the custom app icons for $0.99.") and thanks people who bought it.
+- **Camera list:** in **Cameras that work with this app** (the camera names on the home screen), each camera with a model icon shows it at the left of its row, and the GM1 shows its two icons side by side. Tapping one opens a short offer: **Unlock for $0.99** buys the custom icons and switches to that icon, and someone who already owns them gets **Use as app icon**. `AppIconChoice.cameraModels` names the camera list row for each icon.
+- The About note on the home screen ends with the price ("If you like it, you can support development by paying $0.99 to unlock custom app icons :)") and thanks people who bought it. It shows the App Store's localized price, and "$1" only until the App Store has answered.
 - Without the product in App Store Connect the price is missing, the unlock button is disabled, and the screen says the App Store isn't offering the icons right now.
 
 ## Icon artwork

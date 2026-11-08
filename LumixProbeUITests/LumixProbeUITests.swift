@@ -150,11 +150,18 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertFalse(element(labelContaining: "& other 2010-era Lumix cams").exists)
         XCTAssertFalse(app.buttons["app-settings-link"].exists, "There is no separate Settings screen")
 
-        let cameraLink = app.links["GM1, GX7, and LX100"]
+        let cameraLink = app.links["GM1, GX7, and LX100 and more"]
         XCTAssertTrue(cameraLink.waitForExistence(timeout: 5), "The example camera names are one link")
         cameraLink.tap()
-        XCTAssertTrue(app.navigationBars["Camera candidates"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Cameras that work with this app"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Panasonic DMC-GM1S"].exists)
+        let gm1sIcon = app.buttons["camera-icon-GM1SOrange"]
+        XCTAssertTrue(gm1sIcon.exists, "A camera with a matching app icon shows it")
+        XCTAssertTrue(app.buttons["camera-icon-GM1Silver"].exists && app.buttons["camera-icon-GM1AllBlack"].exists,
+                      "The GM1 shows both of its icons")
+        gm1sIcon.tap()
+        XCTAssertTrue(app.staticTexts["GM1S Orange app icon"].waitForExistence(timeout: 5))
+        app.buttons["offer-not-now"].tap()
         app.navigationBars.buttons.firstMatch.tap()
 
         let headerIcon = app.buttons["home-app-icon"]
@@ -165,7 +172,7 @@ final class LumixProbeUITests: XCTestCase {
 
         let developerNote = app.descendants(matching: .any)["about-developer-note"].firstMatch
         scrollToElement(developerNote)
-        XCTAssertTrue(developerNote.label.contains("solo developer"))
+        XCTAssertTrue(developerNote.label.contains("Hi, I'm Chris"))
         XCTAssertTrue(app.descendants(matching: .any)["feature-requests-link"].firstMatch.exists)
 
         let repositoryLink = app.descendants(matching: .any)["github-repository-link"].firstMatch
@@ -185,11 +192,7 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["The GM1S normally uses 192.168.54.1 in Image App Direct mode."].exists)
         app.navigationBars.buttons.firstMatch.tap()
 
-        let compatibilityLink = app.buttons["camera-compatibility-link"]
-        scrollToElement(compatibilityLink)
-        compatibilityLink.tap()
-        XCTAssertTrue(app.navigationBars["Camera candidates"].waitForExistence(timeout: 5))
-        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertFalse(app.buttons["camera-compatibility-link"].exists, "The camera list opens from the header link")
 
         let appVersion = app.staticTexts["app-version"]
         scrollToElement(appVersion)
@@ -231,7 +234,7 @@ final class LumixProbeUITests: XCTestCase {
         let iconLink = app.buttons["app-icon-link"]
         XCTAssertTrue(app.buttons["open-camera-photos"].waitForExistence(timeout: 8))
         scrollToElement(iconLink)
-        XCTAssertTrue(element(labelContaining: "unlocking the custom app icons for $0.99").exists,
+        XCTAssertTrue(element(labelContaining: "paying $0.99 to unlock custom app icons").exists,
                       "The About note names the price")
         iconLink.tap()
         XCTAssertTrue(app.navigationBars["App Icon"].waitForExistence(timeout: 5))
@@ -250,6 +253,42 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertNotEqual(app.buttons["app-icon-GM1SOrange"].value as? String, "Locked")
         // The thank-you line is below the twelve icons.
         scrollToElement(element(labelContaining: "Thank you for supporting Retro LUMIX Sync"))
+    }
+
+    func testACameraIconOffersTheCustomIconsAndBecomesTheAppIcon() throws {
+        app.launchArguments += ["-UITestIconPurchase"]
+        app.launch()
+
+        let cameraLink = app.links["GM1, GX7, and LX100 and more"]
+        XCTAssertTrue(cameraLink.waitForExistence(timeout: 8))
+        cameraLink.tap()
+        let icon = app.buttons["camera-icon-GM1SOrange"]
+        XCTAssertTrue(icon.waitForExistence(timeout: 5))
+        icon.tap()
+        let unlock = app.buttons["offer-unlock-icons"]
+        XCTAssertTrue(unlock.waitForExistence(timeout: 5))
+        XCTAssertTrue(unlock.label.contains("$0.99"))
+        XCTAssertTrue(element(labelContaining: "one-time purchase of $0.99").exists)
+        unlock.tap()
+
+        // After the purchase the tapped icon becomes the app icon; iOS confirms it.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let confirmation = springboard.alerts.firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 8), "iOS confirms the new app icon")
+        confirmation.buttons["OK"].tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: unlock)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed, "The offer closes once the icon is set")
+
+        // Back to Blue Camera, so other tests start from the default icon.
+        app.navigationBars.buttons.firstMatch.tap()
+        let iconLink = app.buttons["app-icon-link"]
+        scrollToElement(iconLink)
+        iconLink.tap()
+        let blue = app.buttons["app-icon-primary"]
+        XCTAssertTrue(blue.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["app-icon-GM1SOrange"].value as? String, "Selected")
+        blue.tap()
+        if confirmation.waitForExistence(timeout: 5) { confirmation.buttons["OK"].tap() }
     }
 
     func testLocationLogCanStartAndStop() throws {

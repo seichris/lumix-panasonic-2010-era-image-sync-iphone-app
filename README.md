@@ -34,7 +34,7 @@ AVCHD items can appear in the gallery when advertised by the camera. The tested 
 
 ## The home screen
 
-The iPhone app opens on a home screen organized by what you want to do. The app icon you chose sits in front of the title; tap it to choose another. The camera names in the description (GM1, GX7, and LX100) open the list of potentially compatible cameras.
+The iPhone app opens on a home screen organized by what you want to do. The app icon you chose sits in front of the title; tap it to choose another. The camera names in the description ("GM1, GX7, and LX100 and more") open **Cameras that work with this app**, the camera list by era. A camera with a matching custom app icon shows it in its row (the GM1 shows both of its icons); tapping an icon offers it as the app icon, with the custom icons purchase if they're still locked.
 
 - **Geotagging:** a short explanation and the location log's status with **Start** and **Stop**. **Geotagging settings** holds the widget setup, automatic start, Google Timeline import, clearing the track, and the camera clock adjustment.
 - **With your camera:**
@@ -42,13 +42,13 @@ The iPhone app opens on a home screen organized by what you want to do. The app 
   - **Receive photos as you shoot** uses **Send Images While Recording**.
 
   Each job shows the camera steps for its connection and joins the camera's network: the remembered network, its QR code, or a name and password.
-- **About:** a note from the developer (including the price of the custom app icons), the source code on GitHub, **Feature requests welcome** (opens a new GitHub issue), the list of potentially compatible cameras, the app icon, **Developer settings** (connection, remembered camera, camera address, and protocol tests), and the app version.
+- **About:** a note from the developer (including the price of the custom app icons), the app icon, the source code on GitHub, **Feature requests welcome** (opens a new GitHub issue), **Developer settings** (connection, remembered camera, camera address, and protocol tests), and the app version.
 
 Once connected, the camera screen switches between **Photos** and **Live view** at the top; going back to the home screen keeps the connection.
 
 ## Custom app icons
 
-Blue Camera is the free app icon. **Lens**, **Black Camera**, and nine camera model icons (GM1S, GM1, GX85, GX9, G85, FZ80, FZ300, FZ1000) are an optional one-time In-App Purchase that supports development. Someone already using Lens or Black Camera when this version first runs keeps those two free. **App Icon** offers **Restore purchase**. See [docs/custom-app-icons.md](docs/custom-app-icons.md) for the App Store Connect setup and testing.
+Blue Camera is the free app icon. **Lens**, **Black Camera**, and nine camera model icons (GM1S, GM1, GX85, GX9, G85, FZ80, FZ300, FZ1000) are an optional one-time In-App Purchase that supports development. Someone already using Lens or Black Camera when this version first runs keeps those two free. **App Icon** offers **Restore purchase**, and the camera list offers each camera's icon. See [docs/custom-app-icons.md](docs/custom-app-icons.md) for the App Store Connect setup and testing.
 
 ## Connect a GM1S
 

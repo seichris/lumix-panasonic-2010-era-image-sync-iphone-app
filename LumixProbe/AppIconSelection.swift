@@ -71,6 +71,34 @@ enum AppIconChoice: String, CaseIterable, Identifiable {
         self == .lens || self == .blackCamera
     }
 
+    /// The camera this icon shows, as `CameraCandidate.models` names it in the camera list.
+    var cameraModels: String? {
+        switch self {
+        case .primary, .lens, .blackCamera: nil
+        case .gm1sOrange: "Panasonic DMC-GM1S"
+        case .gm1Silver, .gm1AllBlack: "Panasonic DMC-GM1"
+        case .gx85: "Panasonic DMC-GX80 / GX85"
+        case .gx9: "Panasonic DC-GX9"
+        case .g85: "Panasonic DMC-G80 / G81 / G85"
+        case .fz80: "Panasonic DC-FZ80 / FZ82"
+        case .fz300: "Panasonic DMC-FZ300 / FZ330"
+        case .fz1000: "Panasonic DMC-FZ1000"
+        }
+    }
+
+    /// The icons that show a camera from the camera list, in picker order.
+    static func icons(forCamera models: String) -> [AppIconChoice] {
+        allCases.filter { $0.cameraModels == models }
+    }
+
+#if os(iOS)
+    /// Makes this the Home Screen icon; iOS confirms the change with its own message.
+    @MainActor
+    func makeAppIcon() async throws {
+        try await UIApplication.shared.setAlternateIconName(alternateIconName)
+    }
+#endif
+
     @MainActor
     static var current: AppIconChoice {
 #if os(iOS)
