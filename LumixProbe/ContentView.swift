@@ -114,6 +114,7 @@ struct ContentView: View {
                 model: model,
                 logger: model.locationLogger,
                 openCompatibleCameras: { path.append(AppRoute.compatibleCameras) },
+                openAppIcon: { path.append(AppRoute.appIcon) },
                 openReceive: { isShowingPushTransfer = true }
             )
                 .navigationDestination(for: AppRoute.self) { route in

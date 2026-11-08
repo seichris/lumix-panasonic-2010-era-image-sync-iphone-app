@@ -34,7 +34,7 @@ AVCHD items can appear in the gallery when advertised by the camera. The tested 
 
 ## The home screen
 
-The iPhone app opens on a home screen organized by what you want to do:
+The iPhone app opens on a home screen organized by what you want to do. The app icon you chose sits in front of the title; tap it to choose another. The camera names in the description (GM1, GX7, and LX100) open the list of potentially compatible cameras.
 
 - **Geotagging:** a short explanation and the location log's status with **Start** and **Stop**. **Geotagging settings** holds the widget setup, automatic start, Google Timeline import, clearing the track, and the camera clock adjustment.
 - **With your camera:**
@@ -42,7 +42,7 @@ The iPhone app opens on a home screen organized by what you want to do:
   - **Receive photos as you shoot** uses **Send Images While Recording**.
 
   Each job shows the camera steps for its connection and joins the camera's network: the remembered network, its QR code, or a name and password.
-- **About:** the source code on GitHub, the list of potentially compatible cameras, the app icon, **Developer settings** (connection, remembered camera, camera address, and protocol tests), and the app version. The camera names in the description at the top also open the camera list.
+- **About:** a note from the developer, the source code on GitHub, **Feature requests welcome** (opens a new GitHub issue), the list of potentially compatible cameras, the app icon, **Developer settings** (connection, remembered camera, camera address, and protocol tests), and the app version.
 
 Once connected, the camera screen switches between **Photos** and **Live view** at the top; going back to the home screen keeps the connection.
 
