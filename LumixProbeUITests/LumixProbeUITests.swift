@@ -332,6 +332,10 @@ final class LumixProbeUITests: XCTestCase {
         let start = app.buttons["start-push-transfer"]
         XCTAssertTrue(start.waitForExistence(timeout: 5))
         start.tap()
+        let join = app.buttons["join-camera-wifi"]
+        XCTAssertTrue(join.waitForExistence(timeout: 5), "Receiving waits for the camera's Wi-Fi and offers to join it")
+        XCTAssertTrue(join.label.contains("GM1S-DEMO"), "The button names the remembered network")
+        join.tap()
         XCTAssertTrue(element(labelContaining: "Ready to receive").waitForExistence(timeout: 10),
                       "The scripted camera reads the receiver's description")
         XCTAssertTrue(element(labelContaining: "P1000001.JPG").waitForExistence(timeout: 10))

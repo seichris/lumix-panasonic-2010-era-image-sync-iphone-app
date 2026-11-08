@@ -144,6 +144,7 @@ The receiver follows Shutterlink's GM1/G85-tested exchange and has been verified
 | App in the background, no photo taken | Verified on GM1S: the connection survives, and the next photo arrives |
 | Photo taken while the app is in the background | GM1S shows "Connection error", ends the send connection, and does not retry; the photo stays on the card |
 | Joining the camera's network from Settings | Worked once; once the camera showed "Connection failed" because it searched while the app was in the background |
+| Joining the camera's network from the receiving screen | Needs GM1S validation. The screen offers **Join** for the remembered network so the app stays in the foreground |
 | Size → Original transfers byte-identical to the card's JPEG | Needs GM1S validation (gallery import of a received original) |
 | Smaller transfer sizes are not treated as originals | Needs GM1S validation |
 | Burst at Size Original, iPhone lock, camera Wi-Fi off and on | Needs GM1S validation |

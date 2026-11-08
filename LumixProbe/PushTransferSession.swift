@@ -72,8 +72,15 @@ struct PushTransferDependencies {
     var locationSamples: @MainActor () -> [LocationSample] = { [] }
     var cameraClockOffset: @MainActor () -> TimeInterval = { 0 }
     var metadataReader: @Sendable (URL) -> PhotoOriginalMetadata = { PhotoOriginalMetadataReader.read(from: $0) }
+    /// The camera network the app remembers. While receiving waits for the camera's Wi-Fi,
+    /// the receiving screen offers to join it.
+    var cameraNetworkName: @MainActor () -> String? = { nil }
+    /// Joins that network without leaving the app.
+    var joinCameraNetwork: @MainActor () async throws -> Void = {}
     var preferredPorts: [UInt16] = [49152, 49153, 49154, 49155]
-    var networkPollInterval: Duration = .seconds(2)
+    /// How often the session checks the iPhone's address on the camera's network. The camera
+    /// searches for the receiver soon after the iPhone joins, so this stays short.
+    var networkPollInterval: Duration = .seconds(1)
     var linkedAnnouncementInterval: TimeInterval = 15
 
     static func standard(
@@ -124,6 +131,12 @@ final class PushTransferSession: ObservableObject {
         }
     }
 
+    enum NetworkJoin: Equatable, Sendable {
+        case idle
+        case joining
+        case failed(String)
+    }
+
     enum RegistrationResult: Equatable, Sendable {
         case accepted
         case awaitingApprovalOnCamera
@@ -143,6 +156,7 @@ final class PushTransferSession: ObservableObject {
     @Published private(set) var resumedAfterPause = false
     @Published private(set) var lastCameraContact: Date?
     @Published private(set) var registration: RegistrationResult?
+    @Published private(set) var networkJoin: NetworkJoin = .idle
     @Published private(set) var needsPhotosAccess = false
     @Published private(set) var pendingFileCount = 0
     @Published private(set) var localEndpoint: String?
@@ -192,6 +206,7 @@ final class PushTransferSession: ObservableObject {
     func stop() async {
         networkWaitTask?.cancel()
         networkWaitTask = nil
+        networkJoin = .idle
         tearDown(sayGoodbye: true)
         if let lease {
             coordinator.endExclusive(lease)
@@ -222,6 +237,34 @@ final class PushTransferSession: ObservableObject {
         }
     }
 
+    /// The remembered camera network the receiving screen can join while receiving waits for it.
+    var joinableCameraNetwork: String? {
+        guard phase == .waitingForCameraNetwork else { return nil }
+        return dependencies.cameraNetworkName()
+    }
+
+    /// Joins the camera's network from the receiving screen. Joining from Settings sends the
+    /// app to the background, and a GM1S that searches for the receiver meanwhile gives up
+    /// with "Connection failed"; joining here keeps the app in the foreground.
+    func joinCameraNetwork() async {
+        guard let network = joinableCameraNetwork, networkJoin != .joining else { return }
+        networkJoin = .joining
+        let outcome: NetworkJoin
+        do {
+            try await dependencies.joinCameraNetwork()
+            outcome = .idle
+        } catch {
+            outcome = .failed("Could not join \(network): \(error.localizedDescription)")
+        }
+        // Receiving may have stopped, or found the network by itself, in the meantime.
+        guard phase == .waitingForCameraNetwork else {
+            networkJoin = .idle
+            return
+        }
+        networkJoin = outcome
+        if outcome == .idle { await bringUpIfOnCameraNetwork() }
+    }
+
     /// Retries files that Photos has not saved yet, for example after access was granted.
     func retryPendingSaves() async {
         needsPhotosAccess = false
@@ -244,6 +287,7 @@ final class PushTransferSession: ObservableObject {
             return
         }
         phase = .starting
+        if case .failed = networkJoin { networkJoin = .idle }
         let relay = receiverEvents
         let receiver = PushTransferReceiver(
             configuration: .init(
@@ -305,6 +349,16 @@ final class PushTransferSession: ObservableObject {
         announcer = nil
         server?.stop()
         server = nil
+    }
+
+    /// Starts the receiver now if the iPhone already has an address on the camera's
+    /// network, instead of waiting for the next network check.
+    private func bringUpIfOnCameraNetwork() async {
+        guard phase == .waitingForCameraNetwork, lease != nil, !isInBackground,
+              dependencies.localAddress(dependencies.cameraHost) != nil else { return }
+        networkWaitTask?.cancel()
+        networkWaitTask = nil
+        await bringUp()
     }
 
     private func waitForCameraNetwork(generation: Int) {

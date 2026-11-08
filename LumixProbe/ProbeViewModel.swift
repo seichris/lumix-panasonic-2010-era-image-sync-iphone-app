@@ -225,6 +225,17 @@ final class ProbeViewModel: ObservableObject {
         }
     }
 
+    /// Joins the remembered camera network for receiving photos the camera sends while
+    /// recording. Unlike a reconnect it does not wait for the camera's web server, which a
+    /// camera that is sending images does not run; the receiving session watches the network.
+    func joinRememberedCameraNetwork() async throws {
+        guard let rememberedCameraNetwork else { throw LumixWiFiError.noRememberedNetwork }
+        // Joining a network starts a new camera connection even at the same address.
+        endCameraConnection()
+        _ = try await wifiConnector.join(using: rememberedCameraNetwork.credentials)
+        append("Joined camera Wi-Fi \(rememberedCameraNetwork.ssid) for receiving photos.")
+    }
+
     func forgetRememberedCamera() {
         guard let network = rememberedCameraNetwork else { return }
         connectionAttempt = UUID()

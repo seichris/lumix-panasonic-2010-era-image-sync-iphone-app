@@ -73,7 +73,7 @@ Live view pauses while the app is in the background and resumes when you return.
 
 ## Send Images While Recording
 
-On the camera choose **Wi‑Fi → Wi‑Fi Function → New Connection → Send Images While Recording → Smartphone → Direct → Manual Connection**. In Retro LUMIX Sync tap **Receive photos while shooting → Start receiving**, join the network the camera shows, and come straight back to the app. When the camera lists "Retro LUMIX Sync", select it, choose **Size → Original** for full-size JPEGs, and press **Set**.
+On the camera choose **Wi‑Fi → Wi‑Fi Function → New Connection → Send Images While Recording → Smartphone → Direct → Manual Connection**. In Retro LUMIX Sync tap **Receive photos while shooting → Start receiving**, then **Join** the camera's network on that screen (or join it in Settings and come straight back to the app). When the camera lists "Retro LUMIX Sync", select it, choose **Size → Original** for full-size JPEGs, and press **Set**.
 
 - Each JPEG is reported as saved only after Photos has saved it.
 - Incomplete uploads are discarded, and repeated deliveries of the same bytes are skipped.

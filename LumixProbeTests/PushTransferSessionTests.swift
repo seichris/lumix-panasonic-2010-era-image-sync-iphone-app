@@ -32,7 +32,7 @@ final class PushTransferSessionTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private func makeSession() -> PushTransferSession {
+    private func makeSession(_ configure: (inout PushTransferDependencies) -> Void = { _ in }) -> PushTransferSession {
         let network = self.network!
         let harness = self.harness!
         let camera = self.camera!
@@ -49,6 +49,7 @@ final class PushTransferSessionTests: XCTestCase {
         dependencies.makeServer = { receiver, _ in harness.makeServer(receiver) }
         dependencies.makeAnnouncer = { _, _, _, emit in harness.makeAnnouncer(emit) }
         dependencies.networkPollInterval = .milliseconds(20)
+        configure(&dependencies)
         return PushTransferSession(dependencies: dependencies, coordinator: coordinator)
     }
 
@@ -215,6 +216,62 @@ final class PushTransferSessionTests: XCTestCase {
         try await waitUntil { self.session.phase == .advertising }
     }
 
+    func testJoiningTheRememberedNetworkFromTheScreenStartsReceiving() async throws {
+        network.address = nil
+        let network = self.network!
+        let joins = JoinCounter()
+        session = makeSession {
+            $0.cameraNetworkName = { "GM1S-TEST" }
+            $0.joinCameraNetwork = {
+                joins.count += 1
+                network.address = "192.168.54.10"
+            }
+        }
+        await session.start()
+        XCTAssertEqual(session.phase, .waitingForCameraNetwork)
+        XCTAssertEqual(session.joinableCameraNetwork, "GM1S-TEST")
+
+        await session.joinCameraNetwork()
+        XCTAssertEqual(joins.count, 1)
+        XCTAssertEqual(session.phase, .advertising, "The receiver starts as soon as the iPhone is on the camera's network")
+        XCTAssertEqual(session.networkJoin, .idle)
+        XCTAssertNil(session.joinableCameraNetwork, "Nothing is offered once the iPhone is on the camera's network")
+        XCTAssertEqual(harness.servers.count, 1, "The network check and the join start one receiver between them")
+        XCTAssertEqual(coordinator.exclusiveActivity, .pushTransfer)
+    }
+
+    func testAFailedJoinIsShownAndJoiningInSettingsStillWorks() async throws {
+        network.address = nil
+        session = makeSession {
+            $0.cameraNetworkName = { "GM1S-TEST" }
+            $0.joinCameraNetwork = { throw JoinRefused() }
+        }
+        await session.start()
+        await session.joinCameraNetwork()
+        XCTAssertEqual(session.networkJoin, .failed("Could not join GM1S-TEST: The user declined the Wi-Fi network."))
+        XCTAssertEqual(session.phase, .waitingForCameraNetwork)
+        XCTAssertEqual(session.joinableCameraNetwork, "GM1S-TEST", "The button stays for another try")
+
+        network.address = "192.168.54.10"
+        try await waitUntil { self.session.phase == .advertising }
+        XCTAssertEqual(session.networkJoin, .idle, "The message goes once the iPhone is on the camera's network")
+    }
+
+    func testJoiningIsOfferedOnlyForARememberedNetworkWhileWaitingForIt() async throws {
+        network.address = nil
+        await session.start()
+        XCTAssertEqual(session.phase, .waitingForCameraNetwork)
+        XCTAssertNil(session.joinableCameraNetwork, "Without a remembered network the screen points to Settings")
+        await session.stop()
+
+        network.address = "192.168.54.10"
+        session = makeSession { $0.cameraNetworkName = { "GM1S-TEST" } }
+        XCTAssertNil(session.joinableCameraNetwork, "Nothing to join before receiving starts")
+        await session.start()
+        XCTAssertEqual(session.phase, .advertising)
+        XCTAssertNil(session.joinableCameraNetwork)
+    }
+
     func testStopSaysGoodbyeAndReleasesTheCamera() async throws {
         await session.start()
         await session.stop()
@@ -307,6 +364,15 @@ final class PushTransferSessionTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
     }
+}
+
+@MainActor
+private final class JoinCounter {
+    var count = 0
+}
+
+private struct JoinRefused: LocalizedError {
+    var errorDescription: String? { "The user declined the Wi-Fi network." }
 }
 
 private final class NetworkSwitch: @unchecked Sendable {

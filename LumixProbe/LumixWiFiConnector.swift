@@ -237,6 +237,7 @@ enum LumixWiFiError: LocalizedError {
     case missingSSID
     case unsupportedQRCode(reference: String)
     case macRequiresManualJoin
+    case noRememberedNetwork
 
     var errorDescription: String? {
         switch self {
@@ -246,6 +247,8 @@ enum LumixWiFiError: LocalizedError {
             return "This camera QR format is not recognized yet (reference \(reference)). Enter the displayed network details manually."
         case .macRequiresManualJoin:
             return "Join the camera Wi-Fi from the macOS menu bar, then return to Retro LUMIX Sync."
+        case .noRememberedNetwork:
+            return "Scan the camera QR code once so Retro LUMIX Sync remembers its Wi-Fi network."
         }
     }
 }

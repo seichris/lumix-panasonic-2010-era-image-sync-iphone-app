@@ -68,7 +68,13 @@ Because Apple documents the entitlement for receiving too, check a TestFlight bu
 
 The camera searches for the app shortly after the iPhone joins its network. Joining from Settings sends Retro LUMIX Sync to the background, where it cannot answer.
 
-In the first GM1S run, the camera showed **Connection failed**: it never searched after the app returned, and its network was gone within a minute of the iPhone joining. The second run, with the same steps, worked: the camera searched 6 s after the app came back. So: start receiving, join the network, and return to the app straight away. If the camera shows **Connection failed**, start its connection again while the receiving screen is open.
+In the first GM1S run, the camera showed **Connection failed**: it never searched after the app returned, and its network was gone within a minute of the iPhone joining. The second run, with the same steps, worked: the camera searched 6 s after the app came back.
+
+So the receiving screen joins the network itself. While receiving waits for the camera's Wi‑Fi and the app remembers the camera's network (from its QR code or an earlier manual join), the screen shows **Join <network>**. It joins with `NEHotspotConfiguration`, the same way the app's Reconnect does, so Retro LUMIX Sync stays in the foreground; at most iOS shows its own join prompt over it. It does not wait for the camera's web server, which a camera that is sending images does not run. The session checks for its address every second, starts the receiver as soon as the join finishes, and keeps holding the camera, so the gallery does not switch the camera to playback meanwhile. If joining fails, the screen says why, and joining in Settings still works.
+
+Without a remembered network: start receiving, join the network in Settings, and return to the app straight away. If the camera shows **Connection failed**, start its connection again while the receiving screen is open.
+
+The Join button has not yet been tried with the camera.
 
 ## Foreground-only behavior
 
