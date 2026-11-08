@@ -441,14 +441,19 @@ final class RemoteShootingSession: ObservableObject {
     }
 
     /// Repeats a manual-focus step while a focus button is held, as Image App does.
+    /// The first step is always sent: a tap releases the button before the repeat
+    /// task runs, and on a GM1S a tap then moved nothing.
     func startFocusRepeat(_ direction: RemoteFocusDirection, fast: Bool) {
         stopFocusRepeat()
         let interval = timing.manualFocusRepeatInterval
         focusRepeatTask = Task { [weak self] in
+            guard let self else { return }
+            // A separate task does not inherit this one's cancellation.
+            await Task { await self.driveFocus(direction, fast: fast) }.value
             while !Task.isCancelled {
-                guard let self else { return }
-                await self.driveFocus(direction, fast: fast)
                 try? await Task.sleep(for: interval)
+                guard !Task.isCancelled else { return }
+                await self.driveFocus(direction, fast: fast)
             }
         }
     }

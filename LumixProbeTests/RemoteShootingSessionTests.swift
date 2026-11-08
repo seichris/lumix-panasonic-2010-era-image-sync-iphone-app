@@ -245,6 +245,22 @@ final class RemoteShootingSessionTests: XCTestCase {
         XCTAssertTrue(commands.contains("mode=camcmd&value=capture"))
     }
 
+    /// A tap releases the focus button before the repeat starts. On a GM1S that
+    /// sent no focus command at all; only holding the button moved focus.
+    func testATapOnAFocusButtonSendsOneStep() async throws {
+        await camera.setSetting("focusmode", "mf")
+        await session.start()
+        source.emitFrame()
+        try await waitUntil { self.session.phase == .live }
+
+        session.startFocusRepeat(.far, fast: false)
+        session.stopFocusRepeat()
+        try await waitUntil { await self.camera.commands.contains("mode=camctrl&type=focus&value=tele-normal") }
+        try await Task.sleep(for: .milliseconds(50))
+        let steps = await camera.commands.filter { $0.hasPrefix("mode=camctrl&type=focus") }
+        XCTAssertEqual(steps, ["mode=camctrl&type=focus&value=tele-normal"])
+    }
+
     func testApplyingAnAdvertisedOptionSendsTheCameraCommand() async throws {
         await session.start()
         source.emitFrame()
