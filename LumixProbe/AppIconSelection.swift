@@ -7,6 +7,15 @@ enum AppIconChoice: String, CaseIterable, Identifiable {
     case primary
     case lens = "AppIcon"
     case blackCamera = "BlackCamera"
+    case gm1sOrange = "GM1SOrange"
+    case gm1Silver = "GM1Silver"
+    case gm1AllBlack = "GM1AllBlack"
+    case gx85 = "GX85"
+    case gx9 = "GX9"
+    case g85 = "G85"
+    case fz80 = "FZ80"
+    case fz300 = "FZ300"
+    case fz1000 = "FZ1000"
 
     var id: String { rawValue }
 
@@ -18,6 +27,24 @@ enum AppIconChoice: String, CaseIterable, Identifiable {
             "Lens"
         case .blackCamera:
             "Black Camera"
+        case .gm1sOrange:
+            "GM1S Orange"
+        case .gm1Silver:
+            "GM1 Silver"
+        case .gm1AllBlack:
+            "GM1 All Black"
+        case .gx85:
+            "GX85"
+        case .gx9:
+            "GX9"
+        case .g85:
+            "G85 / G80"
+        case .fz80:
+            "FZ80 / FZ82"
+        case .fz300:
+            "FZ300"
+        case .fz1000:
+            "FZ1000"
         }
     }
 
@@ -33,7 +60,15 @@ enum AppIconChoice: String, CaseIterable, Identifiable {
             "DefaultIconPreview"
         case .blackCamera:
             "BlackCameraIconPreview"
+        default:
+            rawValue + "IconPreview"
         }
+    }
+
+    /// Lens and Black Camera were free before the custom icons purchase; someone already
+    /// using one of them when it arrived keeps both. The camera model icons always need it.
+    var wasFreeBefore: Bool {
+        self == .lens || self == .blackCamera
     }
 
     @MainActor
@@ -66,7 +101,7 @@ struct AppIconPickerView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if !store.isUnlocked {
+            if !store.ownsPurchase {
                 unlockSection
             }
 
@@ -121,7 +156,7 @@ struct AppIconPickerView: View {
             } header: {
                 Text("App icon")
             } footer: {
-                Text(store.ownsPurchase && !store.isGrandfathered
+                Text(store.ownsPurchase
                      ? "Thank you for supporting Retro LUMIX Sync. iOS confirms each icon change with a system message."
                      : "iOS confirms each icon change with a system message.")
             }
@@ -159,7 +194,9 @@ struct AppIconPickerView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Custom app icons")
                     .font(.headline)
-                Text("Lens and Black Camera are a one-time purchase that supports development. Blue Camera is always free.")
+                Text(store.isGrandfathered
+                     ? "Lens and Black Camera stay free for you. The camera model icons are a one-time purchase that supports development."
+                     : "Lens, Black Camera, and the camera model icons are a one-time purchase that supports development. Blue Camera is always free.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

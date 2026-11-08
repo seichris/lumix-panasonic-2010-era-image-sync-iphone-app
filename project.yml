@@ -61,6 +61,15 @@ targets:
         ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES:
           - AppIcon
           - BlackCamera
+          - GM1SOrange
+          - GM1Silver
+          - GM1AllBlack
+          - GX85
+          - GX9
+          - G85
+          - FZ80
+          - FZ300
+          - FZ1000
         PRODUCT_BUNDLE_IDENTIFIER: com.web3.gm1sync
         PRODUCT_NAME: GM1Sync
         TARGETED_DEVICE_FAMILY: "1"

@@ -1,8 +1,9 @@
 import Foundation
 import StoreKit
 
-/// The app's one purchase: the custom app icons (Lens and Black Camera). It is a
-/// one-time, non-consumable purchase that supports development; Blue Camera stays free.
+/// The app's one purchase: the custom app icons (Lens, Black Camera, and the camera
+/// models). It is a one-time, non-consumable purchase that supports development; Blue
+/// Camera stays free.
 enum CustomIconsProduct {
     static let id = "com.web3.gm1sync.customicons"
 }
@@ -102,10 +103,10 @@ final class AppIconStore: ObservableObject {
     }
 
     /// Set once, on the first launch of the version with the purchase: someone already
-    /// using a custom icon then keeps every custom icon free.
+    /// using Lens or Black Camera then keeps both free (see `AppIconChoice.wasFreeBefore`).
     static let grandfatheredKey = "customIconsGrandfathered.v1"
 
-    @Published private(set) var isUnlocked: Bool
+    /// Whether this Apple Account owns the custom icons, which unlocks every icon.
     @Published private(set) var ownsPurchase = false
     @Published private(set) var price: String?
     @Published private(set) var purchaseState: PurchaseState = .idle
@@ -120,7 +121,6 @@ final class AppIconStore: ObservableObject {
             defaults.set(currentIcon != .primary, forKey: Self.grandfatheredKey)
         }
         isGrandfathered = defaults.bool(forKey: Self.grandfatheredKey)
-        isUnlocked = isGrandfathered
         updatesTask = service.observeEntitlementChanges { [weak self] in
             await self?.refresh()
         }
@@ -131,7 +131,7 @@ final class AppIconStore: ObservableObject {
     }
 
     func isAvailable(_ icon: AppIconChoice) -> Bool {
-        icon == .primary || isUnlocked
+        icon == .primary || ownsPurchase || (isGrandfathered && icon.wasFreeBefore)
     }
 
     /// Loads the price and whether this Apple Account owns the icons.
@@ -140,7 +140,6 @@ final class AppIconStore: ObservableObject {
         async let owns = service.ownsCustomIcons()
         price = await loadedPrice
         ownsPurchase = await owns
-        isUnlocked = isGrandfathered || ownsPurchase
         if ownsPurchase, purchaseState == .pending { purchaseState = .idle }
     }
 
@@ -151,7 +150,6 @@ final class AppIconStore: ObservableObject {
             switch try await service.purchase() {
             case .purchased:
                 ownsPurchase = true
-                isUnlocked = true
                 purchaseState = .idle
             case .pending:
                 purchaseState = .pending
@@ -169,7 +167,7 @@ final class AppIconStore: ObservableObject {
         do {
             try await service.restore()
             await refresh()
-            purchaseState = isUnlocked ? .idle : .failed("This Apple Account hasn't bought the custom icons.")
+            purchaseState = ownsPurchase ? .idle : .failed("This Apple Account hasn't bought the custom icons.")
         } catch {
             purchaseState = .failed(error.localizedDescription)
         }

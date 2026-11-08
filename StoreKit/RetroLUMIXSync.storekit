@@ -20,7 +20,7 @@
       "internalID" : "6740151001",
       "localizations" : [
         {
-          "description" : "Unlock the Lens and Black Camera app icons and support development.",
+          "description" : "Unlock all app icons and support development.",
           "displayName" : "Custom app icons",
           "locale" : "en_US"
         }
