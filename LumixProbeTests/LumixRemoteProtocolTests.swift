@@ -78,6 +78,7 @@ final class LumixRemoteProtocolTests: XCTestCase {
         XCTAssertEqual(lens.maximumFocalLength, 42)
         XCTAssertEqual(lens.minimumFocalLength, 14)
         XCTAssertTrue(lens.hasFocalLengthRange)
+        XCTAssertFalse(lens.offersBulb)
         XCTAssertNil(LumixLensInfo(reply: LumixCommandReply.parse("err_non_support")))
 
         XCTAssertEqual(LumixAPEX.apertureLabel(LumixAPEX.parse("768/256")), "f/2.8")
@@ -235,6 +236,72 @@ final class LumixRemoteProtocolTests: XCTestCase {
             capabilities: nil
         )
         XCTAssertEqual(unknownMode.shutter?.fallbackLabel, "1/250", "Without curmenu the mode is unknown, so the stored value stays")
+    }
+
+    /// In M a GM1S reports `16384/256` (Bulb) as its slowest shutter speed. The
+    /// shutter list came out empty, so its menu could not be opened.
+    func testManualModeKeepsTimedShutterSpeedsWhenTheGM1SReportsBulb() throws {
+        let lens = try XCTUnwrap(LumixLensInfo(reply: LumixCommandReply.parse("ok,2048/256,392/256,3584/256,16384/256,0,off,15,15,on,128/1024,on")))
+        XCTAssertTrue(lens.offersBulb)
+        XCTAssertEqual(lens.shutterSlowest, -6)
+
+        let manual = RemoteShootingControls.derive(
+            schema: nil,
+            currentMenu: LumixCurrentMenu.parse("<menuinfo><item id=\"menu_item_id_f_and_ss\" enable=\"yes\" /></menuinfo>"),
+            values: [:],
+            aperture: LumixSettingValue(type: "focal", value: "1536/256"),
+            shutter: LumixSettingValue(type: "shtrspeed", value: "2731/256"),
+            lens: lens,
+            capabilities: nil
+        )
+        XCTAssertEqual(manual.exposureMode, .manual)
+        let shutter = try XCTUnwrap(manual.shutter)
+        XCTAssertTrue(shutter.isEnabled)
+        XCTAssertEqual(shutter.options.first?.label, "60\"")
+        XCTAssertEqual(shutter.options.last?.label, "1/16000")
+        XCTAssertEqual(shutter.currentLabel, "1/1600")
+    }
+
+    /// A menu opens at its first entry, so on a GM1S the current aperture or speed
+    /// sat out of reach below f/16 or 1/16000. Long menus now open around it.
+    func testLongApertureAndShutterMenusOpenAroundTheCurrentValue() throws {
+        let shutter = RemoteExposureControl(
+            title: "Shutter", settingType: "shtrspeed",
+            options: LumixAPEX.shutterOptions(fastest: 14, slowest: -6),
+            current: LumixAPEX.parse("2731/256"), currentLabel: "1/1600", isEnabled: true
+        )
+        XCTAssertEqual(shutter.options.count, 61)
+        let speeds = shutter.menuSections
+        XCTAssertEqual(speeds.nearby.map(\.label),
+                       ["1/4000", "1/3200", "1/2500", "1/2000", "1/1600", "1/1300", "1/1000", "1/800", "1/640"])
+        XCTAssertEqual(speeds.higher.first?.label, "1/5000", "Each submenu starts next to the main menu")
+        XCTAssertEqual(speeds.higher.last?.label, "1/16000")
+        XCTAssertEqual(speeds.lower.first?.label, "1/500")
+        XCTAssertEqual(speeds.lower.last?.label, "60\"")
+        XCTAssertEqual(speeds.higher.count + speeds.nearby.count + speeds.lower.count, 61)
+
+        // At the end of the range the window shifts inward and stays full.
+        let wideOpen = RemoteExposureControl(
+            title: "Aperture", settingType: "focal",
+            options: LumixAPEX.apertureOptions(open: 392.0 / 256, closed: 8),
+            current: 392.0 / 256, currentLabel: "f/1.7", isEnabled: true
+        )
+        let apertures = wideOpen.menuSections
+        XCTAssertEqual(wideOpen.options.count, 21)
+        XCTAssertEqual(apertures.nearby.count, 9)
+        XCTAssertEqual(apertures.nearby.last?.label, "f/1.7")
+        XCTAssertTrue(apertures.lower.isEmpty)
+        XCTAssertEqual(apertures.higher.first?.label, "f/4.5")
+        XCTAssertEqual(apertures.higher.last?.label, "f/16")
+
+        // A short list stays in one menu.
+        let short = RemoteExposureControl(
+            title: "Aperture", settingType: "focal",
+            options: LumixAPEX.apertureOptions(open: 5, closed: 8),
+            current: 6, currentLabel: "f/8", isEnabled: true
+        )
+        XCTAssertEqual(short.menuSections.nearby.count, short.options.count)
+        XCTAssertTrue(short.menuSections.higher.isEmpty && short.menuSections.lower.isEmpty)
     }
 
     func testTheFullGM1SExposureRangeIsSplitAroundZero() {

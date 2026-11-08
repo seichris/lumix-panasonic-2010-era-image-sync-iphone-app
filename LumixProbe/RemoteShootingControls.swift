@@ -142,6 +142,42 @@ struct RemoteExposureControl: Equatable, Sendable {
     }
 }
 
+extension RemoteExposureControl {
+    /// A menu opens at its first entry and cannot scroll to the current value. On a
+    /// GM1S, with 21 apertures and 61 shutter speeds, the current value sat out of
+    /// reach below f/16 or 1/16000. Long lists therefore show only the values
+    /// around the current one, with the rest in two submenus that each start next
+    /// to them.
+    struct MenuSections: Equatable, Sendable {
+        /// Higher APEX values (faster speeds, smaller apertures), nearest first.
+        var higher: [LumixExposureOption] = []
+        /// The current value and its neighbours, highest APEX first.
+        var nearby: [LumixExposureOption] = []
+        /// Lower APEX values (slower speeds, wider apertures), nearest first.
+        var lower: [LumixExposureOption] = []
+    }
+
+    /// Values on each side of the current one that stay in the main menu.
+    static let nearbyRadius = 4
+
+    var menuSections: MenuSections {
+        let ordered = options.sorted { $0.apex > $1.apex }
+        let window = 2 * Self.nearbyRadius + 1
+        guard ordered.count > window + 2 else { return MenuSections(nearby: ordered) }
+        let center = current.flatMap { value in
+            ordered.indices.min { abs(ordered[$0].apex - value) < abs(ordered[$1].apex - value) }
+        } ?? ordered.count / 2
+        // Near either end the window shifts inward, so it always holds `window` values.
+        let start = max(0, min(center - Self.nearbyRadius, ordered.count - window))
+        let end = start + window
+        return MenuSections(
+            higher: Array(ordered[..<start].reversed()),
+            nearby: Array(ordered[start..<end]),
+            lower: Array(ordered[end...])
+        )
+    }
+}
+
 /// Everything the remote shooting screen may offer, derived from what the
 /// connected camera reports: its menu schema (`allmenu`), the enable flags for
 /// the current shooting mode (`curmenu`), current values (`getsetting`), the

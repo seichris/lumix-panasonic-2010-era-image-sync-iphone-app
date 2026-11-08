@@ -285,17 +285,10 @@ struct RemoteShootingView: View {
 
     private func exposureMenu(_ control: RemoteExposureControl, id: String) -> some View {
         Menu {
-            ForEach(control.options.reversed()) { option in
-                Button {
-                    Task { await session.apply(option, to: control) }
-                } label: {
-                    if control.isCurrent(option) {
-                        Label(option.label, systemImage: "checkmark")
-                    } else {
-                        Text(option.label)
-                    }
-                }
-            }
+            let sections = control.menuSections
+            exposureSubmenu(sections.higher, of: control)
+            ForEach(sections.nearby) { option in exposureOptionButton(option, of: control) }
+            exposureSubmenu(sections.lower, of: control)
         } label: {
             if control.isChosenByCamera {
                 // Show the value the camera is using now, not the stored A/S/M setting.
@@ -311,6 +304,29 @@ struct RemoteShootingView: View {
         }
         .disabled(!control.isEnabled || !session.canOperate)
         .accessibilityIdentifier("remote-setting-\(id)")
+    }
+
+    private func exposureOptionButton(_ option: LumixExposureOption, of control: RemoteExposureControl) -> some View {
+        Button {
+            Task { await session.apply(option, to: control) }
+        } label: {
+            if control.isCurrent(option) {
+                Label(option.label, systemImage: "checkmark")
+            } else {
+                Text(option.label)
+            }
+        }
+    }
+
+    /// The values beyond the main menu, titled with their range (for example
+    /// "1/2500 – 1/16000"), starting next to the current value.
+    @ViewBuilder
+    private func exposureSubmenu(_ options: [LumixExposureOption], of control: RemoteExposureControl) -> some View {
+        if let nearest = options.first, let farthest = options.last {
+            Menu("\(nearest.label) – \(farthest.label)") {
+                ForEach(options) { option in exposureOptionButton(option, of: control) }
+            }
+        }
     }
 
     private func settingChip(title: String, value: String, enabled: Bool) -> some View {

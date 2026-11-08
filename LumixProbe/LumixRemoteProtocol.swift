@@ -363,10 +363,16 @@ struct LumixLensInfo: Equatable, Sendable {
     /// Widest aperture at the current focal length as an APEX value.
     let apertureOpen: Double?
     let shutterFastest: Double?
+    /// Slowest timed shutter speed as an APEX value.
     let shutterSlowest: Double?
+    /// The camera also offers Bulb in this mode. The app does not offer it.
+    let offersBulb: Bool
     let maximumFocalLength: Int?
     let minimumFocalLength: Int?
     let rawFields: [String]
+
+    /// 60 s: the slowest timed speed a GM1S reports in P, A and S.
+    static let slowestTimedShutter: Double = -6
 
     init?(reply: LumixCommandReply) {
         let fields = reply.fields
@@ -374,7 +380,17 @@ struct LumixLensInfo: Equatable, Sendable {
         apertureClosed = LumixAPEX.parse(fields[1])
         apertureOpen = LumixAPEX.parse(fields[2])
         shutterFastest = LumixAPEX.parse(fields[3])
-        shutterSlowest = LumixAPEX.parse(fields[4])
+        // In M a GM1S reports `16384/256` (Tv 64) as the slowest speed instead of
+        // 60 s. No timed speed is faster than the fastest one, so that value
+        // stands for Bulb, and the timed speeds still end at 60 s.
+        let slowest = LumixAPEX.parse(fields[4])
+        if let slowest, slowest > (shutterFastest ?? 20) {
+            shutterSlowest = Self.slowestTimedShutter
+            offersBulb = true
+        } else {
+            shutterSlowest = slowest
+            offersBulb = false
+        }
         maximumFocalLength = fields.count > 7 ? Int(fields[7]) : nil
         minimumFocalLength = fields.count > 8 ? Int(fields[8]) : nil
         rawFields = Array(fields.dropFirst())
