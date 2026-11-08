@@ -113,7 +113,7 @@ struct ContentView: View {
             HomeView(
                 model: model,
                 logger: model.locationLogger,
-                openSettings: { path.append(AppRoute.settings) },
+                openCompatibleCameras: { path.append(AppRoute.compatibleCameras) },
                 openReceive: { isShowingPushTransfer = true }
             )
                 .navigationDestination(for: AppRoute.self) { route in
@@ -202,10 +202,14 @@ struct ContentView: View {
                     openPushTransfer: { isShowingPushTransfer = true }
                 )
             }
-        case .locationLog:
-            LocationLogView(model: model)
-        case .settings:
-            AppSettingsView(model: model) {
+        case .geotagging:
+            GeotaggingSettingsView(model: model)
+        case .compatibleCameras:
+            CameraCompatibilityView()
+        case .appIcon:
+            AppIconPickerView()
+        case .developerSettings:
+            CameraDiagnosticsView(model: model) {
                 Task {
                     await galleryStore.resetForReconnect()
                     await model.refreshConnectionStatus()
@@ -215,16 +219,15 @@ struct ContentView: View {
     }
 }
 
-private struct AppSettingsView: View {
+/// Developer settings: the camera connection and remembered network, the camera address,
+/// and the protocol tests.
+private struct CameraDiagnosticsView: View {
     @ObservedObject var model: ProbeViewModel
     let checkCameraConnection: () -> Void
     @State private var isConfirmingCameraForget = false
 
     var body: some View {
         List {
-            Section("Geotagging") {
-                LocationTrackingWidgetSetupButton()
-            }
             Section("Connection") {
                 Label(
                     model.isCameraConnected ? "Connected to camera" : model.connectionStatusMessage,
@@ -244,86 +247,6 @@ private struct AppSettingsView: View {
                 }
             }
 
-            Section("About") {
-                Link(destination: Self.githubRepositoryURL) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Label("View this app code on Github", systemImage: "curlybraces")
-                        Text("View source code and report issues")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .accessibilityIdentifier("github-repository-link")
-
-                NavigationLink {
-                    CameraCompatibilityView()
-                } label: {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Potentially compatible cameras")
-                        Text("GM-family and Panasonic Image App models by era")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .accessibilityIdentifier("camera-compatibility-link")
-
-                NavigationLink {
-                    AppIconPickerView()
-                } label: {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("App icon")
-                        Text("Choose Blue Camera, Lens, or Black Camera")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .accessibilityIdentifier("app-icon-link")
-
-                NavigationLink("Camera diagnostics") {
-                    CameraDiagnosticsView(
-                        model: model,
-                        checkCameraConnection: checkCameraConnection
-                    )
-                }
-                .accessibilityIdentifier("camera-diagnostics-link")
-            }
-
-            Section {
-                Text(appVersionText)
-                    .font(.footnote.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                    .accessibilityIdentifier("app-version")
-            }
-        }
-        .navigationTitle("Settings")
-        .alert("Forget remembered camera?", isPresented: $isConfirmingCameraForget) {
-            Button("Forget", role: .destructive) { model.forgetRememberedCamera() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Retro LUMIX Sync will remove the saved Wi-Fi password and its Auto-Join configuration. You will need to scan the camera QR code again.")
-        }
-    }
-
-    private var appVersionText: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
-        return "Retro LUMIX Sync · Version \(version) (\(build))"
-    }
-
-    private static let githubRepositoryURL = URL(
-        string: "https://github.com/seichris/lumix-panasonic-2010-era-image-sync-iphone-app"
-    )!
-}
-
-private struct CameraDiagnosticsView: View {
-    @ObservedObject var model: ProbeViewModel
-    let checkCameraConnection: () -> Void
-
-    var body: some View {
-        List {
             Section("Camera") {
                 TextField("Camera IP", text: $model.host)
                     .textInputAutocapitalization(.never)
@@ -334,10 +257,6 @@ private struct CameraDiagnosticsView: View {
                 Text("The GM1S normally uses 192.168.54.1 in Image App Direct mode.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if model.isCameraConnected {
-                    Label("Connected to camera", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                }
             }
 
             Section("Protocol tests") {
@@ -391,9 +310,15 @@ private struct CameraDiagnosticsView: View {
                     .textSelection(.enabled)
             }
         }
-        .navigationTitle("Diagnostics")
+        .navigationTitle("Developer settings")
         .overlay {
             if model.isRunning { ProgressView().controlSize(.large) }
+        }
+        .alert("Forget remembered camera?", isPresented: $isConfirmingCameraForget) {
+            Button("Forget", role: .destructive) { model.forgetRememberedCamera() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Retro LUMIX Sync will remove the saved Wi-Fi password and its Auto-Join configuration. You will need to scan the camera QR code again.")
         }
     }
 }
@@ -409,7 +334,7 @@ struct GeotaggingControls: View {
     @State private var isImportingTimeline = false
 
     var body: some View {
-        Section("Geotagging") {
+        Section {
             if logger.isLogging {
                 HStack {
                     Label("Location log running", systemImage: "location.fill")
