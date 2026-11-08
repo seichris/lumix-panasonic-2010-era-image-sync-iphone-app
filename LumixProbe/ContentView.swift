@@ -79,8 +79,14 @@ struct ContentView: View {
             locationSamples: { model.locationLogger.samples },
             cameraClockOffset: { model.cameraClockOffsetMinutes * 60 }
         )
+        dependencies.cameraNetworkName = { model.rememberedCameraNetwork?.ssid }
+        dependencies.joinCameraNetwork = { try await model.joinRememberedCameraNetwork() }
         if usesPushTransferFixture {
-            dependencies.localAddress = { _ in PushTransferNetwork.LocalAddress(address: "192.168.54.10", interface: "en0") }
+            // The scripted camera starts off its network, so the UI test joins it from the screen.
+            let network = DemoCameraNetwork()
+            dependencies.localAddress = { _ in network.address }
+            dependencies.cameraNetworkName = { DemoCameraNetwork.name }
+            dependencies.joinCameraNetwork = { try await network.join() }
             dependencies.makeServer = { receiver, _ in DemoPushTransferServer(receiver: receiver) }
             dependencies.makeAnnouncer = { _, _, _, emit in DemoSSDPAnnouncer(emit: emit) }
             dependencies.registrationCamera = { DemoRemoteCamera() }

@@ -67,6 +67,22 @@ final class DemoPushTransferServer: PushTransferHTTPServing, @unchecked Sendable
     }
 }
 
+/// UI-test fixture: a camera network the iPhone is not on until the receiving screen joins it.
+final class DemoCameraNetwork: @unchecked Sendable {
+    static let name = "GM1S-DEMO"
+    private let lock = NSLock()
+    private var joined = false
+
+    var address: PushTransferNetwork.LocalAddress? {
+        lock.withLock { joined } ? PushTransferNetwork.LocalAddress(address: "192.168.54.10", interface: "en0") : nil
+    }
+
+    func join() async throws {
+        try await Task.sleep(for: .milliseconds(300))
+        lock.withLock { joined = true }
+    }
+}
+
 final class DemoSSDPAnnouncer: SSDPAnnouncing, @unchecked Sendable {
     private let emit: @Sendable (SSDPAnnouncerEvent) -> Void
 

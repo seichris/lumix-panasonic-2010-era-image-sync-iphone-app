@@ -68,6 +68,27 @@ struct PushTransferView: View {
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("push-transfer-status")
 
+            if let network = session.joinableCameraNetwork {
+                Button {
+                    Task { await session.joinCameraNetwork() }
+                } label: {
+                    HStack {
+                        Label("Join \(network)", systemImage: "wifi")
+                        if session.networkJoin == .joining {
+                            Spacer()
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(session.networkJoin == .joining)
+                .accessibilityIdentifier("join-camera-wifi")
+                if case let .failed(message) = session.networkJoin {
+                    Text("\(message) You can also join it in Settings and come straight back.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
             if session.savedCount > 0 {
                 LabeledContent("Saved to Photos", value: "\(session.savedCount)")
                     .accessibilityIdentifier("push-transfer-saved-count")
@@ -133,7 +154,7 @@ struct PushTransferView: View {
         Section {
             step(1, "On the camera choose MENU → Wi‑Fi → Wi‑Fi Function → New Connection → Send Images While Recording → Smartphone.")
             step(2, "Choose Direct → Manual Connection. The camera shows its network name and password.")
-            step(3, "Tap Start receiving, join that network on this iPhone, and come straight back to Retro LUMIX Sync. If the camera shows “Connection failed”, start its connection again while this screen is open.")
+            step(3, "Tap Start receiving, then Join the camera's network here, so Retro LUMIX Sync stays open while the camera looks for it. Without a Join button, join it in Settings and come straight back. If the camera shows “Connection failed”, start its connection again while this screen is open.")
             step(4, "When the camera lists “Retro LUMIX Sync”, select it. In the image settings choose Size → Original to receive full-size JPEGs, then press Set.")
             step(5, "Take photos. Each JPEG is saved to Photos after it arrives. RAW files are not sent.")
         } header: {
@@ -189,7 +210,10 @@ struct PushTransferView: View {
     private var statusDetail: String {
         switch session.phase {
         case .idle: return "Follow the camera steps below, then start receiving."
-        case .waitingForCameraNetwork: return "Join the network the camera shows. Retro LUMIX Sync looks for the camera at \(cameraHost)."
+        case .waitingForCameraNetwork where session.joinableCameraNetwork != nil:
+            return "Join the camera's network here, so Retro LUMIX Sync stays open while the camera looks for it."
+        case .waitingForCameraNetwork:
+            return "Join the network the camera shows in Settings, then come straight back. Retro LUMIX Sync looks for the camera at \(cameraHost)."
         case .starting: return "Opening the receiver on this iPhone."
         case .advertising: return "Retro LUMIX Sync is announcing itself. Select it on the camera when it appears."
         case .linked where session.resumedAfterPause:
