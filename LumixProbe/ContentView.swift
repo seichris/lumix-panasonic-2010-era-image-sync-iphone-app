@@ -14,8 +14,7 @@ struct ContentView: View {
     @StateObject private var pushTransferHistory: CameraPushTransferHistory
     @State private var presentedSheet: ConnectionSheet?
     @State private var isShowingPushTransfer = false
-    @State private var isConfirmingTrackClear = false
-    @State private var isShowingSettings = false
+    @State private var path = NavigationPath()
     private let usesFixture: Bool
     private let usesPushTransferFixture: Bool
 
@@ -110,158 +109,80 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if model.isCameraConnected {
-                    CameraGalleryView(
-                        store: galleryStore,
-                        model: model,
-                        modeCoordinator: modeCoordinator,
-                        makeRemoteShootingSession: makeRemoteShootingSession,
-                        geotagEnvironment: geotagEnvironment,
-                        openPushTransfer: { isShowingPushTransfer = true }
-                    )
-                } else {
-                    disconnectedHome
+        NavigationStack(path: $path) {
+            HomeView(
+                model: model,
+                logger: model.locationLogger,
+                openSettings: { path.append(AppRoute.settings) },
+                openReceive: { isShowingPushTransfer = true }
+            )
+                .navigationDestination(for: AppRoute.self) { route in
+                    destination(for: route)
+                }
+        }
+        .task {
+            model.startGeotaggingIfEnabled()
+            await model.refreshConnectionStatus(waitingForRememberedCamera: true)
+        }
+        .onOpenURL { url in
+            guard model.handleLocationTrackingURL(url) else { return }
+            presentedSheet = nil
+            // Show the location log's new state on the home screen, unless an import is running.
+            if !galleryStore.isImporting { path = NavigationPath() }
+        }
+        .onChange(of: model.isCameraConnected) { _, isConnected in
+            guard !isConnected else { return }
+            Task { await galleryStore.resetForReconnect() }
+        }
+        .onChange(of: model.connectionGeneration) { _, _ in
+            // A remote shooting session (or any exclusive activity) belongs to the
+            // connection that started it; revoke it when that connection ends.
+            modeCoordinator.connectionDidChange()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            model.startGeotaggingIfEnabled()
+            Task {
+                if !model.isCameraConnected { await galleryStore.resetForReconnect() }
+                await model.refreshConnectionStatus(waitingForRememberedCamera: true)
+                if model.isCameraConnected, !galleryStore.isImporting {
+                    await galleryStore.reloadAllMedia()
                 }
             }
-            .toolbar {
-                if model.isCameraConnected {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        settingsButton
-                    }
-                }
-            }
-            .navigationDestination(isPresented: $isShowingSettings) {
-                AppSettingsView(model: model) {
+        }
+        .sheet(item: $presentedSheet) { destination in
+            switch destination {
+            case .qrScanner:
+                QRCodeScannerSheet { payload in
                     Task {
                         await galleryStore.resetForReconnect()
-                        await model.refreshConnectionStatus()
+                        await model.joinCameraWiFi(qrPayload: payload)
+                    }
+                }
+            case .manualJoin:
+                ManualWiFiJoinSheet { ssid, password, isWEP in
+                    Task {
+                        await galleryStore.resetForReconnect()
+                        await model.joinCameraWiFi(ssid: ssid, password: password, isWEP: isWEP)
                     }
                 }
             }
-            .task {
-                model.startGeotaggingIfEnabled()
-                await model.refreshConnectionStatus(waitingForRememberedCamera: true)
-            }
-            .onOpenURL { url in
-                guard model.handleLocationTrackingURL(url) else { return }
-                presentedSheet = nil
-                isShowingSettings = false
-            }
-            .onChange(of: model.isCameraConnected) { _, isConnected in
-                guard !isConnected else { return }
-                Task { await galleryStore.resetForReconnect() }
-            }
-            .onChange(of: model.connectionGeneration) { _, _ in
-                // A remote shooting session (or any exclusive activity) belongs to the
-                // connection that started it; revoke it when that connection ends.
-                modeCoordinator.connectionDidChange()
-            }
-            .onChange(of: scenePhase) { _, phase in
-                guard phase == .active else { return }
-                model.startGeotaggingIfEnabled()
-                Task {
-                    if !model.isCameraConnected { await galleryStore.resetForReconnect() }
-                    await model.refreshConnectionStatus(waitingForRememberedCamera: true)
-                    if model.isCameraConnected, !galleryStore.isImporting {
-                        await galleryStore.reloadAllMedia()
-                    }
-                }
-            }
-            .sheet(item: $presentedSheet) { destination in
-                switch destination {
-                case .qrScanner:
-                    QRCodeScannerSheet { payload in
-                        Task {
-                            await galleryStore.resetForReconnect()
-                            await model.joinCameraWiFi(qrPayload: payload)
-                        }
-                    }
-                case .manualJoin:
-                    ManualWiFiJoinSheet { ssid, password, isWEP in
-                        Task {
-                            await galleryStore.resetForReconnect()
-                            await model.joinCameraWiFi(ssid: ssid, password: password, isWEP: isWEP)
-                        }
-                    }
-                }
-            }
-            .alert("Clear location track?", isPresented: $isConfirmingTrackClear) {
-                Button("Clear", role: .destructive) { model.locationLogger.clear() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Saved location samples will be removed from this iPhone. Downloaded camera originals are not affected.")
-            }
-            // A full-screen cover survives the switch from the home screen to the gallery
-            // that happens when the iPhone joins the camera's Wi-Fi during setup.
-            .fullScreenCover(isPresented: $isShowingPushTransfer) {
-                PushTransferView(cameraHost: cameraHost, makeSession: makePushTransferSession) {
-                    isShowingPushTransfer = false
-                }
+        }
+        // A full-screen cover survives the iPhone joining the camera's Wi-Fi during setup.
+        .fullScreenCover(isPresented: $isShowingPushTransfer) {
+            PushTransferView(cameraHost: cameraHost, makeSession: makePushTransferSession) {
+                isShowingPushTransfer = false
             }
         }
     }
 
-    private var pushTransferEntry: some View {
-        Section {
-            Button {
-                isShowingPushTransfer = true
-            } label: {
-                VStack(alignment: .leading, spacing: 3) {
-                    Label("Receive photos while shooting", systemImage: "square.and.arrow.down.on.square")
-                    Text("For the camera's Send Images While Recording → Smartphone mode")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .accessibilityIdentifier("open-push-transfer")
-        }
-    }
-
-    private var settingsButton: some View {
-        Button {
-            isShowingSettings = true
-        } label: {
-            Label("Settings", systemImage: "gearshape")
-        }
-        .accessibilityIdentifier("app-settings-link")
-    }
-
-    private var disconnectedHome: some View {
-        List {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Retro LUMIX Sync")
-                            .font(.largeTitle.bold())
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("& other 2010-era Lumix cams")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("landing-title")
-
-                    Text("An independent alternative to Panasonic Image App for compatible older cameras.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("image-app-alternative-text")
-                }
-
-                Spacer(minLength: 0)
-
-                settingsButton
-                    .labelStyle(.iconOnly)
-                    .font(.title2)
-            }
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
-
-            CameraConnectionGuide(
-                statusMessage: model.connectionStatusMessage,
-                rememberedCameraSSID: model.rememberedCameraNetwork?.ssid,
+    @ViewBuilder
+    private func destination(for route: AppRoute) -> some View {
+        switch route {
+        case let .camera(job):
+            CameraJobView(
+                job: job,
+                model: model,
                 reconnect: {
                     Task {
                         await galleryStore.resetForReconnect()
@@ -270,21 +191,27 @@ struct ContentView: View {
                 },
                 scanQRCode: { presentedSheet = .qrScanner },
                 joinManually: { presentedSheet = .manualJoin }
-            )
-
-            pushTransferEntry
-
-            GeotaggingControls(
-                logger: model.locationLogger,
-                autoStartGeotagging: $model.autoStartGeotagging,
-                cameraClockOffsetMinutes: $model.cameraClockOffsetMinutes,
-                clearTrack: { isConfirmingTrackClear = true }
-            )
+            ) {
+                CameraScreen(
+                    job: job,
+                    store: galleryStore,
+                    model: model,
+                    modeCoordinator: modeCoordinator,
+                    makeRemoteShootingSession: makeRemoteShootingSession,
+                    geotagEnvironment: geotagEnvironment,
+                    openPushTransfer: { isShowingPushTransfer = true }
+                )
+            }
+        case .locationLog:
+            LocationLogView(model: model)
+        case .settings:
+            AppSettingsView(model: model) {
+                Task {
+                    await galleryStore.resetForReconnect()
+                    await model.refreshConnectionStatus()
+                }
+            }
         }
-        .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .navigationBar)
-        .contentMargins(.top, 0, for: .scrollContent)
     }
 }
 
@@ -471,7 +398,7 @@ private struct CameraDiagnosticsView: View {
     }
 }
 
-private struct GeotaggingControls: View {
+struct GeotaggingControls: View {
     @ObservedObject var logger: GeotagLocationLogger
     @Binding var autoStartGeotagging: Bool
     @Binding var cameraClockOffsetMinutes: Double

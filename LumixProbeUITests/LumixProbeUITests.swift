@@ -20,8 +20,9 @@ final class LumixProbeUITests: XCTestCase {
         app.launch()
 
         app.open(URL(string: "gm1sync://tracking/start")!)
-        // Trigger interruption handling if this is the first location request.
-        app.tap()
+        // Trigger interruption handling if this is the first location request. Tap the
+        // title: the middle of the home screen is a camera job that would navigate away.
+        app.staticTexts["landing-title"].tap()
         XCTAssertTrue(app.buttons["stop-location-log"].waitForExistence(timeout: 10))
 
         app.open(URL(string: "gm1sync://tracking/stop")!)
@@ -35,7 +36,10 @@ final class LumixProbeUITests: XCTestCase {
         app.launchArguments = ["-UITestRememberedCamera", "-UITestDisconnected"]
         app.launch()
 
-        XCTAssertTrue(app.buttons["Reconnect to GM1S-DEMO01"].waitForExistence(timeout: 12))
+        let photos = app.buttons["open-camera-photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 12))
+        photos.tap()
+        XCTAssertTrue(app.buttons["Join GM1S-DEMO01"].waitForExistence(timeout: 12))
         XCTAssertTrue(app.buttons["Scan another camera QR code"].exists)
         XCTAssertTrue(app.staticTexts["Turn on your camera and reconnect Wi-Fi."].waitForExistence(timeout: 12))
         XCTAssertFalse(app.staticTexts["This camera is remembered securely. iPhone can also Auto-Join it whenever its Wi-Fi is available."].exists)
@@ -44,21 +48,17 @@ final class LumixProbeUITests: XCTestCase {
     func testDisconnectedGuideQRCodeScannerAndManualFallback() throws {
         app.launch()
 
-        let connectionHelp = app.buttons["camera-connection-help"]
-        XCTAssertTrue(connectionHelp.waitForExistence(timeout: 12))
-        XCTAssertFalse(app.staticTexts["Enable the camera Wi-Fi"].exists)
-        connectionHelp.tap()
-        XCTAssertTrue(app.staticTexts["Enable the camera Wi-Fi"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Join from this iPhone"].exists)
-        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Leave its QR code on screen")).firstMatch.exists)
-        XCTAssertTrue(app.staticTexts["Connect to the camera Wi-Fi by scanning the QR code, or manually."].exists)
+        XCTAssertTrue(app.buttons["start-location-log"].waitForExistence(timeout: 12), "The location log is on the home screen")
+        XCTAssertFalse(app.switches["auto-start-geotagging"].exists, "Geotagging settings live on the Location log screen")
+        XCTAssertTrue(app.buttons["open-live-view"].exists)
+        XCTAssertTrue(app.buttons["open-push-transfer"].exists)
+        let photos = app.buttons["open-camera-photos"]
+        XCTAssertTrue(photos.exists)
+        photos.tap()
+        XCTAssertTrue(app.navigationBars["Get photos from the card"].waitForExistence(timeout: 5))
+        XCTAssertTrue(element(labelContaining: "Remote Shooting & View").exists, "The steps name the camera's Wi-Fi mode for this job")
         XCTAssertTrue(app.buttons["Scan camera QR code"].exists)
         XCTAssertTrue(app.buttons["Enter wi-fi name and password"].exists)
-        connectionHelp.tap()
-        XCTAssertTrue(app.buttons["start-location-log"].exists)
-        scrollToElement(app.switches["auto-start-geotagging"])
-        XCTAssertTrue(app.staticTexts["Start geotagging on app start"].exists)
-        XCTAssertFalse(app.staticTexts["Need help?"].exists)
         XCTAssertFalse(app.textFields["camera-ip-address"].exists)
 
         addUIInterruptionMonitor(withDescription: "Camera permission") { alert in
@@ -82,12 +82,22 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.secureTextFields["manual-wifi-password"].exists)
         XCTAssertFalse(app.buttons["join-manual-camera-wifi"].isEnabled)
         app.buttons["Cancel"].tap()
+
+        app.navigationBars["Get photos from the card"].buttons.element(boundBy: 0).tap()
+        let locationLog = app.buttons["open-location-log"]
+        XCTAssertTrue(locationLog.waitForExistence(timeout: 5))
+        locationLog.tap()
+        XCTAssertTrue(app.navigationBars["Location log"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.switches["auto-start-geotagging"].exists)
+        XCTAssertTrue(app.buttons["import-google-timeline"].exists)
     }
 
     func testConnectedGalleryPaginationSelectionAndDetail() throws {
         app.launchArguments = ["-UITestConnectedGallery"]
         app.launch()
 
+        XCTAssertTrue(element(labelContaining: "Connected to").waitForExistence(timeout: 8), "Home shows the connection")
+        app.buttons["open-camera-photos"].tap()
         XCTAssertTrue(app.scrollViews["camera-gallery"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["Scan camera QR code"].exists)
         let mediaCount = app.staticTexts["camera-gallery-count"]
@@ -232,7 +242,7 @@ final class LumixProbeUITests: XCTestCase {
 #else
         app.launchArguments = ["-UITestNoRememberedCamera"]
         app.launch()
-        XCTAssertTrue(app.scrollViews["camera-gallery"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.descendants(matching: .any)["home-camera-connected"].waitForExistence(timeout: 20))
         openDiagnostics()
 
         tap("Probe getstate")
@@ -253,13 +263,12 @@ final class LumixProbeUITests: XCTestCase {
     func testRemoteShootingLiveViewShutterSettingsAndReturnToGallery() throws {
         app.launchArguments = ["-UITestConnectedGallery"]
         app.launch()
-        XCTAssertTrue(app.scrollViews["camera-gallery"].waitForExistence(timeout: 8))
 
-        let open = app.buttons["open-remote-shooting"]
-        XCTAssertTrue(open.waitForExistence(timeout: 5))
-        open.tap()
-        XCTAssertTrue(app.navigationBars["Remote Shooting"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["remote-shooting-viewfinder"].waitForExistence(timeout: 5))
+        let shoot = app.buttons["open-live-view"]
+        XCTAssertTrue(shoot.waitForExistence(timeout: 8))
+        shoot.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["remote-shooting-viewfinder"].waitForExistence(timeout: 5),
+                      "Shoot from your iPhone opens the live view directly")
 
         let status = app.descendants(matching: .any)["remote-shooting-status"]
         let live = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: status)
@@ -279,7 +288,7 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(element(labelContaining: "ISO 800").waitForExistence(timeout: 10),
                       "The readout shows the ISO value read back from the camera")
 
-        app.navigationBars["Remote Shooting"].buttons.element(boundBy: 0).tap()
+        app.segmentedControls["camera-view-picker"].buttons["Photos"].tap()
         XCTAssertTrue(app.scrollViews["camera-gallery"].waitForExistence(timeout: 8))
         let mediaCount = app.staticTexts["camera-gallery-count"]
         XCTAssertTrue(mediaCount.waitForExistence(timeout: 8))
@@ -288,6 +297,9 @@ final class LumixProbeUITests: XCTestCase {
     func testWriteLocationsAndCameraClockFromTheGalleryMenu() throws {
         app.launchArguments = ["-UITestConnectedGallery"]
         app.launch()
+        let photos = app.buttons["open-camera-photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 8))
+        photos.tap()
         XCTAssertTrue(app.scrollViews["camera-gallery"].waitForExistence(timeout: 8))
 
         app.buttons["gallery-actions"].tap()
@@ -317,6 +329,19 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Camera clock"].waitForExistence(timeout: 5))
         XCTAssertTrue(element(labelContaining: "Camera reports").waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["camera-clock-set"].exists)
+    }
+
+    func testHomeOpensACameraToolDirectly() throws {
+        app.launchArguments = ["-UITestConnectedGallery"]
+        app.launch()
+        let clock = app.buttons["home-open-camera-clock"]
+        XCTAssertTrue(clock.waitForExistence(timeout: 8))
+        scrollToElement(clock)
+        clock.tap()
+        XCTAssertTrue(app.navigationBars["Camera clock"].waitForExistence(timeout: 8),
+                      "The clock opens on top of the connected camera screen")
+        app.navigationBars["Camera clock"].buttons["Close"].tap()
+        XCTAssertTrue(app.scrollViews["camera-gallery"].waitForExistence(timeout: 8))
     }
 
     func testSendWhileRecordingReceivesAndSavesAPhoto() throws {

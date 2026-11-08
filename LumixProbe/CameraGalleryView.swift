@@ -7,10 +7,10 @@ struct CameraGalleryView: View {
     @ObservedObject var store: CameraGalleryStore
     @ObservedObject var model: ProbeViewModel
     @ObservedObject var modeCoordinator: CameraModeCoordinator
-    let makeRemoteShootingSession: @MainActor () -> RemoteShootingSession
     let geotagEnvironment: CameraGeotagEnvironment
     var openPushTransfer: () -> Void = {}
-    @State private var isShowingRemoteShooting = false
+    /// A camera tool to open once the gallery appears, for example from the home screen.
+    var pendingTool: Binding<CameraTool?> = .constant(nil)
     @State private var isShowingLocationWriter = false
     @State private var isShowingClockSync = false
     @State private var isSelecting = false
@@ -80,13 +80,11 @@ struct CameraGalleryView: View {
                 await store.loadAllPages()
             }
         }
+        .onAppear(perform: openPendingTool)
         .onDisappear { store.cancelLoading() }
         .onChange(of: modeCoordinator.completedExclusiveActivities) { _, _ in
             // Remote shooting changed the camera's mode and probably its card.
             store.markNeedsReloadAfterCameraModeChange()
-        }
-        .navigationDestination(isPresented: $isShowingRemoteShooting) {
-            RemoteShootingView(makeSession: makeRemoteShootingSession)
         }
         .onChange(of: store.selectedPhotoIDs) { _, _ in
             let modes = selectedPhotoImportModes
@@ -150,9 +148,10 @@ struct CameraGalleryView: View {
     private var gallerySummary: some View {
         VStack(spacing: 8) {
             HStack {
-                Label("Image App Direct", systemImage: "wifi")
+                Label(model.rememberedCameraNetwork?.ssid ?? "Camera connected", systemImage: "wifi")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.green)
+                    .accessibilityIdentifier("camera-gallery-connection")
                 Spacer()
                 Text(mediaCountText)
                     .font(.subheadline.monospacedDigit())
@@ -292,18 +291,6 @@ struct CameraGalleryView: View {
             .accessibilityIdentifier("toggle-photo-selection")
         }
 
-        ToolbarItem(placement: .topBarLeading) {
-            Button {
-                isSelecting = false
-                store.clearSelection()
-                isShowingRemoteShooting = true
-            } label: {
-                Label("Remote shooting", systemImage: "camera.viewfinder")
-            }
-            .disabled(store.isImporting || modeCoordinator.exclusiveActivity != nil)
-            .accessibilityIdentifier("open-remote-shooting")
-        }
-
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 Button("Load all media") { Task { await store.loadAllPages() } }
@@ -337,6 +324,15 @@ struct CameraGalleryView: View {
                 Label("Gallery actions", systemImage: "ellipsis.circle")
             }
             .accessibilityIdentifier("gallery-actions")
+        }
+    }
+
+    private func openPendingTool() {
+        guard let tool = pendingTool.wrappedValue else { return }
+        pendingTool.wrappedValue = nil
+        switch tool {
+        case .writeLocations: isShowingLocationWriter = true
+        case .setClock: isShowingClockSync = true
         }
     }
 
@@ -1276,7 +1272,6 @@ private struct CameraMediaImage: View {
             ),
             model: ProbeViewModel(),
             modeCoordinator: CameraModeCoordinator(),
-            makeRemoteShootingSession: previewRemoteShootingSession,
             geotagEnvironment: previewGeotagEnvironment
         )
     }
@@ -1288,7 +1283,6 @@ private struct CameraMediaImage: View {
             store: CameraGalleryStore(previewPhase: .loading),
             model: ProbeViewModel(),
             modeCoordinator: CameraModeCoordinator(),
-            makeRemoteShootingSession: previewRemoteShootingSession,
             geotagEnvironment: previewGeotagEnvironment
         )
     }
@@ -1300,7 +1294,6 @@ private struct CameraMediaImage: View {
             store: CameraGalleryStore(previewPhase: .empty),
             model: ProbeViewModel(),
             modeCoordinator: CameraModeCoordinator(),
-            makeRemoteShootingSession: previewRemoteShootingSession,
             geotagEnvironment: previewGeotagEnvironment
         )
     }
@@ -1312,7 +1305,6 @@ private struct CameraMediaImage: View {
             store: CameraGalleryStore(previewPhase: .failed("The camera went to sleep.")),
             model: ProbeViewModel(),
             modeCoordinator: CameraModeCoordinator(),
-            makeRemoteShootingSession: previewRemoteShootingSession,
             geotagEnvironment: previewGeotagEnvironment
         )
     }
@@ -1324,9 +1316,3 @@ private let previewGeotagEnvironment = CameraGeotagEnvironment(
     samples: { DemoGeotagCamera.demoSamples() }
 )
 
-@MainActor
-private func previewRemoteShootingSession() -> RemoteShootingSession {
-    RemoteShootingSession(camera: DemoRemoteCamera(), coordinator: CameraModeCoordinator()) {
-        DemoLiveViewSource()
-    }
-}
