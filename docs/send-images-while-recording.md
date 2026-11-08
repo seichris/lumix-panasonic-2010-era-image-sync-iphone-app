@@ -74,7 +74,7 @@ So the receiving screen joins the network itself. While receiving waits for the 
 
 Without a remembered network: start receiving, join the network in Settings, and return to the app straight away. If the camera shows **Connection failed**, start its connection again while the receiving screen is open.
 
-The Join button has not yet been tried with the camera.
+Tried once with the GM1S on 2026-11-08: the join took about 6 s (including iOS's prompt), the receiver started 2 s later when the iPhone had its address, and the camera searched 6 s after that, read the description, and listed Retro LUMIX Sync. An Original-size photo (4592 × 3448, 5.5 MB) then arrived and was saved to Photos. The app stayed in the foreground throughout.
 
 ## Foreground-only behavior
 
@@ -96,6 +96,7 @@ Verified on 2026-11-08 with a DMC-GM1S (firmware 2.70) and an iPhone 16 Pro Max 
 - The camera found and listed Retro LUMIX Sync without the multicast entitlement.
 - Four photos arrived and were saved to Photos: three at Size M and one at Size Original, each checked against its announced size and end-of-image marker first.
 - Leaving the app without taking a photo kept the connection; a photo taken while the app was away ended it with **Connection error**.
+- Joining the camera's network with the receiving screen's **Join** button worked on the first try, and an Original-size photo followed.
 
 Still to check:
 
