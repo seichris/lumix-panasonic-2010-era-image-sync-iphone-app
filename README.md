@@ -196,7 +196,7 @@ GET /cam.cgi?mode=getsetting&type=iso   /   setsetting&type=iso&value=800
 
 Each live-view datagram carries a 32-byte header, an optional extension with AF frames and the live exposure, and one JPEG. Malformed or incomplete frames are dropped, and only datagrams from the camera's address are accepted.
 
-Location writing and the clock use the following commands, exercised on a GM1S as recorded in [COMPATIBILITY.md](COMPATIBILITY.md#location-writing-and-clock-validation):
+Location writing and the clock use the following commands. The normal clock-setting and JPEG GPS-writing flows have been checked on a GM1S; abort, interruption, daylight saving, and RAW behavior still need validation. See [COMPATIBILITY.md](COMPATIBILITY.md#location-writing-and-clock-validation).
 
 ```text
 GET  /cam.cgi?mode=setsetting&type=clock&value=YYYYMMDDhhmmss%2BHHMM   (set the clock; UTC fields + standard offset)
