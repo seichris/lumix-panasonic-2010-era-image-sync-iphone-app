@@ -1,0 +1,4 @@
+PASS 1320x2868 png opaque f890987b5aa0d5dec5c84916d430632059bb7d5a52f47362876e2b79a290b537 en-US/iphone-6.9/01-sync-old-lumix-en-us-iphone-6.9-1320x2868.png
+PASS 1320x2868 png opaque 2e5a49bcbb360e9d141b371d8f98fd9a7bff03ce18b5d28fce6e7c5d9ae34f55 en-US/iphone-6.9/02-image-details-en-us-iphone-6.9-1320x2868.png
+PASS 1320x2868 png opaque 89530e09245b98d4992a8d679108e4da4edcdedfd60da542044a71bed5a2fad1 en-US/iphone-6.9/03-geo-locations-en-us-iphone-6.9-1320x2868.png
+PASS 1320x2868 png opaque c2aff4b04a609e3dd8042e0245389afba7fbf6ad97e6a90124ee1f0a6a3b0360 en-US/iphone-6.9/04-live-view-en-us-iphone-6.9-1320x2868.png
