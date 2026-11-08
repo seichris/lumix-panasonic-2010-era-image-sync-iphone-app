@@ -227,7 +227,7 @@ struct HomeView: View {
             .accessibilityIdentifier("camera-compatibility-link")
 
             NavigationLink(value: AppRoute.appIcon) {
-                aboutRow("App icon", detail: "Choose Blue Camera, Lens, or Black Camera")
+                aboutRow("App icon", detail: "Blue Camera, Lens, Black Camera, and nine camera models")
             }
             .accessibilityIdentifier("app-icon-link")
 
@@ -249,8 +249,6 @@ struct HomeView: View {
     /// How to support development: the custom app icons, with their App Store price.
     private var supportSentence: String {
         if iconStore.ownsPurchase { return "Thank you for supporting development." }
-        // Someone who already used a custom icon keeps the icons free and has nothing to buy.
-        if iconStore.isUnlocked { return "" }
         if let price = iconStore.price {
             return "You can support development by unlocking the custom app icons for \(price)."
         }

@@ -4,23 +4,25 @@ import XCTest
 
 @MainActor
 final class AppIconStoreTests: XCTestCase {
+    private let cameraModelIcons: [AppIconChoice] = [.gm1sOrange, .gm1Silver, .gm1AllBlack, .gx85, .gx9, .g85, .fz80, .fz300, .fz1000]
+
     func testBlueCameraIsFreeAndCustomIconsWaitForThePurchase() async {
         let store = AppIconStore(service: FakeIconPurchaseService(), defaults: freshDefaults(), currentIcon: .primary)
         await store.refresh()
         XCTAssertTrue(store.isAvailable(.primary))
         XCTAssertFalse(store.isAvailable(.lens))
         XCTAssertFalse(store.isAvailable(.blackCamera))
+        XCTAssertTrue(cameraModelIcons.allSatisfy { !store.isAvailable($0) })
         XCTAssertEqual(store.price, "$0.99")
         XCTAssertFalse(store.isGrandfathered)
     }
 
-    func testAPurchaseUnlocksTheCustomIcons() async {
+    func testAPurchaseUnlocksEveryIcon() async {
         let store = AppIconStore(service: FakeIconPurchaseService(outcome: .success(.purchased)),
                                  defaults: freshDefaults(), currentIcon: .primary)
         await store.purchase()
-        XCTAssertTrue(store.isUnlocked)
         XCTAssertTrue(store.ownsPurchase)
-        XCTAssertTrue(store.isAvailable(.blackCamera))
+        XCTAssertTrue(AppIconChoice.allCases.allSatisfy(store.isAvailable))
         XCTAssertEqual(store.purchaseState, .idle)
     }
 
@@ -28,7 +30,8 @@ final class AppIconStoreTests: XCTestCase {
         let store = AppIconStore(service: FakeIconPurchaseService(outcome: .success(.cancelled)),
                                  defaults: freshDefaults(), currentIcon: .primary)
         await store.purchase()
-        XCTAssertFalse(store.isUnlocked)
+        XCTAssertFalse(store.ownsPurchase)
+        XCTAssertFalse(store.isAvailable(.gx85))
         XCTAssertEqual(store.purchaseState, .idle)
     }
 
@@ -37,10 +40,10 @@ final class AppIconStoreTests: XCTestCase {
         let store = AppIconStore(service: service, defaults: freshDefaults(), currentIcon: .primary)
         await store.purchase()
         XCTAssertEqual(store.purchaseState, .pending)
-        XCTAssertFalse(store.isUnlocked)
+        XCTAssertFalse(store.ownsPurchase)
 
         await service.grant()
-        XCTAssertTrue(store.isUnlocked, "An approved purchase arrives as a transaction update")
+        XCTAssertTrue(store.ownsPurchase, "An approved purchase arrives as a transaction update")
         XCTAssertEqual(store.purchaseState, .idle)
     }
 
@@ -49,7 +52,7 @@ final class AppIconStoreTests: XCTestCase {
                                  defaults: freshDefaults(), currentIcon: .primary)
         await store.purchase()
         XCTAssertEqual(store.purchaseState, .failed(IconPurchaseError.unavailable.localizedDescription))
-        XCTAssertFalse(store.isUnlocked)
+        XCTAssertFalse(store.ownsPurchase)
         store.dismissError()
         XCTAssertEqual(store.purchaseState, .idle)
     }
@@ -58,9 +61,10 @@ final class AppIconStoreTests: XCTestCase {
         let service = FakeIconPurchaseService(ownsAfterRestore: true)
         let store = AppIconStore(service: service, defaults: freshDefaults(), currentIcon: .primary)
         await store.refresh()
-        XCTAssertFalse(store.isUnlocked)
+        XCTAssertFalse(store.ownsPurchase)
         await store.restore()
-        XCTAssertTrue(store.isUnlocked)
+        XCTAssertTrue(store.ownsPurchase)
+        XCTAssertTrue(store.isAvailable(.fz1000))
         XCTAssertEqual(store.purchaseState, .idle)
     }
 
@@ -74,21 +78,32 @@ final class AppIconStoreTests: XCTestCase {
         let service = FakeIconPurchaseService()
         let store = AppIconStore(service: service, defaults: freshDefaults(), currentIcon: .primary)
         await service.grant()
-        XCTAssertTrue(store.isUnlocked)
+        XCTAssertTrue(store.isAvailable(.gx9))
         await service.revoke()
-        XCTAssertFalse(store.isUnlocked)
+        XCTAssertFalse(store.ownsPurchase)
+        XCTAssertFalse(store.isAvailable(.gx9))
     }
 
-    func testSomeoneAlreadyUsingACustomIconKeepsThemFree() async {
+    func testSomeoneAlreadyUsingLensOrBlackCameraKeepsBothFree() async {
         let defaults = freshDefaults()
         let store = AppIconStore(service: FakeIconPurchaseService(), defaults: defaults, currentIcon: .blackCamera)
         await store.refresh()
         XCTAssertTrue(store.isGrandfathered)
-        XCTAssertTrue(store.isUnlocked)
+        XCTAssertTrue(store.isAvailable(.lens))
+        XCTAssertTrue(store.isAvailable(.blackCamera))
+        XCTAssertTrue(cameraModelIcons.allSatisfy { !store.isAvailable($0) }, "The camera model icons were never free")
         XCTAssertFalse(store.ownsPurchase)
 
         let later = AppIconStore(service: FakeIconPurchaseService(), defaults: defaults, currentIcon: .primary)
-        XCTAssertTrue(later.isUnlocked, "Decided once: switching back to Blue Camera keeps the icons free")
+        XCTAssertTrue(later.isAvailable(.lens), "Decided once: switching back to Blue Camera keeps Lens and Black Camera free")
+    }
+
+    func testSomeoneKeepingFreeIconsCanStillBuyTheCameraModels() async {
+        let store = AppIconStore(service: FakeIconPurchaseService(outcome: .success(.purchased)),
+                                 defaults: freshDefaults(), currentIcon: .lens)
+        XCTAssertFalse(store.isAvailable(.gm1sOrange))
+        await store.purchase()
+        XCTAssertTrue(store.isAvailable(.gm1sOrange))
     }
 
     func testANewInstallIsNotGrandfatheredLater() {
@@ -96,7 +111,7 @@ final class AppIconStoreTests: XCTestCase {
         _ = AppIconStore(service: FakeIconPurchaseService(), defaults: defaults, currentIcon: .primary)
         let later = AppIconStore(service: FakeIconPurchaseService(), defaults: defaults, currentIcon: .blackCamera)
         XCTAssertFalse(later.isGrandfathered)
-        XCTAssertFalse(later.isUnlocked)
+        XCTAssertFalse(later.isAvailable(.blackCamera))
     }
 
     private func freshDefaults() -> UserDefaults {

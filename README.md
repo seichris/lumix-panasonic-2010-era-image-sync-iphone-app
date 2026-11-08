@@ -48,7 +48,7 @@ Once connected, the camera screen switches between **Photos** and **Live view** 
 
 ## Custom app icons
 
-Blue Camera is the free app icon. **Lens** and **Black Camera** are an optional one-time In-App Purchase that supports development; someone already using one of them when this version first runs keeps them free. **App Icon** offers **Restore purchase**. See [docs/custom-app-icons.md](docs/custom-app-icons.md) for the App Store Connect setup and testing.
+Blue Camera is the free app icon. **Lens**, **Black Camera**, and nine camera model icons (GM1S, GM1, GX85, GX9, G85, FZ80, FZ300, FZ1000) are an optional one-time In-App Purchase that supports development. Someone already using Lens or Black Camera when this version first runs keeps those two free. **App Icon** offers **Restore purchase**. See [docs/custom-app-icons.md](docs/custom-app-icons.md) for the App Store Connect setup and testing.
 
 ## Connect a GM1S
 
