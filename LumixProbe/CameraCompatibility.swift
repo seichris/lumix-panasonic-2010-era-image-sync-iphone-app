@@ -1,17 +1,17 @@
 import SwiftUI
 
 struct CameraCompatibilityView: View {
+    /// On iPhone, the camera icons offer the custom icons purchase; without a store
+    /// (the Mac app) the rows show text only.
+    var iconStore: AppIconStore?
+    @State private var offeredIcon: AppIconChoice?
+
     var body: some View {
         List {
-            Section {
-                Text("Retro LUMIX Sync is being validated on the GM family first. The other cameras are candidates because Panasonic lists them in the same Image App ecosystem; inclusion does not mean compatibility has been confirmed.")
-                    .font(.subheadline)
-            }
-
             ForEach(CameraCompatibilityCatalog.sections) { section in
                 Section {
                     ForEach(section.cameras) { camera in
-                        CameraCandidateRow(camera: camera)
+                        CameraCandidateRow(camera: camera, showsIcons: iconStore != nil) { offeredIcon = $0 }
                     }
                 } header: {
                     Text(section.title)
@@ -27,30 +27,205 @@ struct CameraCompatibilityView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .navigationTitle("Camera candidates")
+        .navigationTitle("Cameras that work with this app")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $offeredIcon) { icon in
+            if let iconStore {
+                AppIconOfferSheet(icon: icon, store: iconStore)
+            }
+        }
 #endif
     }
 }
 
 private struct CameraCandidateRow: View {
     let camera: CameraCandidate
+    let showsIcons: Bool
+    let offer: (AppIconChoice) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(camera.models)
-                .font(.headline)
-            HStack(spacing: 8) {
-                Text(camera.modelEra)
-                Text(camera.confidence.rawValue)
+        HStack(spacing: 12) {
+            if showsIcons {
+                CameraIconTile(icons: AppIconChoice.icons(forCamera: camera.models), offer: offer)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(camera.models)
+                    .font(.headline)
+                HStack(spacing: 8) {
+                    Text(camera.modelEra)
+                    Text(camera.confidence.rawValue)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
         }
-        .accessibilityElement(children: .combine)
     }
 }
+
+/// The app icons that show this camera: one fills the tile, two to four share it in a
+/// 2 × 2 grid, and a camera without an icon gets a faint placeholder.
+private struct CameraIconTile: View {
+    let icons: [AppIconChoice]
+    let offer: (AppIconChoice) -> Void
+    private let size: CGFloat = 52
+
+    var body: some View {
+        Group {
+            switch icons.count {
+            case 0:
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.secondary.opacity(0.08))
+                    .overlay {
+                        Image(systemName: "camera")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .accessibilityHidden(true)
+            case 1:
+                iconButton(icons[0], side: size, cornerRadius: 12)
+            default:
+                let side = (size - 4) / 2
+                LazyVGrid(columns: [GridItem(.fixed(side), spacing: 4), GridItem(.fixed(side), spacing: 4)], spacing: 4) {
+                    ForEach(icons.prefix(4)) { icon in
+                        iconButton(icon, side: side, cornerRadius: 5.5)
+                    }
+                }
+            }
+        }
+        // One row of icons (two at most) sits in the middle of the tile; more fill it from the top.
+        .frame(width: size, height: size, alignment: icons.count <= 2 ? .center : .topLeading)
+    }
+
+    private func iconButton(_ icon: AppIconChoice, side: CGFloat, cornerRadius: CGFloat) -> some View {
+        Button { offer(icon) } label: {
+            Image(icon.previewAssetName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: side, height: side)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("\(icon.title) app icon")
+        .accessibilityIdentifier("camera-icon-\(icon.rawValue)")
+    }
+}
+
+#if os(iOS)
+/// Offers one camera icon: buy the custom icons and switch to it, or switch if unlocked.
+private struct AppIconOfferSheet: View {
+    let icon: AppIconChoice
+    @ObservedObject var store: AppIconStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var errorMessage: String?
+
+    var body: some View {
+        // Scrolls on small iPhones, where the medium sheet is shorter than the offer.
+        ScrollView {
+            offer
+                .padding(.horizontal, 24)
+                .padding(.bottom, 16)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .presentationDetents([.medium, .large])
+        .task { await store.refresh() }
+        // A failure shown here shouldn't come back as an alert on the App Icon screen.
+        .onDisappear { store.dismissError() }
+    }
+
+    private var offer: some View {
+        VStack(spacing: 14) {
+            Image(icon.previewAssetName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 112, height: 112)
+                .clipShape(RoundedRectangle(cornerRadius: 25, style: .continuous))
+                .padding(.top, 24)
+            Text("\(icon.title) app icon")
+                .font(.title2.bold())
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+
+            if store.isAvailable(icon) {
+                Button {
+                    Task { await apply() }
+                } label: {
+                    Text("Use as app icon").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .accessibilityIdentifier("offer-use-icon")
+            } else {
+                Button {
+                    Task {
+                        await store.purchase()
+                        if store.isAvailable(icon) { await apply() }
+                    }
+                } label: {
+                    HStack {
+                        Text(store.price.map { "Unlock for \($0)" } ?? "Unlock custom icons")
+                        if store.purchaseState == .purchasing { ProgressView() }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(store.price == nil || store.purchaseState == .purchasing || store.purchaseState == .restoring)
+                .accessibilityIdentifier("offer-unlock-icons")
+            }
+
+            Button("Not now") { dismiss() }
+                .accessibilityIdentifier("offer-not-now")
+
+            if let status {
+                Text(status.text)
+                    .font(.caption)
+                    .foregroundStyle(status.isProblem ? Color.red : Color.secondary)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("offer-status")
+            }
+        }
+    }
+
+    /// Why the icon isn't set yet: a failure, Ask to Buy, or no product in the App Store.
+    /// The App Icon screen says the same in its footer and alert.
+    private var status: (text: String, isProblem: Bool)? {
+        if let errorMessage { return (errorMessage, true) }
+        switch store.purchaseState {
+        case let .failed(message):
+            return (message, true)
+        case .pending:
+            return ("Waiting for approval. The icons unlock when the purchase goes through.", false)
+        default:
+            break
+        }
+        if store.price == nil, !store.isAvailable(icon) {
+            return ("The App Store isn't offering the custom icons right now.", false)
+        }
+        return nil
+    }
+
+    private var message: String {
+        if store.isAvailable(icon) {
+            return "Use it as the Retro LUMIX Sync icon on your Home Screen."
+        }
+        let price = store.price ?? "a small one-time price"
+        return "Set it as your app icon with the custom app icons: a one-time purchase of \(price) that unlocks every icon and supports development."
+    }
+
+    private func apply() async {
+        do {
+            try await icon.makeAppIcon()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+#endif
 
 struct CameraCandidate: Identifiable, Hashable {
     enum Confidence: String, Hashable {

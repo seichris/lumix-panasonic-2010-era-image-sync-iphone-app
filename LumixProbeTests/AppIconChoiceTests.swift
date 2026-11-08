@@ -27,6 +27,26 @@ final class AppIconChoiceTests: XCTestCase {
         XCTAssertEqual(AppIconChoice.allCases.filter(\.wasFreeBefore), [.lens, .blackCamera])
     }
 
+    /// The camera list shows each camera model icon in its camera's row.
+    func testEveryCameraModelIconHasARowInTheCameraList() {
+        let listed = Set(CameraCompatibilityCatalog.allCameras.map(\.models))
+        let cameraIcons = AppIconChoice.allCases.filter { $0.cameraModels != nil }
+        XCTAssertEqual(cameraIcons.count, 9)
+        for icon in cameraIcons {
+            XCTAssertTrue(listed.contains(icon.cameraModels ?? ""), "\(icon.title) has no row in the camera list")
+        }
+        XCTAssertNil(AppIconChoice.primary.cameraModels)
+        XCTAssertNil(AppIconChoice.lens.cameraModels)
+        XCTAssertNil(AppIconChoice.blackCamera.cameraModels)
+    }
+
+    func testCamerasGetTheirIconsInPickerOrder() {
+        XCTAssertEqual(AppIconChoice.icons(forCamera: "Panasonic DMC-GM1"), [.gm1Silver, .gm1AllBlack])
+        XCTAssertEqual(AppIconChoice.icons(forCamera: "Panasonic DMC-GM1S"), [.gm1sOrange])
+        XCTAssertEqual(AppIconChoice.icons(forCamera: "Panasonic DMC-G80 / G81 / G85"), [.g85])
+        XCTAssertEqual(AppIconChoice.icons(forCamera: "Panasonic DMC-LX100"), [])
+    }
+
 #if os(iOS)
     /// Every choice has its preview image and, except Blue Camera, an alternate icon the
     /// build registered (from `ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES`).

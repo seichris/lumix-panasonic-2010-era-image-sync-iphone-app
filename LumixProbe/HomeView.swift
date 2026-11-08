@@ -136,10 +136,10 @@ struct HomeView: View {
         .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 0, trailing: 20))
     }
 
-    /// "…like the GM1, GX7, and LX100.", with the camera names as one underlined link to the camera list.
+    /// "…like the GM1, GX7, and LX100 and more.", with the camera names as one underlined link to the camera list.
     private var alternativeText: AttributedString {
         var text = AttributedString("An independent alternative to Panasonic Image App for 2010-era Lumix cameras, like the ")
-        var link = AttributedString("GM1, GX7, and LX100")
+        var link = AttributedString("GM1, GX7, and LX100 and more")
         link.link = Self.compatibleCamerasURL
         link.underlineStyle = .single
         text += link
@@ -202,16 +202,15 @@ struct HomeView: View {
 
     private var aboutSection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Made by a solo developer")
-                    .font(.headline)
-                Text("Retro LUMIX Sync is built by one person who loves shooting on retro LUMIX cameras. It's free, with no ads, accounts, or tracking. \(supportSentence)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            Text("Hi, I'm Chris and I built this app for myself and others who love to shoot on retro LUMIX cameras. It's free, with no ads or tracking. \(supportSentence)")
+                .font(.subheadline)
+                .padding(.vertical, 4)
+                .accessibilityIdentifier("about-developer-note")
+
+            NavigationLink(value: AppRoute.appIcon) {
+                aboutRow("App icon", detail: "Blue Camera, Lens, Black Camera, and nine camera models")
             }
-            .padding(.vertical, 4)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("about-developer-note")
+            .accessibilityIdentifier("app-icon-link")
 
             externalLink(Self.githubRepositoryURL, title: "View this app's code on GitHub",
                          detail: "Read the source code")
@@ -220,16 +219,6 @@ struct HomeView: View {
             externalLink(Self.newIssueURL, title: "Feature requests welcome",
                          detail: "Add feature requests and bug reports on GitHub")
                 .accessibilityIdentifier("feature-requests-link")
-
-            NavigationLink(value: AppRoute.compatibleCameras) {
-                aboutRow("Potentially compatible cameras", detail: "GM-family and Panasonic Image App models by era")
-            }
-            .accessibilityIdentifier("camera-compatibility-link")
-
-            NavigationLink(value: AppRoute.appIcon) {
-                aboutRow("App icon", detail: "Blue Camera, Lens, Black Camera, and nine camera models")
-            }
-            .accessibilityIdentifier("app-icon-link")
 
             NavigationLink(value: AppRoute.developerSettings) {
                 aboutRow("Developer settings", detail: "Camera address, connection, and protocol tests")
@@ -246,13 +235,11 @@ struct HomeView: View {
         }
     }
 
-    /// How to support development: the custom app icons, with their App Store price.
+    /// How to support development: the custom app icons, with their App Store price
+    /// ($0.99 in the US), or "$1" until the App Store has answered.
     private var supportSentence: String {
-        if iconStore.ownsPurchase { return "Thank you for supporting development." }
-        if let price = iconStore.price {
-            return "You can support development by unlocking the custom app icons for \(price)."
-        }
-        return "You can support development by unlocking the custom app icons."
+        if iconStore.ownsPurchase { return "Thank you for supporting development :)" }
+        return "If you like it, you can support development by paying \(iconStore.price ?? "$1") to unlock custom app icons :)"
     }
 
     /// A link that leaves the app, styled like the rows around it, with an outward arrow.
@@ -376,7 +363,7 @@ struct LocationLogCard: View {
         } header: {
             Text("Geotagging")
         } footer: {
-            Text("Geotagging adds where each photo was taken. While the log runs, this iPhone records its location, and imported photos get the place that matches their capture time.")
+            Text("Geotagging adds this iPhone's GPS location to each photo, based on their capture time.")
         }
     }
 
