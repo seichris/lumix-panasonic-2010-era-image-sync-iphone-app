@@ -36,13 +36,13 @@ AVCHD items can appear in the gallery when advertised by the camera. The tested 
 
 The iPhone app opens on a home screen organized by what you want to do:
 
-- **Geotagging:** the location log's status with **Start** and **Stop**. Its screen holds the widget setup, automatic start, Google Timeline import, clearing the track, and the camera clock adjustment.
+- **Geotagging:** a short explanation and the location log's status with **Start** and **Stop**. **Geotagging settings** holds the widget setup, automatic start, Google Timeline import, clearing the track, and the camera clock adjustment.
 - **With your camera:**
-  - **Get photos from the card** and **Shoot from your iPhone** use the camera's **Remote Shooting & View** connection.
+  - **Get photos from the card**, **Shoot from your iPhone**, **Write locations to camera photos**, and **Set the camera clock** use the camera's **Remote Shooting & View** connection.
   - **Receive photos as you shoot** uses **Send Images While Recording**.
 
   Each job shows the camera steps for its connection and joins the camera's network: the remembered network, its QR code, or a name and password.
-- **More:** **Write locations to camera photos**, **Set the camera clock**, and **Import Google Timeline**.
+- **About:** the source code on GitHub, the list of potentially compatible cameras, the app icon, **Developer settings** (connection, remembered camera, camera address, and protocol tests), and the app version. The camera names in the description at the top also open the camera list.
 
 Once connected, the camera screen switches between **Photos** and **Live view** at the top; going back to the home screen keeps the connection.
 
@@ -99,7 +99,7 @@ Verified on a DMC-GM1S: the camera's own search reaches the app, which answers i
 
 ## Geotagging
 
-On iPhone, tap **Add geotagging widget to home screen** on the **Location log** screen (home screen → Geotagging → **Widget, automatic start, and imports**) or in Settings for a widget preview and setup guide. On iOS 18 or later, touch and hold the Retro LUMIX Sync app icon on the Home Screen, then choose the small widget. The guide also includes the widget-gallery route for other versions or layouts. iOS requires adding the widget from the Home Screen; the app cannot place it automatically.
+On iPhone, tap **Add geotagging widget to home screen** in **Geotagging settings** on the home screen for a widget preview and setup guide. On iOS 18 or later, touch and hold the Retro LUMIX Sync app icon on the Home Screen, then choose the small widget. The guide also includes the widget-gallery route for other versions or layouts. iOS requires adding the widget from the Home Screen; the app cannot place it automatically.
 
 Tap the **Geotagging** widget to turn location tracking on, then tap it again to turn tracking off. Each tap opens the app and applies the action automatically; the first start asks for location permission if needed. Stopping keeps your saved track for later photo imports. A manual stop stays off when returning to the app, even with automatic start enabled, until you start tracking again or relaunch the app.
 
@@ -107,7 +107,7 @@ The widget shares only the logging status with the app, never coordinates or loc
 
 Location logging is optional and visible while active. During import, Retro LUMIX Sync reads the original JPEG's EXIF capture time and matches it to a nearby or interpolated point in the locally stored location track. A camera-clock adjustment can compensate when the camera clock differs from the iPhone clock.
 
-If logging was not enabled when the photos were taken, iPhone users can export `location-history.json` from Google Maps (Settings → Personal content → Export Timeline data) and choose **Import Google Timeline JSON** on the **Location log** screen. If the JSON text is already copied, **Paste Google Timeline JSON** accepts it directly from the clipboard. The imported points are merged into the local track; the app does not sign in to Google or upload the file.
+If logging was not enabled when the photos were taken, iPhone users can export `location-history.json` from Google Maps (Settings → Personal content → Export Timeline data) and choose **Import Google Timeline JSON** in **Geotagging settings**. If the JSON text is already copied, **Paste Google Timeline JSON** accepts it directly from the clipboard. The imported points are merged into the local track; the app does not sign in to Google or upload the file.
 
 For a direct override, select one or more images in the camera gallery and choose **Set location**. Search Apple Maps, confirm a result, and Retro LUMIX Sync stores that location locally for each selected camera item. The override is reused after reconnecting to the same camera and is applied when the image is imported to Apple Photos; selected videos are not affected.
 
@@ -115,7 +115,7 @@ Matches more than 15 minutes from a usable track point are rejected. The origina
 
 ### Write the track to photos on the camera
 
-Cameras that support it can write the recorded track into the photos on their own SD card, as Panasonic's Image App does. On the home screen choose **Write locations to camera photos** (under **More**), or open **Gallery actions → Write locations to camera photos…** on the connected camera screen. Choose the track period (the latest continuous recording by default), and confirm.
+Cameras that support it can write the recorded track into the photos on their own SD card, as Panasonic's Image App does. On the home screen choose **Write locations to camera photos**, or open **Gallery actions → Write locations to camera photos…** on the connected camera screen. Choose the track period (the latest continuous recording by default), and confirm.
 
 Retro LUMIX Sync uploads the track and asks the camera to write. The camera chooses the photos by comparing each photo's capture time on its own clock with the track. Panasonic excludes photos that already contain location information, AVCHD videos, photos taken after the upload, and photos taken while the clock was not set. The app cannot choose individual photos, and RAW and RAW+JPEG behavior has not been verified.
 
@@ -123,7 +123,7 @@ Writing changes the original files on the card and cannot be undone from the app
 
 ### Set the camera clock
 
-**Set the camera clock** on the home screen (under **More**), or **Gallery actions → Set camera clock…** on the camera screen, sets the camera's date and time from the iPhone on the next whole minute and reads the clock back where the camera allows it. Do this before shooting. It is separate from location writing, which only tells the camera the iPhone's current time before the upload and does not change the camera's clock. Like Image App, the app sends UTC time with the standard (non-daylight-saving) offset, so the camera's own Daylight Saving setting must match.
+**Set the camera clock** on the home screen, or **Gallery actions → Set camera clock…** on the camera screen, sets the camera's date and time from the iPhone on the next whole minute and reads the clock back where the camera allows it. Do this before shooting. It is separate from location writing, which only tells the camera the iPhone's current time before the upload and does not change the camera's clock. Like Image App, the app sends UTC time with the standard (non-daylight-saving) offset, so the camera's own Daylight Saving setting must match.
 
 ## Privacy
 

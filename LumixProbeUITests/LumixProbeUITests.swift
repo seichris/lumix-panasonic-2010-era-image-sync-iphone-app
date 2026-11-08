@@ -49,7 +49,8 @@ final class LumixProbeUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.buttons["start-location-log"].waitForExistence(timeout: 12), "The location log is on the home screen")
-        XCTAssertFalse(app.switches["auto-start-geotagging"].exists, "Geotagging settings live on the Location log screen")
+        XCTAssertFalse(app.switches["auto-start-geotagging"].exists, "These settings live on the Geotagging settings screen")
+        XCTAssertFalse(app.buttons["home-open-timeline-import"].exists, "Google Timeline import is only in Geotagging settings")
         XCTAssertTrue(app.buttons["open-live-view"].exists)
         XCTAssertTrue(app.buttons["open-push-transfer"].exists)
         let photos = app.buttons["open-camera-photos"]
@@ -84,10 +85,10 @@ final class LumixProbeUITests: XCTestCase {
         app.buttons["Cancel"].tap()
 
         app.navigationBars["Get photos from the card"].buttons.element(boundBy: 0).tap()
-        let locationLog = app.buttons["open-location-log"]
-        XCTAssertTrue(locationLog.waitForExistence(timeout: 5))
-        locationLog.tap()
-        XCTAssertTrue(app.navigationBars["Location log"].waitForExistence(timeout: 5))
+        let geotaggingSettings = app.buttons["open-geotagging-settings"]
+        XCTAssertTrue(geotaggingSettings.waitForExistence(timeout: 5))
+        geotaggingSettings.tap()
+        XCTAssertTrue(app.navigationBars["Geotagging"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.switches["auto-start-geotagging"].exists)
         XCTAssertTrue(app.buttons["import-google-timeline"].exists)
     }
@@ -142,30 +143,32 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertEqual(mediaCount.label, "25 images · 0 videos")
     }
 
-    func testSettingsCompatibilityAndAppIcons() throws {
+    func testAboutCompatibilityAppIconsAndDeveloperSettings() throws {
         app.launch()
         XCTAssertTrue(app.staticTexts["landing-title"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["image-app-alternative-text"].waitForExistence(timeout: 8))
+        XCTAssertFalse(element(labelContaining: "& other 2010-era Lumix cams").exists)
+        XCTAssertFalse(app.buttons["app-settings-link"].exists, "There is no separate Settings screen")
 
-        app.buttons["app-settings-link"].tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
-        XCTAssertTrue(
-            app.staticTexts.matching(
-                NSPredicate(format: "label CONTAINS %@", "Remote Shooting & View → Direct → Image App")
-            ).firstMatch.exists
-        )
-        XCTAssertFalse(app.textFields["camera-ip-address"].exists)
-        XCTAssertFalse(app.buttons["check-camera-connection"].exists)
-        XCTAssertFalse(app.buttons["start-location-log"].exists)
+        let cameraLink = app.links["GX7"]
+        XCTAssertTrue(cameraLink.waitForExistence(timeout: 5), "The example camera names are links")
+        cameraLink.tap()
+        XCTAssertTrue(app.navigationBars["Camera candidates"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Panasonic DMC-GM1S"].exists)
+        app.navigationBars.buttons.firstMatch.tap()
 
         let repositoryLink = app.descendants(matching: .any)["github-repository-link"].firstMatch
         scrollToElement(repositoryLink)
-        XCTAssertTrue(repositoryLink.label.contains("View this app code on Github"))
+        XCTAssertTrue(repositoryLink.label.contains("View this app's code on GitHub"))
 
-        let diagnosticsLink = app.buttons["camera-diagnostics-link"]
-        scrollToElement(diagnosticsLink)
-        diagnosticsLink.tap()
-        XCTAssertTrue(app.navigationBars["Diagnostics"].waitForExistence(timeout: 5))
+        let developerLink = app.buttons["developer-settings-link"]
+        scrollToElement(developerLink)
+        developerLink.tap()
+        XCTAssertTrue(app.navigationBars["Developer settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            element(labelContaining: "Remote Shooting & View → Direct → Image App").exists,
+            "The connection group moved here from the old Settings screen"
+        )
         XCTAssertTrue(app.textFields["camera-ip-address"].exists)
         XCTAssertTrue(app.buttons["check-camera-connection"].exists)
         XCTAssertTrue(app.staticTexts["The GM1S normally uses 192.168.54.1 in Image App Direct mode."].exists)
@@ -175,7 +178,6 @@ final class LumixProbeUITests: XCTestCase {
         scrollToElement(compatibilityLink)
         compatibilityLink.tap()
         XCTAssertTrue(app.navigationBars["Camera candidates"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Panasonic DMC-GM1S"].exists)
         app.navigationBars.buttons.firstMatch.tap()
 
         let appVersion = app.staticTexts["app-version"]
@@ -377,11 +379,10 @@ final class LumixProbeUITests: XCTestCase {
     }
 
     private func openDiagnostics() {
-        app.buttons["app-settings-link"].tap()
-        let link = app.buttons["camera-diagnostics-link"]
+        let link = app.buttons["developer-settings-link"]
         scrollToElement(link)
         link.tap()
-        XCTAssertTrue(app.navigationBars["Diagnostics"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Developer settings"].waitForExistence(timeout: 5))
     }
 
     private func tap(_ label: String) {

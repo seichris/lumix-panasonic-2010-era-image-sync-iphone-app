@@ -56,23 +56,29 @@ enum CameraTool: Hashable {
 
 enum AppRoute: Hashable {
     case camera(CameraJob)
-    case locationLog
-    case settings
+    case geotagging
+    case compatibleCameras
+    case appIcon
+    case developerSettings
 }
 
 /// The first screen: the location log, then the jobs that need the camera.
 struct HomeView: View {
     @ObservedObject var model: ProbeViewModel
     @ObservedObject var logger: GeotagLocationLogger
-    let openSettings: () -> Void
+    let openCompatibleCameras: () -> Void
     let openReceive: () -> Void
+
+    /// The camera names in the header link here; the home screen opens the camera list.
+    static let compatibleCamerasURL = URL(string: "gm1sync://compatible-cameras")!
+    private static let exampleCameras = ["GM1", "GX7", "LX100"]
 
     var body: some View {
         List {
             header
             LocationLogCard(logger: logger)
             cameraJobs
-            moreSection
+            aboutSection
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -83,37 +89,45 @@ struct HomeView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Retro LUMIX Sync")
-                        .font(.largeTitle.bold())
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("& other 2010-era Lumix cams")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("landing-title")
+                Text("Retro LUMIX Sync")
+                    .font(.largeTitle.bold())
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("landing-title")
 
-                Text("An independent alternative to Panasonic Image App for compatible older cameras.")
+                Text(alternativeText)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .environment(\.openURL, OpenURLAction { url in
+                        guard url == Self.compatibleCamerasURL else { return .systemAction }
+                        openCompatibleCameras()
+                        return .handled
+                    })
                     .accessibilityIdentifier("image-app-alternative-text")
             }
 
             Spacer(minLength: 0)
-
-            // A button, not a NavigationLink: a link would turn the whole header row into a link.
-            Button(action: openSettings) {
-                Label("Settings", systemImage: "gearshape")
-                    .labelStyle(.iconOnly)
-                    .font(.title2)
-            }
-            .buttonStyle(.borderless)
-            .accessibilityIdentifier("app-settings-link")
         }
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
+    }
+
+    /// "…like the GM1, GX7, and LX100.", with each camera name underlined and linked to the camera list.
+    private var alternativeText: AttributedString {
+        var text = AttributedString("An independent alternative to Panasonic Image App for 2010-era Lumix cameras, like the ")
+        let names = Self.exampleCameras
+        for (index, name) in names.enumerated() {
+            var link = AttributedString(name)
+            link.link = Self.compatibleCamerasURL
+            link.underlineStyle = .single
+            text += link
+            if index < names.count - 2 {
+                text += AttributedString(", ")
+            } else if index == names.count - 2 {
+                text += AttributedString(", and ")
+            }
+        }
+        text += AttributedString(".")
+        return text
     }
 
     private var cameraJobs: some View {
@@ -137,42 +151,93 @@ struct HomeView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("open-push-transfer")
-        } header: {
-            Text("With your camera")
-        } footer: {
-            connectionFooter
-        }
-    }
 
-    @ViewBuilder
-    private var connectionFooter: some View {
-        if model.isCameraConnected {
-            Label("Connected to \(model.rememberedCameraNetwork?.ssid ?? "the camera")", systemImage: "circle.fill")
-                .labelStyle(ConnectionDotLabelStyle())
-                .accessibilityIdentifier("home-camera-connected")
-        } else {
-            Text("Pick what you want to do. Retro LUMIX Sync then shows which camera Wi‑Fi mode to choose.")
-        }
-    }
-
-    private var moreSection: some View {
-        Section("More") {
             NavigationLink(value: AppRoute.camera(.writeLocations)) {
-                Label(CameraJob.writeLocations.title, systemImage: CameraJob.writeLocations.systemImage)
+                CameraJobLabel(title: CameraJob.writeLocations.title, subtitle: CameraJob.writeLocations.subtitle,
+                               systemImage: CameraJob.writeLocations.systemImage)
             }
             .accessibilityIdentifier("home-open-location-writer")
 
             NavigationLink(value: AppRoute.camera(.setClock)) {
-                Label(CameraJob.setClock.title, systemImage: CameraJob.setClock.systemImage)
+                CameraJobLabel(title: CameraJob.setClock.title, subtitle: CameraJob.setClock.subtitle,
+                               systemImage: CameraJob.setClock.systemImage)
             }
             .accessibilityIdentifier("home-open-camera-clock")
-
-            NavigationLink(value: AppRoute.locationLog) {
-                Label("Import Google Timeline", systemImage: "arrow.down.doc")
+        } header: {
+            // The connection sits in the header so it stays visible above the camera jobs.
+            HStack {
+                Text("With your camera")
+                Spacer(minLength: 8)
+                if model.isCameraConnected {
+                    Label("Connected to \(model.rememberedCameraNetwork?.ssid ?? "the camera")", systemImage: "circle.fill")
+                        .labelStyle(ConnectionDotLabelStyle())
+                        .font(.caption)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("home-camera-connected")
+                }
             }
-            .accessibilityIdentifier("home-open-timeline-import")
+        } footer: {
+            if !model.isCameraConnected {
+                Text("Pick what you want to do. Retro LUMIX Sync then shows which camera Wi‑Fi mode to choose.")
+            }
         }
     }
+
+    private var aboutSection: some View {
+        Section {
+            Link(destination: Self.githubRepositoryURL) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("View this app's code on GitHub", systemImage: "curlybraces")
+                    Text("View source code and report issues")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityIdentifier("github-repository-link")
+
+            NavigationLink(value: AppRoute.compatibleCameras) {
+                aboutRow("Potentially compatible cameras", detail: "GM-family and Panasonic Image App models by era")
+            }
+            .accessibilityIdentifier("camera-compatibility-link")
+
+            NavigationLink(value: AppRoute.appIcon) {
+                aboutRow("App icon", detail: "Choose Blue Camera, Lens, or Black Camera")
+            }
+            .accessibilityIdentifier("app-icon-link")
+
+            NavigationLink(value: AppRoute.developerSettings) {
+                aboutRow("Developer settings", detail: "Camera address, connection, and protocol tests")
+            }
+            .accessibilityIdentifier("developer-settings-link")
+        } header: {
+            Text("About")
+        } footer: {
+            Text(Self.appVersionText)
+                .font(.footnote.monospacedDigit())
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
+                .accessibilityIdentifier("app-version")
+        }
+    }
+
+    private func aboutRow(_ title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private static var appVersionText: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return "Retro LUMIX Sync · Version \(version) (\(build))"
+    }
+
+    private static let githubRepositoryURL = URL(
+        string: "https://github.com/seichris/lumix-panasonic-2010-era-image-sync-iphone-app"
+    )!
 }
 
 private struct ConnectionDotLabelStyle: LabelStyle {
@@ -219,7 +284,7 @@ struct CameraJobLabel: View {
 }
 
 /// Start or stop the location log from the home screen; everything else about
-/// geotagging lives on the Location log screen.
+/// geotagging lives on the Geotagging settings screen.
 struct LocationLogCard: View {
     @ObservedObject var logger: GeotagLocationLogger
 
@@ -250,13 +315,15 @@ struct LocationLogCard: View {
             }
             .padding(.vertical, 4)
 
-            NavigationLink(value: AppRoute.locationLog) {
-                Text("Widget, automatic start, and imports")
+            NavigationLink(value: AppRoute.geotagging) {
+                Text("Geotagging settings")
                     .font(.subheadline)
             }
-            .accessibilityIdentifier("open-location-log")
+            .accessibilityIdentifier("open-geotagging-settings")
         } header: {
             Text("Geotagging")
+        } footer: {
+            Text("Geotagging adds where each photo was taken. While the log runs, this iPhone records its location, and imported photos get the place that matches their capture time.")
         }
     }
 
@@ -278,9 +345,9 @@ struct LocationLogCard: View {
     }
 }
 
-/// Everything about the location log: start and stop, the widget, automatic start,
+/// Everything about geotagging: the location log, the widget, automatic start,
 /// Google Timeline imports, clearing the track, and the camera clock adjustment.
-struct LocationLogView: View {
+struct GeotaggingSettingsView: View {
     @ObservedObject var model: ProbeViewModel
     @State private var isConfirmingTrackClear = false
 
@@ -293,7 +360,7 @@ struct LocationLogView: View {
                 clearTrack: { isConfirmingTrackClear = true }
             )
         }
-        .navigationTitle("Location log")
+        .navigationTitle("Geotagging")
         .navigationBarTitleDisplayMode(.inline)
         .alert("Clear location track?", isPresented: $isConfirmingTrackClear) {
             Button("Clear", role: .destructive) { model.locationLogger.clear() }
