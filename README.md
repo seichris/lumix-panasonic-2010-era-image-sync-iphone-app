@@ -73,15 +73,15 @@ Live view pauses while the app is in the background and resumes when you return.
 
 ## Send Images While Recording
 
-On the camera choose **Wi‑Fi → Wi‑Fi Function → New Connection → Send Images While Recording → Smartphone → Direct → Manual Connection**. In Retro LUMIX Sync tap **Receive photos while shooting**, join the network the camera shows, and tap **Start receiving**. When the camera lists "Retro LUMIX Sync", select it, choose **Size → Original** for full-size JPEGs, and press **Set**.
+On the camera choose **Wi‑Fi → Wi‑Fi Function → New Connection → Send Images While Recording → Smartphone → Direct → Manual Connection**. In Retro LUMIX Sync tap **Receive photos while shooting → Start receiving**, join the network the camera shows, and come straight back to the app. When the camera lists "Retro LUMIX Sync", select it, choose **Size → Original** for full-size JPEGs, and press **Set**.
 
 - Each JPEG is reported as saved only after Photos has saved it.
 - Incomplete uploads are discarded, and repeated deliveries of the same bytes are skipped.
 - Files that cannot be saved yet, for example without Photos access, are kept on the iPhone until **Try saving again** succeeds.
-- Receiving is a foreground session that keeps the screen on. It pauses when the iPhone locks or the app leaves the foreground, and resumes when you return.
+- Receiving is a foreground session that keeps the screen on. It pauses when the iPhone locks or the app leaves the foreground, and resumes when you return. A photo taken while the app is away is not sent: a GM1S then shows **Connection error** and stops sending until you start its connection again. The photo stays on the card.
 - A received JPEG counts as the card original only after the gallery compares it with the file on the card. A byte-identical original is then recorded as imported without saving a duplicate.
 
-iOS allows the usual multicast discovery only after Apple grants the app its multicast networking entitlement. Until then the app announces itself directly to the camera. See [docs/send-images-while-recording.md](docs/send-images-while-recording.md) for the protocol, the entitlement request, and the hardware checks still to run.
+Verified on a DMC-GM1S: the camera's own search reaches the app, which answers it directly, so the camera finds Retro LUMIX Sync without Apple's multicast networking entitlement (iOS 27.2, development build). See [docs/send-images-while-recording.md](docs/send-images-while-recording.md) for the exchange the camera uses, the entitlement request, and the checks still to run.
 
 ## Geotagging
 

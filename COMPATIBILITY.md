@@ -131,16 +131,23 @@ Location writing follows Panasonic's documented GM1S workflow and the command se
 
 ## Send Images While Recording validation
 
-The receiver follows Shutterlink's GM1/G85-tested exchange and has been verified with unit tests, a loopback TCP test, and a scripted camera in the simulator. On a physical DMC-GM1S it still needs:
+The receiver follows Shutterlink's GM1/G85-tested exchange and has been verified with unit tests, a loopback TCP test, and a scripted camera in the simulator. On 2026-11-08 it was run with a physical DMC-GM1S (firmware 2.70) and an iPhone 16 Pro Max on iOS 27.2, using a development build:
 
 | Behavior | Status |
 |---|---|
-| Camera discovers the phone through unicast SSDP alone (no multicast entitlement) | Needs GM1S validation |
-| Camera discovers the phone through multicast | Needs the multicast entitlement, then GM1S validation |
-| Description, upload-profile, `CreateObject`, and chunked upload exchange | Needs GM1S validation |
-| Size → Original transfers byte-identical to the card's JPEG | Needs GM1S validation |
+| Camera finds the phone without the multicast entitlement | Verified on GM1S. The camera's multicast `M-SEARCH` (`ST` MediaServer, `MX` 5) reaches the app, which answers it as unicast. iOS refuses only multicast sending |
+| Unicast `NOTIFY` and `M-SEARCH` sent straight to the camera | No sign the camera uses them: in remote mode it answered with its own media server but never read the app's description; while sending it did not answer them |
+| Access request (`accctrl` `req_acc`) | Not needed. GM1S answers `err_non_support` in remote mode and refuses connections on port 80 while sending |
+| Description, upload-profile, `CreateObject`, and chunked upload exchange | Verified on GM1S. The camera offers `JPEG_SM`, `JPEG_MED`, `JPEG_LRG`, MPO and two AVC profiles; uploads use `Expect: 100-continue` and chunked encoding, one photo at a time |
+| Photos saved to Photos | Verified on GM1S: three at Size M (3232 × 2424) and one at Size Original (4592 × 3448, 5,959,680 bytes in 7 s) |
+| File name | The camera titles each photo with the card name plus a per-connection counter (`P1290930` → `P12909300001.JPG`) |
+| App in the background, no photo taken | Verified on GM1S: the connection survives, and the next photo arrives |
+| Photo taken while the app is in the background | GM1S shows "Connection error", ends the send connection, and does not retry; the photo stays on the card |
+| Joining the camera's network from Settings | Worked once; once the camera showed "Connection failed" because it searched while the app was in the background |
+| Size → Original transfers byte-identical to the card's JPEG | Needs GM1S validation (gallery import of a received original) |
 | Smaller transfer sizes are not treated as originals | Needs GM1S validation |
-| Burst, app switch, iPhone lock, and camera Wi-Fi interruptions | Needs GM1S validation |
+| Burst at Size Original, iPhone lock, camera Wi-Fi off and on | Needs GM1S validation |
+| TestFlight or App Store build without the multicast entitlement | Needs validation |
 
 ## Confirmation standard
 
