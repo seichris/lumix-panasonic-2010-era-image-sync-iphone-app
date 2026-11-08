@@ -150,12 +150,23 @@ final class LumixProbeUITests: XCTestCase {
         XCTAssertFalse(element(labelContaining: "& other 2010-era Lumix cams").exists)
         XCTAssertFalse(app.buttons["app-settings-link"].exists, "There is no separate Settings screen")
 
-        let cameraLink = app.links["GX7"]
-        XCTAssertTrue(cameraLink.waitForExistence(timeout: 5), "The example camera names are links")
+        let cameraLink = app.links["GM1, GX7, and LX100"]
+        XCTAssertTrue(cameraLink.waitForExistence(timeout: 5), "The example camera names are one link")
         cameraLink.tap()
         XCTAssertTrue(app.navigationBars["Camera candidates"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Panasonic DMC-GM1S"].exists)
         app.navigationBars.buttons.firstMatch.tap()
+
+        let headerIcon = app.buttons["home-app-icon"]
+        XCTAssertTrue(headerIcon.waitForExistence(timeout: 5), "The chosen app icon is shown before the title")
+        headerIcon.tap()
+        XCTAssertTrue(app.navigationBars["App Icon"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.firstMatch.tap()
+
+        let developerNote = app.descendants(matching: .any)["about-developer-note"].firstMatch
+        scrollToElement(developerNote)
+        XCTAssertTrue(developerNote.label.contains("solo developer"))
+        XCTAssertTrue(app.descendants(matching: .any)["feature-requests-link"].firstMatch.exists)
 
         let repositoryLink = app.descendants(matching: .any)["github-repository-link"].firstMatch
         scrollToElement(repositoryLink)

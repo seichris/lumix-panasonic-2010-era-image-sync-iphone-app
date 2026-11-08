@@ -67,15 +67,18 @@ struct HomeView: View {
     @ObservedObject var model: ProbeViewModel
     @ObservedObject var logger: GeotagLocationLogger
     let openCompatibleCameras: () -> Void
+    let openAppIcon: () -> Void
     let openReceive: () -> Void
+    /// Read again whenever the home screen appears, for example after the icon picker.
+    @State private var appIcon = AppIconChoice.current
 
     /// The camera names in the header link here; the home screen opens the camera list.
     static let compatibleCamerasURL = URL(string: "gm1sync://compatible-cameras")!
-    private static let exampleCameras = ["GM1", "GX7", "LX100"]
 
     var body: some View {
         List {
-            header
+            Section { header }
+                .listSectionSpacing(.compact)
             LocationLogCard(logger: logger)
             cameraJobs
             aboutSection
@@ -84,15 +87,35 @@ struct HomeView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .contentMargins(.top, 0, for: .scrollContent)
+        .onAppear { appIcon = AppIconChoice.current }
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("Retro LUMIX Sync")
-                    .font(.largeTitle.bold())
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("landing-title")
+                HStack(spacing: 10) {
+                    // The chosen app icon; tapping it opens the icon picker.
+                    Button(action: openAppIcon) {
+                        Image(appIcon.previewAssetName)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 40, height: 40)
+                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .stroke(.quaternary, lineWidth: 0.5)
+                            }
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("App icon: \(appIcon.title)")
+                    .accessibilityIdentifier("home-app-icon")
+
+                    Text("Retro LUMIX Sync")
+                        .font(.largeTitle.bold())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .accessibilityIdentifier("landing-title")
+                }
 
                 Text(alternativeText)
                     .font(.subheadline)
@@ -109,23 +132,16 @@ struct HomeView: View {
         }
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 0, trailing: 20))
     }
 
-    /// "…like the GM1, GX7, and LX100.", with each camera name underlined and linked to the camera list.
+    /// "…like the GM1, GX7, and LX100.", with the camera names as one underlined link to the camera list.
     private var alternativeText: AttributedString {
         var text = AttributedString("An independent alternative to Panasonic Image App for 2010-era Lumix cameras, like the ")
-        let names = Self.exampleCameras
-        for (index, name) in names.enumerated() {
-            var link = AttributedString(name)
-            link.link = Self.compatibleCamerasURL
-            link.underlineStyle = .single
-            text += link
-            if index < names.count - 2 {
-                text += AttributedString(", ")
-            } else if index == names.count - 2 {
-                text += AttributedString(", and ")
-            }
-        }
+        var link = AttributedString("GM1, GX7, and LX100")
+        link.link = Self.compatibleCamerasURL
+        link.underlineStyle = .single
+        text += link
         text += AttributedString(".")
         return text
     }
@@ -185,15 +201,24 @@ struct HomeView: View {
 
     private var aboutSection: some View {
         Section {
-            Link(destination: Self.githubRepositoryURL) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Label("View this app's code on GitHub", systemImage: "curlybraces")
-                    Text("View source code and report issues")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Made by a solo developer")
+                    .font(.headline)
+                Text("Retro LUMIX Sync is built by one person who loves shooting on retro LUMIX cameras. It's free, with no ads, accounts, or tracking.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
-            .accessibilityIdentifier("github-repository-link")
+            .padding(.vertical, 4)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("about-developer-note")
+
+            externalLink(Self.githubRepositoryURL, title: "View this app's code on GitHub",
+                         detail: "Read the source code")
+                .accessibilityIdentifier("github-repository-link")
+
+            externalLink(Self.newIssueURL, title: "Feature requests welcome",
+                         detail: "Add feature requests and bug reports on GitHub")
+                .accessibilityIdentifier("feature-requests-link")
 
             NavigationLink(value: AppRoute.compatibleCameras) {
                 aboutRow("Potentially compatible cameras", detail: "GM-family and Panasonic Image App models by era")
@@ -220,6 +245,21 @@ struct HomeView: View {
         }
     }
 
+    /// A link that leaves the app, styled like the rows around it, with an outward arrow.
+    private func externalLink(_ url: URL, title: String, detail: String) -> some View {
+        Link(destination: url) {
+            HStack {
+                aboutRow(title, detail: detail)
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.up.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .tint(.primary)
+    }
+
     private func aboutRow(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
@@ -237,6 +277,9 @@ struct HomeView: View {
 
     private static let githubRepositoryURL = URL(
         string: "https://github.com/seichris/lumix-panasonic-2010-era-image-sync-iphone-app"
+    )!
+    private static let newIssueURL = URL(
+        string: "https://github.com/seichris/lumix-panasonic-2010-era-image-sync-iphone-app/issues/new"
     )!
 }
 
