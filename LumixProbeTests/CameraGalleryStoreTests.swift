@@ -470,6 +470,190 @@ final class CameraGalleryStoreTests: XCTestCase {
         XCTAssertEqual(downloadCount, 1)
     }
 
+    /// The GM1S lists media without dates, so the location writer reads capture
+    /// times from the newest originals and stops once it is past the period.
+    func testPeriodScanReadsNewestCaptureTimesAndStopsPastThePeriod() async throws {
+        let dates = CaptureDateTable()
+        let client = MockGalleryClient(total: 14)
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 5,
+            photoMetadataReader: { fileURL in
+                PhotoOriginalMetadata(captureDate: dates.date(forDownloadedFile: fileURL), embeddedLocation: nil)
+            }
+        )
+        await store.loadInitial()
+        XCTAssertTrue(store.canLoadMore, "The scan must load the remaining pages itself")
+        await store.loadAllPages()
+        let base = Date(timeIntervalSince1970: 1_794_067_200)
+        // Newest first, one minute apart: positions 0–3 fall inside the period.
+        for (position, photo) in store.photos.enumerated() {
+            dates.set(base.addingTimeInterval(Double(-60 * position)), for: try XCTUnwrap(photo.originalJPEGResource).url)
+        }
+        let period = base.addingTimeInterval(-200)...base.addingTimeInterval(30)
+        XCTAssertEqual(CameraGeotagPeriodScanner.photos(in: period, store: store).unknown, 14)
+
+        let scanner = CameraGeotagPeriodScanner()
+        await scanner.scan(store: store, period: period, limit: 120)
+
+        // 4 inside, then 5 older ones in a row end the scan.
+        XCTAssertEqual(scanner.checkedCount, 9)
+        let downloads = await client.downloadCount
+        XCTAssertEqual(downloads, 9)
+        let result = CameraGeotagPeriodScanner.photos(in: period, store: store)
+        XCTAssertEqual(result.inside.map(\.photo.id), Array(store.photos.prefix(4)).map(\.id))
+        XCTAssertEqual(result.unknown, 5, "Older photos past the stopping point stay unread")
+        XCTAssertNil(store.metadataInspectionState(for: store.photos[13]))
+        let completion = try XCTUnwrap(scanner.completion)
+        XCTAssertEqual(completion, .init(periodStart: period.lowerBound, checked: 9, reachedOlderPhotos: true))
+        XCTAssertTrue(completion.covers(base.addingTimeInterval(-100)...base), "A later start is covered")
+        XCTAssertFalse(completion.covers(base.addingTimeInterval(-600)...base), "An earlier start needs another scan")
+
+        // A period older than every photo reads the whole card and says so.
+        let olderPeriod = base.addingTimeInterval(-7_200)...base.addingTimeInterval(-3_600)
+        await scanner.scan(store: store, period: olderPeriod, limit: 120)
+        XCTAssertEqual(scanner.completion?.reachedOlderPhotos, false)
+        XCTAssertEqual(scanner.completion?.checked, 14)
+        XCTAssertTrue(CameraGeotagPeriodScanner.photos(in: olderPeriod, store: store).inside.isEmpty)
+    }
+
+    /// On a GM1S the pre-write scan cached the newest photos, and the check after
+    /// the write then reported those cached, GPS-free results instead of the card.
+    func testVerificationAfterAWriteRereadsPhotosTheScanAlreadyRead() async throws {
+        let table = CaptureDateTable()
+        let client = MockGalleryClient(total: 3)
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: 3,
+            photoMetadataReader: { fileURL in
+                PhotoOriginalMetadata(
+                    captureDate: table.date(forDownloadedFile: fileURL),
+                    embeddedLocation: table.location(forDownloadedFile: fileURL)
+                )
+            }
+        )
+        await store.loadInitial()
+        let base = Date(timeIntervalSince1970: 1_794_067_200)
+        for (position, photo) in store.photos.enumerated() {
+            table.set(base.addingTimeInterval(Double(-60 * position)), for: try XCTUnwrap(photo.originalJPEGResource).url)
+        }
+        let period = base.addingTimeInterval(-600)...base.addingTimeInterval(60)
+        let track = [
+            LocationSample(timestamp: period.lowerBound, latitude: 22.3, longitude: 114.17, horizontalAccuracy: 8),
+            LocationSample(timestamp: period.upperBound, latitude: 22.3, longitude: 114.17, horizontalAccuracy: 8)
+        ]
+
+        await CameraGeotagPeriodScanner().scan(store: store, period: period, limit: 120)
+        XCTAssertEqual(CameraGeotagPeriodScanner.photos(in: period, store: store).inside.count, 3)
+
+        // The camera writes GPS into the newest photo only.
+        let tagged = try XCTUnwrap(store.photos.first)
+        table.setLocation(PhotoGeotagLocation(latitude: 22.3, longitude: 114.17), for: try XCTUnwrap(tagged.originalJPEGResource).url)
+
+        let cached = await store.inspectOriginalMetadata(for: tagged)
+        guard case let .resolved(before) = cached else { return XCTFail("Expected the cached scan result") }
+        XCTAssertNil(before.embeddedLocation, "Without force the scan's result is reused")
+
+        let verifier = CameraGeotagVerifier()
+        await verifier.verify(store: store, period: period, samples: track, baseline: [:], limit: 120)
+        let statuses = Dictionary(uniqueKeysWithValues: verifier.results.map { ($0.id, $0.status) })
+        guard case .taggedNearTrack? = statuses[tagged.id] else {
+            return XCTFail("The written photo must be read again from the card, got \(String(describing: statuses[tagged.id]))")
+        }
+        XCTAssertEqual(statuses.values.filter { $0 == .notTagged }.count, 2)
+        let downloads = await client.downloadCount
+        XCTAssertEqual(downloads, 6, "Every photo is read once by the scan and once more by the check")
+    }
+
+    /// Each read cuts a camera transfer short, and a GM1S stopped serving files
+    /// after about 150 of them. The check after a write read every photo on the
+    /// card; it now stops past the period like the scan before the write.
+    func testCheckAfterAWriteStopsPastThePeriod() async throws {
+        let (client, store, base) = try await makeDatedCard(photos: 14)
+        // Positions 0–3 fall inside the period.
+        let period = base.addingTimeInterval(-200)...base.addingTimeInterval(30)
+
+        let verifier = CameraGeotagVerifier()
+        await verifier.verify(store: store, period: period, samples: [], baseline: [:], limit: 120)
+
+        XCTAssertEqual(verifier.checkedCount, 9, "4 inside the period, then 5 older ones in a row")
+        XCTAssertEqual(verifier.stop, .reachedOlderPhotos(unread: 5))
+        XCTAssertEqual(verifier.results.map(\.id), Array(store.photos.prefix(9)).map(\.id))
+        let downloads = await client.downloadCount
+        XCTAssertEqual(downloads, 9)
+    }
+
+    /// When the GM1S stopped serving files, every remaining photo still waited
+    /// for its own timeout. Two failed reads in a row now end the scan and the check.
+    func testCardReadsStopWhenTheCameraStopsReturningPhotos() async throws {
+        let (client, store, base) = try await makeDatedCard(photos: 14)
+        // Every photo is inside the period, so only failures can end the reads early.
+        let period = base.addingTimeInterval(-3_600)...base.addingTimeInterval(30)
+        let urls = try store.photos.map { try XCTUnwrap($0.originalJPEGResource).url }
+        await client.failDownloads(of: Array(urls.dropFirst(2)))
+
+        let scanner = CameraGeotagPeriodScanner()
+        await scanner.scan(store: store, period: period, limit: 120)
+        XCTAssertTrue(scanner.cameraStoppedAnswering)
+        XCTAssertNil(scanner.completion)
+        XCTAssertEqual(scanner.checkedCount, 4, "Two good reads, then two failures")
+        var downloads = await client.downloadCount
+        XCTAssertEqual(downloads, 4)
+
+        let verifier = CameraGeotagVerifier()
+        await verifier.verify(store: store, period: period, samples: [], baseline: [:], limit: 120)
+        XCTAssertEqual(verifier.stop, .cameraStoppedAnswering)
+        XCTAssertEqual(verifier.checkedCount, 4)
+        downloads = await client.downloadCount
+        XCTAssertEqual(downloads, 8)
+
+        // After the camera is back, the scan reads the failed photos again and
+        // reuses the two it already has.
+        await client.failDownloads(of: [])
+        await scanner.scan(store: store, period: period, limit: 120)
+        XCTAssertFalse(scanner.cameraStoppedAnswering)
+        XCTAssertEqual(scanner.completion?.checked, 14)
+        downloads = await client.downloadCount
+        XCTAssertEqual(downloads, 8 + 12)
+    }
+
+    func testOneUnreadablePhotoDoesNotStopTheCheck() async throws {
+        let (client, store, base) = try await makeDatedCard(photos: 6)
+        let period = base.addingTimeInterval(-3_600)...base.addingTimeInterval(30)
+        await client.failDownloads(of: [try XCTUnwrap(store.photos[1].originalJPEGResource).url])
+
+        let verifier = CameraGeotagVerifier()
+        await verifier.verify(store: store, period: period, samples: [], baseline: [:], limit: 120)
+
+        XCTAssertNil(verifier.stop)
+        XCTAssertEqual(verifier.checkedCount, 6)
+        guard case .failed? = verifier.results.first(where: { $0.id == store.photos[1].id })?.status else {
+            return XCTFail("The unreadable photo is reported")
+        }
+    }
+
+    /// A card whose photos are one minute apart, newest first, starting at `base`.
+    private func makeDatedCard(photos count: Int) async throws -> (MockGalleryClient, CameraGalleryStore, Date) {
+        let table = CaptureDateTable()
+        let client = MockGalleryClient(total: count)
+        let store = CameraGalleryStore(
+            client: client,
+            importer: RecordingImporter(),
+            pageSize: count,
+            photoMetadataReader: { fileURL in
+                PhotoOriginalMetadata(captureDate: table.date(forDownloadedFile: fileURL), embeddedLocation: nil)
+            }
+        )
+        await store.loadInitial()
+        let base = Date(timeIntervalSince1970: 1_794_067_200)
+        for (position, photo) in store.photos.enumerated() {
+            table.set(base.addingTimeInterval(Double(-60 * position)), for: try XCTUnwrap(photo.originalJPEGResource).url)
+        }
+        return (client, store, base)
+    }
+
     func testConcurrentMetadataInspectionsShareOneCameraDownload() async throws {
         let client = MockGalleryClient(total: 1, downloadDelay: .milliseconds(100))
         let store = CameraGalleryStore(
@@ -844,6 +1028,32 @@ private struct StubImportReconciler: CameraImportReconciling {
     }
 }
 
+/// Capture times keyed by original-JPEG file name, for a metadata reader that
+/// only sees the downloaded prefix file (named `<UUID>-<original name>`).
+private final class CaptureDateTable: @unchecked Sendable {
+    private let lock = NSLock()
+    private var dates: [String: Date] = [:]
+    private var locations: [String: PhotoGeotagLocation] = [:]
+
+    func set(_ date: Date, for url: URL) {
+        lock.withLock { dates[url.lastPathComponent] = date }
+    }
+
+    func setLocation(_ location: PhotoGeotagLocation, for url: URL) {
+        lock.withLock { locations[url.lastPathComponent] = location }
+    }
+
+    func date(forDownloadedFile fileURL: URL) -> Date? {
+        let name = fileURL.lastPathComponent
+        return lock.withLock { dates.first { name.hasSuffix("-" + $0.key) }?.value }
+    }
+
+    func location(forDownloadedFile fileURL: URL) -> PhotoGeotagLocation? {
+        let name = fileURL.lastPathComponent
+        return lock.withLock { locations.first { name.hasSuffix("-" + $0.key) }?.value }
+    }
+}
+
 private actor MockGalleryClient: CameraGalleryClient {
     struct BrowseRequest: Sendable {
         let start: Int
@@ -868,6 +1078,12 @@ private actor MockGalleryClient: CameraGalleryClient {
     private(set) var browseRequests: [BrowseRequest] = []
     private(set) var browseCancellationCount = 0
     private(set) var downloadCount = 0
+    private var failingFilenames: Set<String> = []
+
+    /// Downloads of these files fail, as when the camera stops serving them.
+    func failDownloads(of urls: [URL]) {
+        failingFilenames = Set(urls.map(\.lastPathComponent))
+    }
 
     init(
         total: Int,
@@ -946,6 +1162,9 @@ private actor MockGalleryClient: CameraGalleryClient {
 
     func download(_ resource: LumixResource) async throws -> URL {
         downloadCount += 1
+        if failingFilenames.contains(resource.url.lastPathComponent) {
+            throw TestImportError.configuredFailure
+        }
         if cancellationHandlerBlockSeconds > 0 {
             let blockSeconds = cancellationHandlerBlockSeconds
             return try await withTaskCancellationHandler {

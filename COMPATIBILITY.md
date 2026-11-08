@@ -109,6 +109,26 @@ Remote shooting is built from the Image App protocol as documented by libgphoto2
 | Reconnect after the camera's Wi‑Fi drops | Needs GM1S validation |
 | Power zoom | Needs validation with a power-zoom lens |
 
+## Location writing and clock validation
+
+Location writing follows Panasonic's documented GM1S workflow and the command sequence recovered from Image App. Besides a scripted camera, it was run on a DMC-GM1S (firmware 2.70) on 7 November 2026, with the photos read back from the card afterwards. On a physical camera, use a disposable or backed-up SD card when trying it for the first time:
+
+| Behavior | Status |
+|---|---|
+| Capability report (`geotag_add_enable` or protocol 1.3+) | GM1S firmware 2.70 reports protocol 1.4 and does not list `geotag_add_enable` |
+| Capture times of the card's photos | The GM1S media list has none; the app reads them from the originals' EXIF before a write |
+| `getsetting&type=clock` | GM1S answers `err_non_support`: its clock cannot be read over Wi‑Fi |
+| `setsetting&type=clock` | Works on GM1S with UTC fields plus the standard offset: a photo taken 38 s later carried the iPhone's local time to the second (the camera had been 22 s fast) |
+| `%2B` versus raw `+` in clock values | GM1S accepts `%2B` in both `setsetting` and `notify` |
+| Daylight-saving handling of both clock commands | Needs validation in a time zone with daylight saving |
+| Track upload accepted (`startsenddata`, multipart `senddata`) | Works on GM1S: `startsenddata` answers `<method>once</method>` and a `bufsize` of 9600008; the multipart POST is accepted |
+| Progress | GM1S reports `prepare` → `exec` → `finish` within about 3 s |
+| Abort and interruption | Needs GM1S validation |
+| GPS written into JPEGs inside the period; none outside it; existing GPS kept | Verified on GM1S by reading the originals back with a separate EXIF parser. Photos inside the period gained GPS from a track sample taken shortly before each photo; photos before and after the period gained none; a second write left existing GPS byte-identical |
+| GPS date field | GM1S writes `GPSDateStamp` as 11 bytes ending in `0x02` instead of a terminating zero |
+| Many photo reads in a row | Reads that took the first 512 KiB of an original and then dropped the connection: after about 150 in 20 minutes the GM1S answered HTTP 404 for every original, then stopped answering until it was switched off and on. With `Range: bytes=0-524287` the GM1S answers `206 Partial Content` and ends each transfer itself; after a restart it served 200 such reads in a row and kept answering. The app now asks for the range, reads as few photos as it can, and stops after two failed reads |
+| RAW and RAW+JPEG files | Unverified; not claimed |
+
 ## Confirmation standard
 
 A camera should only move from candidate to confirmed after a real-device run records:

@@ -692,14 +692,16 @@ final class CameraGalleryStore: ObservableObject {
         force: Bool = false,
         onDiagnostic: @escaping @MainActor (String) -> Void = { _ in }
     ) async -> CameraPhotoMetadataInspectionState {
-        if force, let existing = metadataInspectionTasks[photo.id] {
-            existing.task.cancel()
-            _ = await existing.task.value
-            if metadataInspectionTasks[photo.id]?.id == existing.id {
-                metadataInspectionTasks[photo.id] = nil
-            }
-        } else {
-            if let existing = metadataInspectionTasks[photo.id] {
+        // `force` reads the card again even when a result is cached: after a
+        // location write the cached EXIF from before the write is stale.
+        if let existing = metadataInspectionTasks[photo.id] {
+            if force {
+                existing.task.cancel()
+                _ = await existing.task.value
+                if metadataInspectionTasks[photo.id]?.id == existing.id {
+                    metadataInspectionTasks[photo.id] = nil
+                }
+            } else {
                 if metadataInspectionStates[photo.id] == nil {
                     updateMetadataInspection(
                         photo,
@@ -709,9 +711,8 @@ final class CameraGalleryStore: ObservableObject {
                 }
                 return await existing.task.value
             }
-            if let cached = metadataInspectionStates[photo.id] {
-                return cached
-            }
+        } else if !force, let cached = metadataInspectionStates[photo.id] {
+            return cached
         }
 
         guard photo.kind == .photo else {

@@ -106,6 +106,7 @@ targets:
           - DemoCameraGalleryClient.swift
           - ManualWiFiJoinSheet.swift
           - RemoteShootingView.swift
+          - CameraGeotagWriteView.swift
       - path: Shared
     info:
       path: LumixProbe/MacInfo.plist
@@ -169,6 +170,7 @@ targets:
           - CameraGalleryStoreTests.swift
           - CameraImportTests.swift
           - DemoCameraGalleryClientTests.swift
+          - CameraGeotagVerificationTests.swift
     dependencies:
       - target: GM1SyncMac
     settings:

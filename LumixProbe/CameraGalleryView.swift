@@ -8,7 +8,10 @@ struct CameraGalleryView: View {
     @ObservedObject var model: ProbeViewModel
     @ObservedObject var modeCoordinator: CameraModeCoordinator
     let makeRemoteShootingSession: @MainActor () -> RemoteShootingSession
+    let geotagEnvironment: CameraGeotagEnvironment
     @State private var isShowingRemoteShooting = false
+    @State private var isShowingLocationWriter = false
+    @State private var isShowingClockSync = false
     @State private var isSelecting = false
     @State private var importMode: CameraPhotoImportMode = .jpeg
     @State private var showNoNewMediaAlert = false
@@ -115,6 +118,12 @@ struct CameraGalleryView: View {
         }
         .sheet(isPresented: $isShowingManualLocationPicker) {
             ManualLocationPickerView(store: store, photos: selectedPhotoImages)
+        }
+        .sheet(isPresented: $isShowingLocationWriter) {
+            CameraGeotagWriteView(store: store, coordinator: modeCoordinator, environment: geotagEnvironment)
+        }
+        .sheet(isPresented: $isShowingClockSync) {
+            CameraClockSyncView(coordinator: modeCoordinator, environment: geotagEnvironment)
         }
     }
 
@@ -306,9 +315,25 @@ struct CameraGalleryView: View {
                     }
                 }
                 .disabled(store.photos.isEmpty || store.isImporting)
+                Divider()
+                Button {
+                    isShowingLocationWriter = true
+                } label: {
+                    Label("Write locations to camera photos…", systemImage: "mappin.and.ellipse")
+                }
+                .disabled(store.isImporting || modeCoordinator.exclusiveActivity != nil)
+                .accessibilityIdentifier("open-location-writer")
+                Button {
+                    isShowingClockSync = true
+                } label: {
+                    Label("Set camera clock…", systemImage: "clock.arrow.2.circlepath")
+                }
+                .disabled(store.isImporting || modeCoordinator.exclusiveActivity != nil)
+                .accessibilityIdentifier("open-camera-clock")
             } label: {
                 Label("Gallery actions", systemImage: "ellipsis.circle")
             }
+            .accessibilityIdentifier("gallery-actions")
         }
     }
 
@@ -1248,7 +1273,8 @@ private struct CameraMediaImage: View {
             ),
             model: ProbeViewModel(),
             modeCoordinator: CameraModeCoordinator(),
-            makeRemoteShootingSession: previewRemoteShootingSession
+            makeRemoteShootingSession: previewRemoteShootingSession,
+            geotagEnvironment: previewGeotagEnvironment
         )
     }
 }
@@ -1259,7 +1285,8 @@ private struct CameraMediaImage: View {
             store: CameraGalleryStore(previewPhase: .loading),
             model: ProbeViewModel(),
             modeCoordinator: CameraModeCoordinator(),
-            makeRemoteShootingSession: previewRemoteShootingSession
+            makeRemoteShootingSession: previewRemoteShootingSession,
+            geotagEnvironment: previewGeotagEnvironment
         )
     }
 }
@@ -1270,7 +1297,8 @@ private struct CameraMediaImage: View {
             store: CameraGalleryStore(previewPhase: .empty),
             model: ProbeViewModel(),
             modeCoordinator: CameraModeCoordinator(),
-            makeRemoteShootingSession: previewRemoteShootingSession
+            makeRemoteShootingSession: previewRemoteShootingSession,
+            geotagEnvironment: previewGeotagEnvironment
         )
     }
 }
@@ -1281,10 +1309,17 @@ private struct CameraMediaImage: View {
             store: CameraGalleryStore(previewPhase: .failed("The camera went to sleep.")),
             model: ProbeViewModel(),
             modeCoordinator: CameraModeCoordinator(),
-            makeRemoteShootingSession: previewRemoteShootingSession
+            makeRemoteShootingSession: previewRemoteShootingSession,
+            geotagEnvironment: previewGeotagEnvironment
         )
     }
 }
+
+@MainActor
+private let previewGeotagEnvironment = CameraGeotagEnvironment(
+    makeCamera: { DemoGeotagCamera() },
+    samples: { DemoGeotagCamera.demoSamples() }
+)
 
 @MainActor
 private func previewRemoteShootingSession() -> RemoteShootingSession {
