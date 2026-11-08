@@ -126,6 +126,7 @@ Location writing follows Panasonic's documented GM1S workflow and the command se
 | Abort and interruption | Needs GM1S validation |
 | GPS written into JPEGs inside the period; none outside it; existing GPS kept | Verified on GM1S by reading the originals back with a separate EXIF parser. Photos inside the period gained GPS from a track sample taken shortly before each photo; photos before and after the period gained none; a second write left existing GPS byte-identical |
 | GPS date field | GM1S writes `GPSDateStamp` as 11 bytes ending in `0x02` instead of a terminating zero |
+| Many photo reads in a row | After about 150 reads of photo headers in 20 minutes (each takes the start of an original and drops the connection), the GM1S answered HTTP 404 for every original, then stopped answering until it was switched off. The scan and the check now read as few photos as they can and stop after two failed reads. The cause, and whether a `Range` request avoids it, still need testing |
 | RAW and RAW+JPEG files | Unverified; not claimed |
 
 ## Confirmation standard
